@@ -20,7 +20,7 @@
   <div class="app">
     <header class="topbar">
       <div class="wordmark">analyzer<span> / </span><small>REVIT EXTRACTOR</small></div>
-      <div class="top-actions"><button class="button" id="export-help"><i data-icon="download"></i> Eksportuj z Revita 2026</button><span class="local-badge"><span class="local-dot"></span> Dane lokalne</span><button class="button primary" id="open-folder"><i data-icon="folder"></i> Otwórz folder</button></div>
+      <div class="top-actions"><button class="button" id="export-help"><i data-icon="download"></i> Eksportuj z Revita</button><span class="local-badge"><span class="local-dot"></span> Dane lokalne</span><button class="button primary" id="open-folder"><i data-icon="folder"></i> Otwórz folder</button></div>
     </header>
     <section class="projectbar">
       <div><div class="eyebrow">PRZESTRZEŃ MODELU <span id="export-date"></span></div><h1 id="project-name">Twój model, z bliska.</h1><p id="project-subtitle">Wczytaj eksport RevitExtractor i rozpocznij przeglądanie.</p></div>
@@ -74,13 +74,14 @@
 
   <dialog id="folder-dialog"><form id="folder-form"><div class="dialog-heading"><div><span class="eyebrow">NOWY EKSPORT</span><h2>Otwórz folder output</h2></div><button type="button" class="icon-button" id="close-dialog" aria-label="Zamknij">×</button></div><p>Wybierz folder wygenerowany przez RevitExtractor. Pliki będą odczytywane bezpośrednio z dysku.</p><button type="button" class="button folder-picker" id="browse-folder"><i data-icon="folder"></i> Wybierz folder z dysku</button><label class="field-label" for="folder-path">LUB WKLEJ PEŁNĄ ŚCIEŻKĘ</label><input id="folder-path" placeholder="C:\projekty\eksport\output" autocomplete="off"><p id="folder-error" class="error-text" role="alert"></p><div class="dialog-foot"><span>Silnik 3D wymaga połączenia z CDN Autodesk.</span><button class="button primary" type="submit">Wczytaj eksport <i data-icon="arrow"></i></button></div></form></dialog>
   <input type="file" id="local-folder-input" webkitdirectory multiple hidden>
-  <dialog id="export-help-dialog"><div class="dialog-heading"><div><span class="eyebrow">REVIT 2026 · WINDOWS</span><h2>Przygotuj eksport modelu</h2></div><button type="button" class="icon-button" id="close-export-help" aria-label="Zamknij">×</button></div>
+  <dialog id="export-help-dialog"><div class="dialog-heading"><div><span class="eyebrow">REVIT · WINDOWS</span><h2>Przygotuj eksport modelu</h2></div><button type="button" class="icon-button" id="close-export-help" aria-label="Zamknij">×</button></div>
     <ol class="export-steps"><li>Zapisz plik RVT. Możesz użyć wbudowanej konfiguracji: <strong>2D + 3D + parametry</strong>, bez osobnego <code>index.json</code>. Własny indeks przygotujesz opcjonalnie przyciskiem <strong>Eksport setup</strong> w pyRevit. <a href="https://github.com/kopecp/RevitExtractor/tree/online/pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel" target="_blank" rel="noopener">Przycisk pyRevit i instrukcja</a></li>
-    <li>Pobierz skrypt i wybierz w Windows <strong>Uruchom za pomocą programu PowerShell</strong>. Możesz też uruchomić poniższe polecenie w folderze pobranego pliku:<pre>powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-RevitExport-2026.ps1</pre></li>
+    <li>Pobierz skrypt i wybierz w Windows <strong>Uruchom za pomocą programu PowerShell</strong>. Możesz też uruchomić poniższe polecenie w folderze pobranego pliku:<pre>powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-RevitExport.ps1</pre></li>
+    <li>Na początku wybierz <strong>wersję Revita</strong> z wykrytych instalacji albo wpisz <strong>M</strong>, aby wskazać inny folder instalacji. Użyj wersji odpowiedniej dla modelu i własnego indeksu.</li>
     <li>Przy pytaniu o konfigurację naciśnij <strong>Enter</strong>, aby użyć wbudowanej, albo wybierz własny <code>index.json</code>. Następnie wskaż plik <code>.rvt</code> i folder wyników oraz potwierdź eksport. Wbudowany indeks pozostawia wybór widoków Extractorowi; zapisz w RVT zestawy <strong>Collaborate → Publish Settings</strong>, jeśli z nich korzystasz.</li>
     <li>Po zakończeniu wróć tutaj, kliknij <strong>Otwórz folder</strong> i wybierz utworzony folder <code>output</code>.</li></ol>
-    <p>Potrzebujesz zainstalowanego Revita 2026 z RevitExtractor. Skrypt wraz z domyślną konfiguracją jest jednym plikiem. Domyślny zakres nie oznacza wszystkich widoków. Duże modele wymagają odpowiedniej ilości pamięci.</p>
-    <a class="button primary" href="./downloads/Start-RevitExport-2026.ps1" download="Start-RevitExport-2026.ps1"><i data-icon="download"></i> Pobierz PowerShell · Revit 2026</a>
+    <p>Potrzebujesz wybranej wersji Revita z RevitExtractor. Skrypt wraz z domyślną konfiguracją jest jednym plikiem. Dostępne formaty eksportu zależą od wersji. Domyślny zakres nie oznacza wszystkich widoków. Duże modele wymagają odpowiedniej ilości pamięci.</p>
+    <a class="button primary" href="./downloads/Start-RevitExport.ps1" download="Start-RevitExport.ps1"><i data-icon="download"></i> Pobierz PowerShell · wybór wersji Revita</a>
   </dialog>
   <div id="toast" role="status" hidden></div>
   <script type="module" src="./app.js"></script>

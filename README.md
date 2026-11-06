@@ -4,34 +4,38 @@
 
 ## Od RVT do przeglądarki
 
-1. W Revit 2026 zapisz model RVT i używane zestawy **Collaborate → Publish Settings**.
+1. W Revicie zapisz model RVT i używane zestawy **Collaborate → Publish Settings**.
    Do podstawowej próby nie potrzebujesz pyRevit ani osobnego `index.json` — konfiguracja jest zaszyta w skrypcie.
 2. Opcjonalnie przygotuj własny `index.json` przyciskiem **Eksport setup** w pyRevit,
    np. aby wskazać konkretne widoki lub włączyć IFC.
    [Instrukcja instalacji przycisku](pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel/README.md).
    Możesz sklonować repo (`git clone --branch online https://github.com/kopecp/RevitExtractor.git`)
-   i skopiować cały `ExportSetup.pushbutton` do swojego panelu pyRevit.
+   i skopiować cały `ExportSetup22.pushbutton` dla Revita 2022 albo
+   `ExportSetup.pushbutton` dla Revita 2026 do swojego panelu pyRevit.
    Własna konfiguracja musi pochodzić z tego samego modelu.
-3. Na stronie wybierz **Eksportuj z Revita 2026 → Pobierz PowerShell**.
-   Pobierasz jeden plik `Start-RevitExport-2026.ps1`. Potrzebujesz Windows i zainstalowanego Revita 2026 z `RevitExtractor.exe`; skrypt niczego nie instaluje.
+3. Na stronie wybierz **Eksportuj z Revita → Pobierz PowerShell**.
+   Pobierasz jeden plik `Start-RevitExport.ps1`. Potrzebujesz Windows i zainstalowanej wybranej wersji Revita z `RevitExtractor.exe`; skrypt niczego nie instaluje.
 4. Uruchom skrypt przez **Uruchom za pomocą programu PowerShell** albo w folderze pobranego pliku:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-RevitExport-2026.ps1
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-RevitExport.ps1
    ```
 
    Parametr `ExecutionPolicy` dotyczy tylko tego procesu; nie zmienia zasad Windows na stałe.
-5. Przy pytaniu o konfigurację naciśnij **Enter**, aby użyć wbudowanej. Możesz też wkleić ścieżkę do własnego `index.json` lub wybrać **P**, aby otworzyć okno wyboru.
+5. Najpierw wybierz **wersję Revita**: wpisz numer pozycji lub rok wersji z listy. **M** pozwala wskazać inny folder instalacji, **Q** anuluje.
+   Skrypt wyszukuje instalacje z Extractorem w `Program Files\Autodesk` i rejestrze Windows. Nie wybiera automatycznie najnowszej wersji.
+   Przy pytaniu o konfigurację naciśnij **Enter**, aby użyć wbudowanej. Możesz też wkleić ścieżkę do własnego `index.json` lub wybrać **P**, aby otworzyć okno wyboru.
    Następnie wskaż `.rvt` — wklej ścieżkę albo naciśnij Enter, aby wybrać model w oknie.
    Wybierz folder wyników (domyślnie `Dokumenty\RevitExtractor`) i potwierdź eksport.
-   Jeśli Revit jest w innym miejscu, skrypt poprosi o jego folder instalacji.
+   Model i własny indeks powinny odpowiadać wybranej wersji; dostępne formaty eksportu zależą od jej Extractora.
 6. Poczekaj na zakończenie. Każdy eksport dostaje osobny folder `export-DATA-ID` z `output`, `logs`, `journals`, użytym `index.json`, `console.log` i `stderr.log`.
 7. W Analyzerze kliknij **Otwórz folder** i wybierz `output` lub jego bezpośredni folder nadrzędny.
 
 Przeglądarka obsługuje SVF 3D, PDF, parametry, tabele SQLite, modele źródłowe i kategorie.
 Nie otwiera bezpośrednio `.rvt`. Skrypt uruchamiasz samodzielnie w Windows.
-Starszy `extractorScript_v1.ps1` i główny `index.json` to zachowane przykłady z konkretnego projektu;
-do nowego modelu użyj nowego launchera z konfiguracją wbudowaną lub własnym indeksem.
+Starszy `extractorScript_v1.ps1` przekazuje teraz uruchomienie i parametry do tego samego launchera
+z wyborem wersji. Główny `index.json` pozostaje przykładem z konkretnego projektu;
+do nowego modelu użyj konfiguracji wbudowanej lub własnego indeksu.
 
 ## Wbudowany indeks
 
@@ -103,9 +107,15 @@ Otwieranie HTML przez `file://` nie obsługuje trybu Pages.
 Do sprawdzenia własnych ścieżek i konfiguracji:
 
 ```powershell
-.\Start-RevitExport-2026.ps1 -IndexPath 'D:\Projekt\index.json' -ModelPath 'D:\Projekt\Model.rvt' -OutputParent 'D:\Eksporty' -ValidateOnly
+.\Start-RevitExport.ps1 -RevitVersion 2022 -IndexPath 'D:\Projekt\index.json' -ModelPath 'D:\Projekt\Model.rvt' -OutputParent 'D:\Eksporty' -ValidateOnly
 ```
 
 Bez `-IndexPath` walidacja używa wbudowanej konfiguracji; można też jawnie dodać `-UseDefaultIndex`.
 Parametry `-IndexPath` i `-UseDefaultIndex` wykluczają się.
 Ta opcja nie uruchamia Revita i nie tworzy folderów. Właściwy eksport zawsze pyta o potwierdzenie.
+`-ValidateOnly` wymaga `-RevitVersion` albo `-RevitDirectory` i nie pyta o wybór instalacji.
+W zwykłym uruchomieniu te parametry również pozwalają pominąć menu wersji.
+Jeżeli podasz oba, skrypt sprawdzi, czy wskazany folder zawiera wybraną wersję Revita.
+Lista wersji nie jest ograniczona do konkretnego zestawu lat; wymagane są `Revit.exe`
+i `RevitExtractor\RevitExtractor.exe` w wybranej instalacji. Numer kompilacji Extractora
+nie musi być zgodny z rokiem Revita.

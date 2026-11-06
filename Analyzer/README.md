@@ -7,7 +7,9 @@ Lokalna aplikacja webowa do oglądania modelu SVF, rysunków PDF oraz właściwo
 **[Otwórz wersję online](https://kopecp.github.io/RevitExtractor/)** w Chrome lub Edge i wybierz **Otwórz folder**.
 Strona odczytuje wskazany `output` bez lokalnego Node.js; pliki modelu pozostają na komputerze.
 Po odświeżeniu wybierz folder ponownie. Dostępne są model 3D, PDF-y, parametry i tabele SQLite.
-Przycisk **Eksportuj z Revita 2026** zawiera instrukcję oraz jeden interaktywny skrypt PowerShell.
+Przycisk **Eksportuj z Revita** zawiera instrukcję oraz jeden interaktywny skrypt PowerShell.
+`Start-RevitExport.ps1` zaczyna od wyboru zainstalowanej wersji Revita z Extractorem.
+Można też ręcznie wskazać folder instalacji; lista wersji nie jest ograniczona do 2026.
 
 Publikację z brancha `online`, skrypt i wymagania opisuje [główna instrukcja](../README.md).
 `npm run build:pages` tworzy osobny katalog `dist`; lokalny serwer korzysta z `public`.

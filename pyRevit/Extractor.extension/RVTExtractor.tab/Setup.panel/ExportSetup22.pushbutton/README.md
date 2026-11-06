@@ -26,7 +26,8 @@ pyRevit** i otwórz **Eksport setup 2022** w projekcie Revita 2022.
 
 Przed eksportem zapisz RVT. Używaj indeksu z tego samego modelu i Extractora
 z instalacji **Revita 2022** (`Revit 2022\RevitExtractor\RevitExtractor.exe`).
-Launcher `Start-RevitExport-2026.ps1` z tego repozytorium uruchamia wersję 2026.
+Launcher `Start-RevitExport.ps1` z tego repozytorium zaczyna od wyboru wersji;
+wybierz **2022** albo podaj parametr `-RevitVersion 2022`.
 
 Zakres wersji ustawiono na 2022–2022 w `bundle.yaml`, zgodnie z
 [metadanymi pakietów pyRevit](https://github.com/pyrevitlabs/pyRevit/blob/develop/docs/extensions.md).

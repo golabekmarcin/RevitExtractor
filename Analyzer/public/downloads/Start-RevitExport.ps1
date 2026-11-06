@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
-One-file interactive launcher for Autodesk Revit Extractor 2026.
-Run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-RevitExport-2026.ps1
+One-file interactive launcher for installed Autodesk Revit Extractor versions.
+Run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-RevitExport.ps1
 The execution-policy override applies only to that process.
 #>
 [CmdletBinding()]
@@ -9,7 +9,9 @@ param(
     [string]$IndexPath,
     [string]$ModelPath,
     [string]$OutputParent,
-    [string]$RevitDirectory = (Join-Path $env:ProgramFiles 'Autodesk\Revit 2026'),
+    [ValidatePattern('^\d{4}$')]
+    [string]$RevitVersion,
+    [string]$RevitDirectory,
     [switch]$UseDefaultIndex,
     [switch]$ValidateOnly,
     [switch]$NoPause
@@ -69,11 +71,138 @@ function Read-InputFile {
     }
 }
 
+function Get-RevitInstallation {
+    param([string]$Directory)
+    if ([string]::IsNullOrWhiteSpace($Directory)) { return }
+    $Directory = $Directory.Trim().Trim('"')
+    $revitExe = Join-Path $Directory 'Revit.exe'
+    $extractorExe = Join-Path $Directory 'RevitExtractor\RevitExtractor.exe'
+    if (!(Test-Path -LiteralPath $revitExe -PathType Leaf) -or
+        !(Test-Path -LiteralPath $extractorExe -PathType Leaf)) { return }
+    $Directory = (Resolve-Path -LiteralPath $Directory).ProviderPath
+    # Registry locations often end with a slash; discovery must list them only once.
+    if ($Directory.Length -gt ([IO.Path]::GetPathRoot($Directory)).Length) {
+        $Directory = $Directory.TrimEnd('\', '/')
+    }
+    # Revit.exe has a major file version such as 22; ProductVersion is a build date.
+    # The Extractor's own version can differ from the Revit release hosting it.
+    $major = (Get-Item -LiteralPath $revitExe).VersionInfo.FileMajorPart
+    $release = if ($major -gt 0 -and $major -lt 100) { [string](2000 + $major) }
+               elseif ($major -ge 2000 -and $major -le 9999) { [string]$major }
+               else { '' }
+    if (!$release) { return }
+    [pscustomobject]@{
+        Version = $release
+        Directory = $Directory
+        Exe = Join-Path $Directory 'RevitExtractor\RevitExtractor.exe'
+        ExtractorVersion = (Get-Item -LiteralPath $extractorExe).VersionInfo.ProductVersion
+    }
+}
+
+function Get-RevitInstallations {
+    $directories = @()
+    if ($env:ProgramFiles) {
+        $autodesk = Join-Path $env:ProgramFiles 'Autodesk'
+        if (Test-Path -LiteralPath $autodesk -PathType Container) {
+            $directories += Get-ChildItem -LiteralPath $autodesk -Directory -Filter 'Revit *' |
+                Select-Object -ExpandProperty FullName
+        }
+    }
+    # Registered locations also cover installations outside Program Files.
+    $registryRoot = 'HKLM:\SOFTWARE\Autodesk\Revit'
+    if (Test-Path -LiteralPath $registryRoot -ErrorAction SilentlyContinue) {
+        foreach ($key in Get-ChildItem -LiteralPath $registryRoot -ErrorAction SilentlyContinue) {
+            if ($key.PSChildName -notmatch '^(Autodesk Revit )?\d{4}$') { continue }
+            $keys = @($key) + @(Get-ChildItem -LiteralPath $key.PSPath -ErrorAction SilentlyContinue)
+            foreach ($installKey in $keys) {
+                $values = Get-ItemProperty -LiteralPath $installKey.PSPath -ErrorAction SilentlyContinue
+                if ($null -eq $values) { continue }
+                foreach ($name in @('InstallationLocation', 'InstallLocation', 'InstallPath', 'InstallDir')) {
+                    $property = $values.PSObject.Properties[$name]
+                    if ($null -ne $property -and $property.Value) { $directories += [string]$property.Value }
+                }
+            }
+        }
+    }
+    $seen = @{}
+    foreach ($directory in $directories) {
+        $installation = Get-RevitInstallation $directory
+        if ($null -ne $installation -and !$seen.ContainsKey($installation.Directory)) {
+            $seen[$installation.Directory] = $true
+            $installation
+        }
+    }
+}
+
+function Select-RevitInstallation {
+    param([string]$RequestedVersion, [string]$Directory)
+    if ($ValidateOnly -and !$RequestedVersion -and !$Directory) {
+        throw 'ValidateOnly wymaga RevitVersion lub RevitDirectory, aby jednoznacznie wybrac instalacje.'
+    }
+    if ($Directory) {
+        $installation = Get-RevitInstallation $Directory
+        if ($null -eq $installation) { throw "Brak poprawnej instalacji Revita z RevitExtractor: $Directory" }
+        if ($RequestedVersion -and $installation.Version -ne $RequestedVersion) {
+            throw "Wybrano Revit $RequestedVersion, ale folder zawiera Revit $($installation.Version): $Directory"
+        }
+        return $installation
+    }
+    $installations = @(Get-RevitInstallations | Sort-Object @{Expression = { [int]$_.Version }; Descending = $true}, Directory)
+    if ($RequestedVersion) {
+        $installations = @($installations | Where-Object { $_.Version -eq $RequestedVersion })
+        if ($installations.Count -eq 1) { return $installations[0] }
+    }
+    if ($ValidateOnly) {
+        throw "Nie znaleziono jednej instalacji Revit $RequestedVersion z Extractorem. Podaj RevitDirectory."
+    }
+    while ($true) {
+        Write-Host "`nWybierz wersje Revita do eksportu:" -ForegroundColor Cyan
+        for ($i = 0; $i -lt $installations.Count; $i++) {
+            Write-Host ('  {0}. Revit {1} - {2}' -f ($i + 1), $installations[$i].Version, $installations[$i].Directory)
+        }
+        if (!$installations.Count) { Write-Host 'Nie znaleziono instalacji z RevitExtractor. Mozesz wskazac folder recznie.' }
+        Write-Host '  M. Wskaz inny folder instalacji'
+        Write-Host '  Q. Anuluj'
+        $choice = (Read-Host 'Numer pozycji, rok wersji, M lub Q').Trim()
+        if ($choice -eq 'Q') { throw 'Anulowano wybor wersji Revita.' }
+        if ($choice -eq 'M') {
+            $folder = (Read-Host 'Folder instalacji Revita, zawierajacy Revit.exe (Q = anuluj)').Trim().Trim('"')
+            if ($folder -eq 'Q') { throw 'Anulowano wybor wersji Revita.' }
+            $installation = Get-RevitInstallation $folder
+            if ($null -eq $installation) {
+                Write-Host 'Brak poprawnej instalacji Revita z RevitExtractor w tym folderze.' -ForegroundColor Yellow
+                continue
+            }
+            if ($RequestedVersion -and $installation.Version -ne $RequestedVersion) {
+                Write-Host "Ten folder zawiera Revit $($installation.Version); wymagany Revit $RequestedVersion." -ForegroundColor Yellow
+                continue
+            }
+            return $installation
+        }
+        if ($choice -match '^\d{4}$') {
+            $matching = @($installations | Where-Object { $_.Version -eq $choice })
+            if ($matching.Count -eq 1) { return $matching[0] }
+        } else {
+            $number = 0
+            if ([int]::TryParse($choice, [ref]$number) -and $number -ge 1 -and $number -le $installations.Count) {
+                return $installations[$number - 1]
+            }
+        }
+        Write-Host 'Wybierz pozycje z listy albo M, aby wskazac folder.' -ForegroundColor Yellow
+    }
+}
+
 try {
-    Write-Host "`nRevit Extractor 2026 - eksport lokalny" -ForegroundColor Cyan
+    Write-Host "`nRevit Extractor - eksport lokalny" -ForegroundColor Cyan
     Write-Host 'Najpierw zapisz RVT, w tym zestawy Collaborate > Publish Settings, jesli ich uzywasz.'
     if ($UseDefaultIndex -and ![string]::IsNullOrWhiteSpace($IndexPath)) { throw 'Wybierz UseDefaultIndex albo IndexPath, nie oba naraz.' }
     if ($ValidateOnly -and (!$ModelPath -or !$OutputParent)) { throw 'ValidateOnly wymaga ModelPath i OutputParent.' }
+    $installation = Select-RevitInstallation $RevitVersion $RevitDirectory
+    $RevitVersion = $installation.Version
+    $RevitDirectory = $installation.Directory
+    $exe = $installation.Exe
+    $version = $installation.ExtractorVersion
+    Write-Host "Wybrano Revit $RevitVersion - $RevitDirectory" -ForegroundColor Green
     if (!$UseDefaultIndex -and [string]::IsNullOrWhiteSpace($IndexPath)) {
         if ($ValidateOnly) { $UseDefaultIndex = $true }
         else {
@@ -97,21 +226,7 @@ try {
         !$config.metadata.parameters.PSObject.Properties['derivative_type'] -or !$config.metadata.parameters.derivative_type) {
         throw 'Nieprawidlowa konfiguracja: wymagane metadata.parameters.derivative_type. Wygeneruj index.json w pyRevit.'
     }
-    $ModelPath = Read-InputFile $ModelPath 'Wskaz zapisany model Revit 2026 (.rvt)' '.rvt'
-
-    $RevitDirectory = $RevitDirectory.Trim().Trim('"')
-    $exe = Join-Path $RevitDirectory 'RevitExtractor\RevitExtractor.exe'
-    while (!(Test-Path -LiteralPath $exe -PathType Leaf) -or !(Test-Path -LiteralPath (Join-Path $RevitDirectory 'Revit.exe') -PathType Leaf)) {
-        if ($ValidateOnly) { throw "Brak instalacji Revita / Extractora 2026: $RevitDirectory" }
-        Write-Host "Nie znaleziono Revita i RevitExtractor w: $RevitDirectory" -ForegroundColor Yellow
-        $RevitDirectory = (Read-Host 'Wklej folder instalacji Revit 2026 (Q = anuluj)').Trim().Trim('"')
-        if (!$RevitDirectory -or $RevitDirectory -eq 'Q') { throw 'Anulowano.' }
-        $exe = Join-Path $RevitDirectory 'RevitExtractor\RevitExtractor.exe'
-    }
-    $RevitDirectory = (Resolve-Path -LiteralPath $RevitDirectory).ProviderPath
-    $exe = Join-Path $RevitDirectory 'RevitExtractor\RevitExtractor.exe'
-    $version = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
-    if ($version -notmatch '^2026\.') { throw "Ten skrypt obsluguje RevitExtractor 2026. Wykryta wersja: $version" }
+    $ModelPath = Read-InputFile $ModelPath "Wskaz zapisany model dla Revit $RevitVersion (.rvt)" '.rvt'
 
     if ([string]::IsNullOrWhiteSpace($OutputParent)) {
         $defaultOutput = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor'
@@ -131,6 +246,7 @@ try {
         Write-Host 'Indeks zostanie zapisany w nowym folderze eksportu jako index.json.'
     } else { Write-Host "`nKonfiguracja: $IndexPath" }
     Write-Host "Model RVT:   $ModelPath"
+    Write-Host "Revit:       $RevitVersion ($RevitDirectory)"
     Write-Host "Extractor:   $version"
     Write-Host "Wyniki:      $OutputParent (nowy osobny folder dla kazdego uruchomienia)"
     if ($ValidateOnly) {
