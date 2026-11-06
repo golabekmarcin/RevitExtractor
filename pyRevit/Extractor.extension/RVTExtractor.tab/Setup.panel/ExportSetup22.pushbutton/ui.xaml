@@ -1,0 +1,180 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Revit Extractor 2022 — konfiguracja eksportu" Width="1080" Height="800"
+        MinWidth="920" MinHeight="650" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False" Background="#F3F5F8" Foreground="#17263B"
+        FontFamily="Segoe UI" FontSize="13">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="12,7"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="MinHeight" Value="34"/>
+            <Setter Property="Foreground" Value="#17263B"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,7,0,7"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="#17263B"/>
+        </Style>
+        <Style TargetType="RadioButton">
+            <Setter Property="Margin" Value="0,6,22,6"/>
+            <Setter Property="Foreground" Value="#17263B"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="Foreground" Value="#17263B"/>
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Padding" Value="16,9"/>
+            <Setter Property="Foreground" Value="#17263B"/>
+        </Style>
+        <Style TargetType="ListView">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="Foreground" Value="#17263B"/>
+            <Setter Property="BorderBrush" Value="#D5DDE7"/>
+            <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+            <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True"/>
+            <Setter Property="VirtualizingStackPanel.VirtualizationMode" Value="Recycling"/>
+        </Style>
+        <DataTemplate x:Key="CheckTemplate">
+            <CheckBox IsChecked="{Binding checked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                      Margin="8,4" ToolTip="Zaznacz do eksportu"/>
+        </DataTemplate>
+    </Window.Resources>
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid Grid.Row="0" Margin="0,0,0,16">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="Konfiguracja eksportu — Revit 2022" FontSize="25" FontWeight="SemiBold"/>
+                <TextBlock x:Name="model_title" FontWeight="SemiBold" Margin="0,6,0,2"/>
+                <TextBlock x:Name="model_path" Foreground="#536277" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="model_note" Foreground="#536277" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+            <Button x:Name="reset_btn" Grid.Column="1" Content="Przywróć domyślne" VerticalAlignment="Top" Margin="15,0,0,0"/>
+        </Grid>
+        <Border Grid.Row="1" Background="White" BorderBrush="#D5DDE7" BorderThickness="1" CornerRadius="6" Padding="16,9" Margin="0,0,0,14">
+            <UniformGrid Columns="3">
+                <CheckBox x:Name="enable2d_cb" Content="Widoki 2D i arkusze" FontWeight="SemiBold"/>
+                <CheckBox x:Name="enable3d_cb" Content="Widoki 3D" FontWeight="SemiBold"/>
+                <CheckBox x:Name="pdb_cb" Content="Lokalna baza danych SQLite" FontWeight="SemiBold"/>
+            </UniformGrid>
+        </Border>
+        <TabControl Grid.Row="2" Background="White" BorderBrush="#D5DDE7">
+            <TabItem x:Name="tab2d" Header="Widoki 2D i arkusze">
+                <Grid Margin="16">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <WrapPanel>
+                        <RadioButton x:Name="default2d_rb" Content="Domyślny zakres Extractora" GroupName="scope2d"/>
+                        <RadioButton x:Name="selected2d_rb" Content="Tylko zaznaczone" GroupName="scope2d"/>
+                    </WrapPanel>
+                    <TextBlock Grid.Row="1" Text="Domyślny zakres pozostawia wybór Extractorowi. Wybierz „Tylko zaznaczone”, aby wskazać konkretne rysunki."
+                               Foreground="#536277" TextWrapping="Wrap" Margin="0,4,0,12"/>
+                    <Grid Grid.Row="2" x:Name="choose2d_panel">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="230"/></Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,12,0">
+                                <TextBlock Text="Szukaj po nazwie, numerze arkusza lub ID" Margin="0,0,0,4"/>
+                                <TextBox x:Name="search2d_tb"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Typ widoku" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="kind2d_cb" Padding="8,6" Background="White" Foreground="#17263B"/>
+                            </StackPanel>
+                        </Grid>
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,10">
+                            <Button x:Name="all2d_btn" Tag="2d:all" Content="Zaznacz widoczne"/>
+                            <Button x:Name="none2d_btn" Tag="2d:none" Content="Odznacz widoczne"/>
+                        </StackPanel>
+                        <ListView Grid.Row="2" x:Name="views2d_lv">
+                            <ListView.View><GridView>
+                                <GridViewColumn Header="✓" Width="46" CellTemplate="{StaticResource CheckTemplate}"/>
+                                <GridViewColumn Header="Nazwa widoku / numer i nazwa arkusza" Width="475" DisplayMemberBinding="{Binding name}"/>
+                                <GridViewColumn Header="Typ" Width="205" DisplayMemberBinding="{Binding kind}"/>
+                                <GridViewColumn Header="ElementId" Width="110" DisplayMemberBinding="{Binding element_id}"/>
+                            </GridView></ListView.View>
+                        </ListView>
+                        <TextBlock Grid.Row="3" x:Name="count2d_text" Margin="0,10,0,0" Foreground="#536277"/>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem x:Name="tab3d" Header="Widoki 3D">
+                <Grid Margin="16">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <WrapPanel>
+                        <RadioButton x:Name="default3d_rb" Content="Domyślny zakres Extractora" GroupName="scope3d"/>
+                        <RadioButton x:Name="selected3d_rb" Content="Tylko zaznaczone" GroupName="scope3d"/>
+                    </WrapPanel>
+                    <TextBlock Grid.Row="1" Text="Zaznaczenia są zachowywane podczas wyszukiwania. Lista obejmuje widoki aktywnego modelu."
+                               Foreground="#536277" TextWrapping="Wrap" Margin="0,4,0,12"/>
+                    <Grid Grid.Row="2" x:Name="choose3d_panel">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Szukaj po nazwie lub ID" Margin="0,0,0,4"/>
+                            <TextBox x:Name="search3d_tb"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,10">
+                            <Button x:Name="all3d_btn" Tag="3d:all" Content="Zaznacz widoczne"/>
+                            <Button x:Name="none3d_btn" Tag="3d:none" Content="Odznacz widoczne"/>
+                        </StackPanel>
+                        <ListView Grid.Row="2" x:Name="views3d_lv">
+                            <ListView.View><GridView>
+                                <GridViewColumn Header="✓" Width="46" CellTemplate="{StaticResource CheckTemplate}"/>
+                                <GridViewColumn Header="Nazwa widoku" Width="680" DisplayMemberBinding="{Binding name}"/>
+                                <GridViewColumn Header="ElementId" Width="110" DisplayMemberBinding="{Binding element_id}"/>
+                            </GridView></ListView.View>
+                        </ListView>
+                        <TextBlock Grid.Row="3" x:Name="count3d_text" Margin="0,10,0,0" Foreground="#536277"/>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Opcje zaawansowane">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="20">
+                        <TextBlock Text="Domyślne wartości odpowiadają obecnemu presetowi. Dodatkowe tryby wymagają sprawdzenia na wybranym modelu."
+                                   TextWrapping="Wrap" Foreground="#536277" Margin="0,0,0,14"/>
+                        <StackPanel x:Name="advanced3d_panel">
+                            <TextBlock Text="Dane i widoki 3D" FontSize="16" FontWeight="SemiBold"/>
+                            <CheckBox x:Name="aec_cb" Content="Dane AEC — poziomy, fazy, osie i informacje o modelu"/>
+                            <CheckBox x:Name="description_cb" Content="Opis dokumentu i zależności między plikami"/>
+                            <CheckBox x:Name="master_cb" Content="Generuj dodatkowe widoki master"/>
+                        </StackPanel>
+                        <Separator Margin="0,12"/>
+                        <TextBlock Text="Rysunki 2D" FontSize="16" FontWeight="SemiBold"/>
+                        <CheckBox x:Name="f2d_cb" Content="Przetwarzanie 2D w trybie F2D"/>
+                        <Separator Margin="0,12"/>
+                        <TextBlock Text="Dodatkowe formaty" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="Ten profil Extractora 2022 obsługuje 2D, 3D i SQLite. Pliki IFC i DWG wyeksportuj poleceniem Eksportuj w Revicie."
+                                   TextWrapping="Wrap" Foreground="#536277" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Podgląd index.json">
+                <Grid Margin="16">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Text="Taką konfigurację zapisze przycisk poniżej." Margin="0,0,0,10" Foreground="#536277"/>
+                    <TextBox Grid.Row="1" x:Name="json_tb" IsReadOnly="True" FontFamily="Consolas" FontSize="13"
+                             AcceptsReturn="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+        <Grid Grid.Row="3" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center" Margin="0,0,15,0">
+                <TextBlock x:Name="summary_text" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock x:Name="status_text" Margin="0,5,0,0" Foreground="#536277" TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="close_btn" Content="Zamknij"/>
+                <Button x:Name="save_btn" Content="Zapisz index.json" Background="#173D69" Foreground="White" FontWeight="SemiBold" Margin="0" Padding="18,10"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

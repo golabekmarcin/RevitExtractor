@@ -1,5 +1,9 @@
 # Eksport setup — przycisk pyRevit
 
+Wariant dla **Revita 2022** znajduje się w osobnym folderze
+[`ExportSetup22.pushbutton`](ExportSetup22.pushbutton/README.md).
+Poniższa instrukcja dotyczy wariantu `ExportSetup.pushbutton` dla Revita 2026.
+
 Generator `index.json` dla natywnego Autodesk Revit Extractor 2026. Czyta widoki
 aktywnego projektu RVT i zapisuje konfigurację w miejscu wybranym przez użytkownika.
 Zakładka **Setup IFC** pozwala zastosować ustawienia IFC do danych modelu.
