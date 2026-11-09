@@ -3,3 +3,7 @@ node_modules/
 *.log
 test-*
 Analyzer/dist/
+
+# Cloud check reports contain client project names - never commit
+cloudcheck*.html
+cloudcheck*.txt
