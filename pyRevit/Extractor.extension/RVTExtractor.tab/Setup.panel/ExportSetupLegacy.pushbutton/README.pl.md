@@ -17,6 +17,15 @@ której pyRevit używa dla tytułu z `bundle.yaml`: polski pokazuje polski, każ
 ustawienia) — angielski. Cały tekst okna jest w obu językach (`extractor_text.py`).
 Wyszukiwanie typu widoku działa po nazwie angielskiej i polskiej, np. „sheets” lub „arkusze”.
 
+- **Wybieranie widoków** działa jak w Eksploratorze: Ctrl+klik dodaje lub usuwa wiersz,
+  Shift+klik wybiera zakres, Ctrl+A wybiera wszystkie widoczne wiersze. Spacja lub pole wyboru
+  w wybranym wierszu zaznacza albo odznacza wszystkie wybrane wiersze. Eksportowane są tylko
+  zaznaczone wiersze.
+- **Shift+klik na przycisku** uruchamia sprawdzenie modelu w chmurze (ACC), tylko do odczytu,
+  zamiast okna konfiguracji. Wypisuje w oknie wyników pyRevit ścieżki modelu i linków, GUID
+  chmury oraz pasujące nazwy plików w lokalnym `CollaborationCache` Revita. Niczego nie otwiera,
+  nie kopiuje ani nie zapisuje. Zbiera fakty potrzebne do eksportu modeli z chmury; raport
+  zawiera nazwy projektu i plików.
 - **Tylko zaznaczone** zapisuje liczbowe `view_ids`. ID pochodzi z `ElementId.Value`, gdy
   istnieje (2024+), a w innym przypadku z `ElementId.IntegerValue` (2022–2023). Parser
   Extractora czyta ID jako Int32. Pusty wybór blokuje zapis. Filtry nie usuwają wcześniejszych zaznaczeń.

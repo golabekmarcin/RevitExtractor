@@ -113,6 +113,18 @@ class LegacyConfigTests(unittest.TestCase):
             with self.subTest(settings=settings):
                 self.assertEqual(config.database_warning(settings), "")
 
+    def test_tick_applies_to_whole_selection_only_when_row_is_part_of_it(self):
+        a, b, c = object(), object(), object()
+        self.assertEqual(config.tick_targets([a, b], a), [a, b])
+        self.assertEqual(config.tick_targets([a, b], c), [c])      # outside the selection
+        self.assertEqual(config.tick_targets([a], a), [a])         # single selection
+        self.assertEqual(config.tick_targets([], a), [a])
+
+    def test_space_ticks_all_unless_all_already_ticked(self):
+        self.assertTrue(config.toggled_state([False, True]))
+        self.assertTrue(config.toggled_state([False]))
+        self.assertFalse(config.toggled_state([True, True]))
+
     def test_inactive_selections_are_ignored(self):
         result = config.build_index({"enable_2d": False, "scope_2d": "selected"},
                                     ["stale-uid"], ["stale-uid"])

@@ -93,8 +93,9 @@
                         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,10">
                             <Button x:Name="all2d_btn" Tag="2d:all" Content="{DynamicResource check_visible}"/>
                             <Button x:Name="none2d_btn" Tag="2d:none" Content="{DynamicResource uncheck_visible}"/>
+                            <TextBlock Text="{DynamicResource selection_hint}" Foreground="#536277" VerticalAlignment="Center" TextWrapping="Wrap" Margin="6,0,0,0"/>
                         </StackPanel>
-                        <ListView Grid.Row="2" x:Name="views2d_lv">
+                        <ListView Grid.Row="2" x:Name="views2d_lv" SelectionMode="Extended">
                             <ListView.View><GridView>
                                 <GridViewColumn Header="✓" Width="46" CellTemplate="{StaticResource CheckTemplate}"/>
                                 <GridViewColumn Header="{DynamicResource col_name_2d}" Width="475" DisplayMemberBinding="{Binding name}"/>
@@ -124,8 +125,9 @@
                         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,10">
                             <Button x:Name="all3d_btn" Tag="3d:all" Content="{DynamicResource check_visible}"/>
                             <Button x:Name="none3d_btn" Tag="3d:none" Content="{DynamicResource uncheck_visible}"/>
+                            <TextBlock Text="{DynamicResource selection_hint}" Foreground="#536277" VerticalAlignment="Center" TextWrapping="Wrap" Margin="6,0,0,0"/>
                         </StackPanel>
-                        <ListView Grid.Row="2" x:Name="views3d_lv">
+                        <ListView Grid.Row="2" x:Name="views3d_lv" SelectionMode="Extended">
                             <ListView.View><GridView>
                                 <GridViewColumn Header="✓" Width="46" CellTemplate="{StaticResource CheckTemplate}"/>
                                 <GridViewColumn Header="{DynamicResource col_name_3d}" Width="680" DisplayMemberBinding="{Binding name}"/>

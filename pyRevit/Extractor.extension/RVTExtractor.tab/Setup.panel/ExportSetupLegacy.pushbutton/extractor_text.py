@@ -28,9 +28,14 @@ UI_TEXT = {
     "search_2d": ("Search by name, sheet number or ID", "Szukaj po nazwie, numerze arkusza lub ID"),
     "search_3d": ("Search by name or ID", "Szukaj po nazwie lub ID"),
     "view_type": ("View type", "Typ widoku"),
-    "check_visible": ("Select shown", "Zaznacz widoczne"),
-    "uncheck_visible": ("Clear shown", "Odznacz widoczne"),
-    "check_tooltip": ("Select for export", "Zaznacz do eksportu"),
+    "check_visible": ("Tick all shown", "Zaznacz wszystkie widoczne"),
+    "uncheck_visible": ("Untick all shown", "Odznacz wszystkie widoczne"),
+    "selection_hint": ("Ctrl/Shift+click or Ctrl+A selects rows; Space or a checkbox ticks all "
+                       "selected rows.",
+                       "Ctrl/Shift+klik lub Ctrl+A wybiera wiersze; Spacja lub pole wyboru "
+                       "zaznacza wszystkie wybrane."),
+    "check_tooltip": ("Tick for export (applies to all selected rows)",
+                      "Zaznacz do eksportu (dotyczy wszystkich wybranych wierszy)"),
     "col_name_2d": ("View name / sheet number and name", "Nazwa widoku / numer i nazwa arkusza"),
     "col_name_3d": ("View name", "Nazwa widoku"),
     "col_type": ("Type", "Typ"),

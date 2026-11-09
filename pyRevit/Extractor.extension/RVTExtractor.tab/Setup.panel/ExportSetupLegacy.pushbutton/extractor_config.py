@@ -127,6 +127,20 @@ def database_warning(settings=None):
               "np. Revit 2023 bez aktualizacji) i tak utworzą bazę SQLite.")
 
 
+def tick_targets(selected, source):
+    """Rows a checkbox change applies to: the whole selection when the clicked row is part of
+    a multi-row selection (Ctrl/Shift/Ctrl+A), otherwise just that row."""
+    selected = list(selected)
+    if len(selected) > 1 and any(row is source for row in selected):
+        return selected
+    return [source]
+
+
+def toggled_state(checked_states):
+    """Space on selected rows: tick them all, unless they are all ticked already."""
+    return not all(checked_states)
+
+
 def to_json(index):
     return json.dumps(index, ensure_ascii=False, indent=2) + "\n"
 

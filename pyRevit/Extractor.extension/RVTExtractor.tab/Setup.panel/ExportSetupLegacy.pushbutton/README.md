@@ -17,6 +17,13 @@ to the `bundle.yaml` title: Polish shows Polish, anything else (or no setting) E
 All window text is in both languages (`extractor_text.py`). View-type search matches the
 English and the Polish name, e.g. "sheets" or "arkusze".
 
+- **Selecting views** works like Explorer: Ctrl+click adds or removes a row, Shift+click selects
+  a range, Ctrl+A selects all shown rows. Space, or a checkbox on a selected row, ticks or
+  unticks every selected row. Only ticked rows are exported.
+- **Shift+click on the button** runs a read-only cloud (ACC) check instead of the setup window.
+  It prints the model and link paths, cloud GUIDs and matching file names in Revit's local
+  `CollaborationCache` to pyRevit's output window. It opens, copies and writes nothing.
+  It gathers facts for adding cloud-model export; the report contains project and file names.
 - **Selected only** writes numeric `view_ids`. The ID comes from `ElementId.Value` where it
   exists (2024+) and from `ElementId.IntegerValue` otherwise (2022–2023). The Extractor
   parser reads the IDs as Int32. An empty selection blocks saving, and filters don't drop

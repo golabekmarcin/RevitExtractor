@@ -10,8 +10,11 @@ from System.IO import File
 from System.Text import UTF8Encoding
 from pyrevit import forms
 
+from System.Windows.Controls import TextBox
+from System.Windows.Input import Key
+
 from extractor_config import (DEFAULTS, SetupError, build_index, database_warning,
-                              filter_records, to_json)
+                              filter_records, tick_targets, to_json, toggled_state)
 from extractor_i18n import tr
 from extractor_text import resources
 
@@ -109,6 +112,10 @@ class ExportSetupWindow(forms.WPFWindow):
         self.kind2d_cb.SelectionChanged += self._on_filter_changed
         for name in ("all2d_btn", "none2d_btn", "all3d_btn", "none3d_btn"):
             getattr(self, name).Click += self._on_bulk_check
+        # SelectionMode="Extended" (ui.xaml) gives Explorer-like Ctrl/Shift-click and Ctrl+A
+        # over the shown rows; Space ticks the selected rows.
+        for name in ("views2d_lv", "views3d_lv"):
+            getattr(self, name).PreviewKeyDown += self._on_list_key_down
         self.reset_btn.Click += self._on_reset
         self.save_btn.Click += self._on_save
         self.close_btn.Click += self._on_close
@@ -133,8 +140,36 @@ class ExportSetupWindow(forms.WPFWindow):
             self._refresh_state()
 
     def _on_row_changed(self, sender, args):
-        if not self._updating:
-            self._refresh_state()
+        if self._updating:
+            return
+        if getattr(args, "PropertyName", None) == "checked":
+            # A checkbox clicked on a row that is part of a multi-row selection ticks the
+            # whole selection (clicking a checkbox does not change the selection itself).
+            for name in ("views2d_lv", "views3d_lv"):
+                targets = tick_targets(getattr(self, name).SelectedItems, sender)
+                if len(targets) > 1:
+                    self._set_checked(targets, sender.checked)
+                    break
+        self._refresh_state()
+
+    def _set_checked(self, rows, state):
+        self._updating = True
+        try:
+            for row in rows:
+                row.checked = state
+        finally:
+            self._updating = False
+
+    def _on_list_key_down(self, sender, args):
+        if args.Key != Key.Space or isinstance(args.OriginalSource, TextBox):
+            return
+        selected = list(sender.SelectedItems)
+        if not selected:
+            return
+        # Handled first, so a focused checkbox does not also toggle itself.
+        args.Handled = True
+        self._set_checked(selected, toggled_state([row.checked for row in selected]))
+        self._refresh_state()
 
     def _on_filter_changed(self, sender, args):
         if not self._updating:
@@ -192,12 +227,7 @@ class ExportSetupWindow(forms.WPFWindow):
 
     def _on_bulk_check(self, sender, args):
         dimension, action = str(sender.Tag).split(":")
-        self._updating = True
-        try:
-            for row in self._visible[dimension]:
-                row.checked = action == "all"
-        finally:
-            self._updating = False
+        self._set_checked(self._visible[dimension], action == "all")
         self._refresh_state()
 
     def _on_reset(self, sender, args):

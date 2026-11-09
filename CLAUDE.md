@@ -1,5 +1,7 @@
 # RevitExtractor
 
+> **Current state, decisions and next steps live in `HANDOVER.md`.** Read it at the start of a session and update it at the end. `AGENTS.md` points other agents here.
+
 Tooling around Autodesk's native **Revit Extractor** (`RevitExtractor.exe`, shipped with Revit).
 Three independent parts:
 
@@ -18,6 +20,13 @@ Current coverage:
 - launcher: any year (no fixed list)
 - pyRevit `ExportSetupLegacy`: 2022–2025 (closed range)
 - pyRevit `ExportSetup`: 2026+, with no `max_revit_version`, so it also opens on 2027+. All 58 Revit API members it uses have exact matches in the 2026 docs (checked 2026-11-09). There are no docs for later versions. It is still Polish-only and has no scripted native-parser check, unlike `ExportSetupLegacy`. Its `build_index` still iterates a string selection per character (`"abc"` → `['a','b','c']`) and raises `TypeError` for an unknown scope. `ExportSetupLegacy` fixed both (2026-11-09).
+
+**Cloud (ACC) models: design open** (decided 2026-11-09: probe first, then the pyRevit button will prepare the files).
+- Shift+click on `ExportSetupLegacy` (`config.py` → `extractor_cloud_probe.py`) prints, read-only:
+  - model and link paths, cloud project/model GUIDs;
+  - file names in `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit <ver>\CollaborationCache` that contain those GUIDs.
+- Known facts: the Extractor's `ResolveLinkfileTask` finds links **by file name**, searching folders depth-first. The cache uses GUID file names in an undocumented layout.
+- The two candidates are copying from the cache into a staging folder under real link names, or detached save-as through the API. Don't implement either until the probe output from a real ACC model is in.
 
 One installed Revit is enough for verification. Treat other versions as behaving similarly (user decision, 2026-11-09).
 One known exception: the `index.json` parser shape follows the **Extractor build**, not the Revit year.
