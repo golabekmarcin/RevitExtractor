@@ -76,6 +76,10 @@ def build_index(settings=None, selected_2d=None, selected_3d=None):
         for key in ("aec_model_data", "design_description", "generate_master_views"):
             if bool(options[key]) != DEFAULTS[key]:
                 view3d[key] = bool(options[key])
+        if not options["pdb"]:
+            # Extractor 2024.0.x ignores properties_data.pdb and reads this key (default true).
+            # Without 3D there is no way to tell it, since writing 3dviewing enables 3D.
+            view3d["db_export"] = False
         derivative["3dviewing"] = view3d
     if options["enable_2d"]:
         view2d = _view_options(options, "2d", selected_2d or [])

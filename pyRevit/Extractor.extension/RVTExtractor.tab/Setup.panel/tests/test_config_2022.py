@@ -76,6 +76,18 @@ class Config2022Tests(unittest.TestCase):
         self.assertNotIn("3dviewing", result)
         self.assertEqual(result["properties_data"], {"pdb": False})
 
+    def test_disabled_database_is_written_for_both_parser_shapes(self):
+        # Extractor 2024.0.x reads 3dviewing.db_export (default true); 2025.3+ reads properties_data.pdb.
+        derivative = config.build_index({"pdb": False})["metadata"]["parameters"]["derivative_type"]
+        self.assertEqual(derivative["properties_data"], {"pdb": False})
+        self.assertEqual(derivative["3dviewing"], {"db_export": False})
+        # Enabled database keeps the index identical to the one verified on Revit 2022.
+        derivative = config.build_index()["metadata"]["parameters"]["derivative_type"]
+        self.assertEqual(derivative["3dviewing"], {})
+        # Without 3D the older key cannot be written without enabling 3D viewing.
+        derivative = config.build_index({"enable_3d": False, "pdb": False})["metadata"]["parameters"]["derivative_type"]
+        self.assertNotIn("3dviewing", derivative)
+
 
 class Host2022Tests(unittest.TestCase):
     def test_collect_views_uses_integer_value_and_keeps_model_read_only(self):
