@@ -27,7 +27,8 @@ Current coverage:
   - file names in `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit <ver>\CollaborationCache` that contain those GUIDs.
 - Known facts: the Extractor's `ResolveLinkfileTask` finds links **by file name**, searching folders depth-first. The cache uses GUID file names in an undocumented layout.
 - The two candidates are copying from the cache into a staging folder under real link names, or detached save-as through the API.
-- Probe output from a real ACC model (Revit 2022, 28 links) arrived 2026-11-09. Every link maps to a cache file by `LinkedModelModelId`. Facts and the open decision: `HANDOVER.md` §5 Cloud. Don't implement either candidate until the owner picks one after the cache-copy test (HANDOVER §3).
+- Probe output from a real ACC model (Revit 2022, 28 links) arrived 2026-11-09. Every link maps to a cache file by `LinkedModelModelId`. Facts: `HANDOVER.md` §5 Cloud.
+- **Decided 2026-11-10: copy from the cache ("photocopies").** The owner opens these models daily, so the cache is fresh enough, and a fresh download would only add waiting. An export from cached copies renamed to their real names succeeded in Revit 2022. Detached save-as is **not** planned. Show the cache date of each copied file, so stale copies are visible.
 
 One installed Revit is enough for verification. Treat other versions as behaving similarly (user decision, 2026-11-09).
 One known exception: the `index.json` parser shape follows the **Extractor build**, not the Revit year.

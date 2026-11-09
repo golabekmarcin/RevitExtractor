@@ -3,7 +3,7 @@
 For any AI agent (Claude, Codex, …) or person picking this up. **Read `CLAUDE.md` first** (project rules), then this file.
 **Update this file at the end of every session.** Facts here are dated; re-check anything about the repo state with `git status` / `git log`.
 
-Last updated: 2026-11-09, session 3 (Claude Code, with the repo owner Marcin Golabek): window slice 1 pushed and **verified by the owner in Revit 2022**; cloud check v2 report received and analysed (§5 Cloud).
+Last updated: 2026-11-10, session 3 (Claude Code, with the repo owner Marcin Golabek): window slice 1 **verified in Revit 2022**; cloud cache-copy test **passed**; **cloud decision: copy from the cache** (Q29).
 
 ## 1. Repo and branch state
 
@@ -22,7 +22,8 @@ Last updated: 2026-11-09, session 3 (Claude Code, with the repo owner Marcin Gol
 - Cloud check **v2** is committed and pushed as `8de9788`.
 - **Window slice 1 (§3a) is pushed** as `85ebc6a` (2026-11-09, session 3) and **passed the owner's Revit 2022 test** (§2).
 - The owner's Revit 2022 machine was reset to `origin/mgo-changes`. The v2 report was copied to this machine as an ignored `tests/cloudcheck_output_v2.html`, read, and **deleted** (never committed; `git status --ignored` was clean afterwards).
-- **Next session starts with:** (1) the redesign spec, then the plan (§4), local/server models first (Q9); (2) the owner's cloud decision and the two small cloud checks (§3).
+- The cache-copy test results (`cache-test-result.txt`, `journal-lines.txt`) reached this machine as untracked files in `tests/`. They were read and **deleted**, and `.gitignore` now also blocks `cache-test-result*.txt`, `journal-lines*.txt` and `RX-private/`.
+- **Next session starts with:** the redesign spec, then the plan (§4). Local/server models come first (Q9), then cloud via the cache (Q29). Nothing is waiting on the owner (§3).
 - The fork's default branch is still **`master`**. The owner switches it to `online` in GitHub → Settings → Branches (decision Q16/Q21).
 
 ## 2. Verification (commands in `CLAUDE.md`)
@@ -39,6 +40,11 @@ Main machine (Revit 2023, no pyRevit), 2026-11-09, after slice 1:
 - Multi-select works, but there is **severe lag with 1000+ sheets on every select/unselect**. See §3a.
 - **Window slice 1, session 3: all items PASS** on the 1000+ sheet model. Ticking, Select/Unselect all shown and Space are fast. The highlight survives multi-row ticks. The Type ▾ filter works. Search works: any word order, regex, the invalid-regex border, ✕ and Esc. Enter, Close and Esc work. The theme matches FamilyManager in English and Polish. No errors.
 - **Cloud check v2: ran without errors** on the same ACC model (28 links). Findings are in §5 Cloud.
+- **Cache-copy test, 2026-11-10: PASS.**
+  - The host and 2–3 links were copied from the `CollaborationCache` (host from the project root, links from `LinkedModels\`), renamed to their real names, and exported with `Start-RevitExport.ps1` (default index, Extractor 2025.3.0.12).
+  - `output\bubble.json` and `output\Resource\` exist, the "Resolve the link files." task reports `completed` (67 s), and 2D views, sheets and 3D views (including a federated view) were exported.
+  - No central-model or worksharing errors. `stderr.log` was empty. The only noise was `WARN Failed to enable Error Recovery` and many "mesh number larger than 64k in svf file" notices, both harmless.
+  - **Not captured:** the `Success Jobs`/`Failed Jobs` line (the guide's log filter kept only the first 40 matches, all mesh notices), and whether the copied links' geometry appears in the federated 3D view. Check both on the first real cloud export.
 - Cloud check v1 on a real ACC model (Revit 2022, workshared), facts:
   - cache layout confirmed: `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit 2022\CollaborationCache\<account id>\<project GUID>\<model GUID>.rvt`, plus `…\<project GUID>\CentralCache\<model GUID>.rvt` (same size, here 432 MB);
   - the model path is `Autodesk Docs://<ACC project name>/<file>.rvt` (ServerPath and CloudPath both True), and a URN is available.
@@ -46,27 +52,20 @@ Main machine (Revit 2023, no pyRevit), 2026-11-09, after slice 1:
 
 **Never verified:**
 - the 2024/2025 parsers;
-- the Extractor reading a model or links copied from the `CollaborationCache`;
-- real exports;
+- the copied links' geometry inside a cache-copy export (§2);
+- real exports from the pyRevit button;
 - the headless Extractor running next to an interactive Revit.
 
 ## 3. Waiting on the owner (Revit 2022 machine)
 
-Done in session 3: the git clean-up, the window slice 1 test (all PASS) and the cloud check v2 report.
+**Nothing open (2026-11-10).**
+- Done in session 3: the git clean-up, the window slice 1 test (all PASS), the cloud check v2 report, the cache-copy test (PASS), the journal check and the cloud decision (Q29).
+- The guide used for those checks stays in the repo for reuse: `pyRevit/…/Setup.panel/tests/cloud-cache-checks.html`, also published as a private claude.ai artifact (`https://claude.ai/artifact/9SGyLicjwoZNbtPsH5jWVF`).
+  - Its source is not in the repo, so regenerate the repo copy if the page changes.
+  - Known weakness: the result filter (`Select-Object -First 40`) can be swamped by "mesh number larger than 64k" notices and miss the `Success Jobs` line. Exclude `DSM_InternalErrorMessage` before reusing it.
+- Results always come back privately, **never through git**.
 
-**Step-by-step guide for items 1–3:** `pyRevit/…/Setup.panel/tests/cloud-cache-checks.html`. Open it in a browser on the Revit 2022 PC. Type the IDs from the cloud check and it fills in every PowerShell command. It writes only to `C:\RX-private\`. Results come back to the agent privately, **never through git**. The same page is also a private claude.ai artifact (`https://claude.ai/artifact/9SGyLicjwoZNbtPsH5jWVF`); its source is not in the repo, so regenerate the repo copy if the page changes.
-
-Open:
-1. **Cloud decision** (owner): which cloud candidate to try first (§5 Cloud, "Candidates").
-2. **Cache-copy test** (owner, manual, ~15 min, no code):
-   - copy the host and two or three of its links from the `CollaborationCache` into an empty staging folder: host from `<project>\<model GUID>.rvt`, links from `<project>\LinkedModels\<link GUID>.rvt`;
-   - rename each file to its real name (the link names the check printed);
-   - export it with `Start-RevitExport.ps1`.
-   - Report: did it succeed (`Success Jobs`/`Failed Jobs` in `console.log`), were the links resolved, and any warning about the central model or worksharing?
-   - Do it with Revit closed, and keep everything (staging folder, output, logs) out of the repo.
-3. **Journal check** (owner): the check found no `CLD://` lines in the newest Revit 2022 journals. Search one journal for the host model's GUID, e.g. `Select-String -Path "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit 2022\Journals\journal.*.txt" -Pattern '<model GUID>' | Select-Object -First 5`, and paste those lines privately. They show how Revit 2022 logs a cloud open, which Q27's cloud list depends on.
-
-**Next for the agent:** the redesign spec (`agent-skills:spec`), then the plan (`plan`), for the local/server part (Q9). The cloud part goes into the spec as an open section until items 1–3 are in.
+**Next for the agent:** the redesign spec (`agent-skills:spec`), then the plan (`plan`). Local/server models first (Q9), then cloud via the cache (Q29). The real cloud export later must also check that the copied links' geometry is in the output (§2).
 
 ## 3a. Window slice 1 (agreed 2026-11-09; built 2026-11-09, pushed as `85ebc6a`, verified by the owner in Revit 2022)
 
@@ -127,6 +126,7 @@ Goal: run the whole workflow from Revit through **one pyRevit button**, with no 
 | Q26 | Grey out the button while a document is open: `context: {rule: "(zero-doc)&!(doc-project|doc-family)"}` plus a run-time check. The owner verifies the greying. |
 | Q27 | Live cloud list = models already on this machine: the `CollaborationCache` plus Project/File names from Revit journals (`CLD://…` lines). Autodesk APS Data Management only later, if this proves too limited. |
 | Q28 | Exports go into a **queue** (several can be started, they run one after another). Write a **parallel-run test** (two Extractor runs on small models, separate folders, check both succeed and nothing collides). Enable true parallel runs only if that test passes on the owner's machine. Keep max-parallel as a setting, default 1. |
+| Q29 | **Cloud export = copy from the `CollaborationCache`** (decided 2026-11-10 after the cache-copy test passed). The owner opens these models daily, so the cache is fresh enough; downloading fresh copies would only add waiting. Copy the host from `<project>\<model GUID>.rvt` and links from `LinkedModels\<link GUID>.rvt` into a staging folder under their real names, then export. Show each file's cache date. Detached save-as through the API is not planned. |
 
 **Owner's clarifications (2026-11-09):**
 - **One code base, no per-version files.** Version differences live in code: a small capability table keyed by the running Revit and Extractor (`index.json` shape, IFC/DWG, IFC setups) plus feature checks (e.g. `ElementId.Value`/`IntegerValue`). A new Revit version should mean a table entry, not new files.
@@ -167,11 +167,14 @@ Goal: run the whole workflow from Revit through **one pyRevit button**, with no 
     - Link file names come from the open host (`RevitLinkType` name), not from the cache.
   - **Freshness differs between copies:** a model that was opened directly *and* loaded as a link had a newer root copy than its `LinkedModels\` copy (days apart), and the root and `CentralCache` sizes differed for some models. The cache is not guaranteed current.
   - `ExternalFileUtils.GetExternalFileReference(doc, linkType.Id)` **throws for every cloud link** in Revit 2022 ("elemId does not represent an external file reference"). For cloud links use external resource references, not external file references.
-  - Journals were said to contain `CLD://{projGUID}(ProjectName)/{modelGUID}(Model.rvt)`, but the check found **none** in the newest 40 Revit 2022 journals. Q27's "names from journals" is unconfirmed (§3 item 3).
-  - **Candidates for cloud export** (owner decides, §3 item 1):
-    - (a) **Copy from the cache:** copy host + `LinkedModels\` files into a staging folder under their real names, then export. Fast, works without a Revit API session, but the cache may be stale, its layout is undocumented, and it is unknown whether the Extractor accepts cached workshared cloud copies (§3 item 2 tests this).
-    - (b) **Detached save-as through the API:** with no document open, open each model from its GUIDs (`ConvertCloudGUIDsToCloudPath`, detached, worksets closed) and `SaveAs` into the staging folder. Gets current versions and is documented, but slow (28 links, up to GBs each) and needs Revit. Check the API overloads per version with `revit-api` first.
-    - The agent's recommendation: run the cache-copy test first. If it passes, use (a) with a freshness warning; otherwise use (b).
+  - **Journals (Revit 2022, checked 2026-11-10): the names are there, in a different format.** Revit 2022 does not write `CLD://{guid}(name)/{guid}(name)`, so the probe's `JOURNAL_RE` in `extractor_cloud_probe.py` matches nothing. The real lines are:
+    - `ModelPath Created: Is server path = True, Region = "US", Central server = "", Path = "CLD:\\US\{<project GUID>}<project name>\{<model GUID>}<file name>.rvt"`. The project name is sometimes URL-encoded (`%20`). Lines with `Region = "GLOBAL"` and all-zero GUIDs also appear; skip them.
+    - `Jrn.RibbonEvent "ModelBrowserOpenDocumentEvent:open:{""projectGuid"":…,""modelGuid"":…,""id"":""urn:…"",""displayName"":""<file name>"",""region"":""US"",…}"` (JSON with doubled quotes), written when a model is opened from the browser.
+    - `Open Cloud Model Method: open, Region: US, Model Guid: <guid>, Project Guid: <guid>.`
+    - One journal listed many models of the project with names, including links. So Q27's cloud list (Project | File Name from journals, matched to cache files by GUID) is feasible. The parser must handle these formats; fix or replace `JOURNAL_RE` when the code moves to `lib/`.
+  - **Cloud export approach: copy from the cache (Q29, decided 2026-11-10).** The cache-copy test passed (§2).
+    - The rejected alternative was detached save-as through the API (`ConvertCloudGUIDsToCloudPath` + `SaveAs`): always current, but slow with up to 28 multi-GB links.
+    - Remaining risks: the cache can be stale for models not opened recently (show the cache date), and the layout is undocumented (fail clearly if a GUID has no cached file).
   - Desktop Connector can't host cloud workshared models.
 - **Style reference:** FamilyManager uses `family_standards_resources.xaml` (light palette: `FsAccent #0A64D8`, `FsWindowBackground #F5F5F7`, `FsText #1D1D1F` …), merged after load, so windows use `DynamicResource` only. Our window already uses `DynamicResource` for its English/Polish text.
 

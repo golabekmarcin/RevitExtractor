@@ -7,3 +7,7 @@ Analyzer/dist/
 # Cloud check reports contain client project names - never commit
 cloudcheck*.html
 cloudcheck*.txt
+# Results of the cloud cache checks (cloud-cache-checks.html) - same rule
+cache-test-result*.txt
+journal-lines*.txt
+RX-private/
