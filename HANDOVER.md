@@ -8,33 +8,67 @@ Last updated: 2026-11-09 (Claude Code, session with the repo owner Marcin Golabe
 ## 1. Repo and branch state
 
 - Fork `origin` = `golabekmarcin/RevitExtractor`. `upstream` = `kopecp/RevitExtractor`, push disabled. Never push upstream.
-- Work branch: `mgo-changes`, all pushed to `origin` (2026-11-09):
-  - `0997b78` Fix disabled property DB for Extractor 2024.0.x parsers
-  - `e45ef00` Extend legacy export setup button to Revit 2022–2025, English/Polish
-  - `144b297` Add CLAUDE.md project rules and RevitRAG target config
-  - next commit: Add cloud model check, Explorer-style view selection and handover. It contains:
-    - the Shift+click probe: `config.py`, `extractor_cloud_probe.py`;
-    - `SelectionMode="Extended"` and Space/checkbox ticking;
-    - `HANDOVER.md` and `AGENTS.md`.
-- Nothing uncommitted at that point. Check `git status` anyway.
-- Stable/default branch decision: `online` (also deploys GitHub Pages). Merge there only after verification. The fork's default branch has not been switched yet.
+- Work branch: `mgo-changes`, pushed to `origin`: `0997b78`, `e45ef00`, `144b297`, `4a41c58` (cloud check v1, multi-select, handover), `18ecea1` (ignore cloud reports).
+- **Privacy incident, 2026-11-09:** the owner committed a cloud check report (client project name, model name, GUIDs, URN, Windows user name) as `b42b7b4` to this **public** fork.
+  - It was removed by resetting to `4a41c58` and force-pushing (`--force-with-lease`), followed by `18ecea1`, which `.gitignore`s `cloudcheck*.html` / `cloudcheck*.txt`.
+  - GitHub may keep the orphaned commit reachable by SHA until GitHub Support purges it.
+  - The owner's Revit 2022 machine still has `b42b7b4` locally. It must run `git fetch origin; git reset --keep origin/mgo-changes` before pushing again.
+  - **Cloud reports go to the agent privately, never into the repo.**
+- Cloud check **v2** and this handover update are committed and pushed as the commit after `18ecea1` ("Fix cloud check: link names, resources, journals, plain text"). Nothing else was uncommitted. Check `git status`.
+- **Next session starts with:** (1) the owner's v2 report, pasted privately; (2) window slice 1 (§3a). The owner approved slice 1 ("now, as redesign slice 1"), so plan it briefly, then build it test-first.
+- The fork's default branch is still **`master`**. The owner switches it to `online` in GitHub → Settings → Branches (decision Q16/Q21).
 
 ## 2. Verification (commands in `CLAUDE.md`)
 
-Last run 2026-11-09 on the main machine, which has Revit 2023 only and no pyRevit:
-- pyRevit unit tests: **69 OK**.
-- `tests/validate_native_legacy.ps1`: **9/9 PASS** with the Revit 2023 parser (Extractor 2024.0.2022.0415).
-- Analyzer `npm run check` OK; `npm run test:pages` 15 pass, 1 skip (expected).
+Main machine (Revit 2023, no pyRevit), 2026-11-09:
+- pyRevit unit tests: **74 OK**;
+- `validate_native_legacy.ps1`: **9/9 PASS** (Extractor 2024.0.2022.0415);
+- Analyzer `check` OK; `test:pages` 15 pass, 1 skip.
 
-**Never verified:** anything inside Revit/pyRevit (the button, the window, the localized `bundle.yaml`, the Shift+click check), the 2024/2025 parsers, and real exports.
+**Owner's Revit 2022 + pyRevit machine, 2026-11-09** (pyRevit 6.5.5; Revit 22.1.80.32):
+- `validate_native_legacy.ps1`: **9/9 PASS**, `ExtractorUtility.dll` 2025.3.0.12, shape `Parse (2025.3+)`. So the 2025.3 parser **accepts `3dviewing.db_export`**, and the `no-database` / `2d-only-no-database` profiles give `PropertyDbStorageType=None`.
+- Only one "Export setup" button shows (it works), and the window language follows pyRevit (it works).
+- Multi-select works, but there is **severe lag with 1000+ sheets on every select/unselect**. See §3a.
+- Cloud check v1 on a real ACC model (Revit 2022, workshared), facts:
+  - cache layout confirmed: `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit 2022\CollaborationCache\<account id>\<project GUID>\<model GUID>.rvt`, plus `…\<project GUID>\CentralCache\<model GUID>.rvt` (same size, here 432 MB);
+  - the model path is `Autodesk Docs://<ACC project name>/<file>.rvt` (ServerPath and CloudPath both True), and a URN is available.
+  - **probe bugs:** all 28 link names were `ERROR: Name` (IronPython quirk), and the links showed no path, status or GUIDs. pyRevit's Markdown renderer merged all tables and dropped headings, so it was unclear whether those rows were missing or lost. v2 fixes all of this (§3).
 
-## 3. Waiting on the owner's Revit 2022 + pyRevit machine
+**Never verified:**
+- the Shift+click check v2;
+- the 2024/2025 parsers;
+- real exports;
+- the headless Extractor running next to an interactive Revit.
 
-1. Pull `mgo-changes`, then run `validate_native_legacy.ps1`. Expect a `Parse (2025.3+)` shape. The `no-database` profile shows whether the 2025.3 parser accepts `3dviewing.db_export`.
-2. After Reload pyRevit, only one "Export setup" button shows in Revit 2022. Delete any old `ExportSetup22.pushbutton` copy first.
-3. The window is fully English or fully Polish depending on the pyRevit language setting. Searching "sheets" or "arkusze" finds sheets. The database note appears with 3D off and SQLite off, and stays after saving.
-4. Multi-select: Shift/Ctrl/Ctrl+A select rows; Space or a checkbox ticks all selected rows. Needs the uncommitted work pushed first.
-5. **Cloud check:** Shift+click with an ACC model that has cloud links open, and send the report. That report decides the cloud design (§5, Q27). Needs the uncommitted work pushed first.
+## 3. Waiting on the owner (Revit 2022 machine)
+
+1. Clean up first: `git fetch origin; git reset --keep origin/mgo-changes`, and delete the local `cloudcheck_output.html`.
+2. Once v2 is pushed: Shift+click with the same ACC model open, and **send the plain-text report privately** (paste it to the agent). It should show:
+   - link names;
+   - for each link: file reference ok/None/ERROR;
+   - every external resource with its reference information;
+   - every cached `.rvt` in the project folders;
+   - project and file names from journals.
+3. After window slice 1 (§3a): retest selection speed on the 1000+ sheet model.
+
+## 3a. Window slice 1 (agreed 2026-11-09, not started)
+
+Owner feedback on the view window and the plan. The ported pieces must move unchanged into the redesign's shared `lib/` later.
+
+- **Lag:** a WPF harness on this machine (the real `ui.xaml`, 1,500 rows, C# row objects) measured 7–15 ms per select-all, tick-all or JSON-preview update, so the cost is on the IronPython side.
+  - Rows are pyRevit `TemplateListItem`: `__getattr__` forwards to a dict, and `__bool__` = the tick state.
+  - The window subscribes a handler to every row's PropertyChanged, replaces ItemsSource on every filter, and rebuilds the index plus the JSON preview on every tick.
+  - **Fix: the FamilyManager pattern** (`workspace_ui.SelectionRow` / `SearchableMultiSelectWindow`):
+    - `forms.Reactive` rows with explicit properties;
+    - `ObservableCollection` + `CollectionView` filter;
+    - no per-row subscriptions; checkbox Click → one refresh;
+    - JSON preview built lazily (preview tab / save).
+  - IronPython can't be measured here, so the owner confirms the speed on the real model.
+- **Search bar:** port FamilyManager `lib/search_bar.py` + `search_bar.xaml`: regex, inline ✕ clear, "Clear all filters". Inline its `MGo_Custom.wpf_search_placeholder` dependency.
+- **Column filters:** port `column_filter_model.py` + `column_filter_ui.py` (Excel-style header popups; they work on column headers).
+- **Labels:** the tick buttons become **"Select all shown" / "Unselect all shown"** and act only on the filtered (shown) rows. Row highlighting (Ctrl/Shift/Ctrl+A) is then called "highlight" in hints, to avoid two meanings of "select".
+- **Layout:** the view list is the main area; options (2D/3D/SQLite, advanced) become compact. Theme `lib/rx_theme.xaml` copied from FamilyManager with `Fs*` → `Rx*` (Q13/Q20).
+- All new text in English and Polish.
 
 ## 4. Redesign — agreed decisions (grilling session 2026-11-09)
 
