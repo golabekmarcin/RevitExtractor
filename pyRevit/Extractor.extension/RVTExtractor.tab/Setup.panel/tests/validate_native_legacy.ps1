@@ -1,4 +1,4 @@
-# Checks the ExportSetup22 (Revit 2022-2025) index profiles with the native Autodesk parser.
+# Checks the ExportSetupLegacy (Revit 2022-2025) index profiles with the native Autodesk parser.
 # Supports both parser shapes:
 #   Extractor 2025.3+  : static IndexJson.Parse(json), PropertyDbStorageType
 #   Extractor 2024.0.x : new IndexJson(path), GeneratePropertyDB from 3dviewing.db_export
@@ -14,7 +14,7 @@ if (-not $ExtractorDirectory) {
         Where-Object { Test-Path (Join-Path $_ 'ExtractorUtility.dll') } | Select-Object -First 1
     if (-not $ExtractorDirectory) { throw 'No Revit 2022-2025 RevitExtractor found; pass -ExtractorDirectory.' }
 }
-$bundle = Join-Path (Split-Path $PSScriptRoot -Parent) 'ExportSetup22.pushbutton'
+$bundle = Join-Path (Split-Path $PSScriptRoot -Parent) 'ExportSetupLegacy.pushbutton'
 # 'database' is the expected property DB state; each parser shape reports it differently.
 $fixtureSource = @'
 import json
@@ -54,6 +54,10 @@ foreach ($file in @('Newtonsoft.Json.dll', 'log4net.dll', 'ExtractorUtility.dll'
 }
 $indexType = $assembly.GetType('Autodesk.ExtractorUtility.IndexJson', $true)
 $parse = $indexType.GetMethod('Parse')
+$constructor = $indexType.GetConstructor([type[]]@([string]))
+if (-not $parse -and -not $constructor) {
+    throw 'Unknown IndexJson shape: neither static Parse nor a (String path) constructor.'
+}
 $shape = if ($parse) { 'Parse (2025.3+)' } else { 'constructor (2024.0.x)' }
 Write-Output ('Parser: {0}; file version {1}; shape {2}' -f $assembly.Location,
     [Diagnostics.FileVersionInfo]::GetVersionInfo($assembly.Location).FileVersion, $shape)
@@ -65,7 +69,9 @@ try {
             $native = $parse.Invoke($null, [object[]]@($payloadJson))
         } else {
             [IO.File]::WriteAllText($temporary, $payloadJson, (New-Object Text.UTF8Encoding $false))
-            $native = $indexType.GetConstructor([type[]]@([string])).Invoke([object[]]@([string]$temporary))
+            # Keep the [string] casts: cmdlet output (Join-Path, ConvertTo-Json) is PSObject-wrapped,
+            # and reflection then looks for a PSObject parameter ("Constructor ... not found").
+            $native = $constructor.Invoke([object[]]@([string]$temporary))
         }
         foreach ($property in $fixture.expected.PSObject.Properties) {
             if ($property.Name -eq 'database_2024') { continue }

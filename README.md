@@ -10,7 +10,7 @@
    np. aby wskazać konkretne widoki lub włączyć IFC.
    [Instrukcja instalacji przycisku](pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel/README.md).
    Możesz sklonować repo (`git clone --branch online https://github.com/kopecp/RevitExtractor.git`)
-   i skopiować cały `ExportSetup22.pushbutton` dla Revita 2022 albo
+   i skopiować cały `ExportSetupLegacy.pushbutton` dla Revita 2022–2025 albo
    `ExportSetup.pushbutton` dla Revita 2026 do swojego panelu pyRevit.
    Własna konfiguracja musi pochodzić z tego samego modelu.
 3. Na stronie wybierz **Eksportuj z Revita → Pobierz PowerShell**.

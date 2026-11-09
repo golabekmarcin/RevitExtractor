@@ -1,0 +1,15 @@
+title:
+  en_us: "Export\nsetup"
+  pl: "Eksport\nsetup"
+tooltip:
+  en_us: >-
+    Select views and sheets and save index.json for Autodesk Revit Extractor
+    in Revit 2022-2025. Supports 2D, 3D and SQLite. Save the RVT yourself.
+  pl: >-
+    Wybierz widoki i arkusze i zapisz index.json dla Autodesk Revit Extractor
+    w Revit 2022-2025. Obsługuje 2D, 3D i SQLite. Plik RVT zapisujesz samodzielnie.
+author: RevitExtractor
+min_revit_version: 2022
+max_revit_version: 2025
+engine:
+  clean: true

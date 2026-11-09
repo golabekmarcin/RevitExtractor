@@ -1,7 +1,9 @@
 # Eksport setup — przycisk pyRevit
 
-Wariant dla **Revita 2022** znajduje się w osobnym folderze
-[`ExportSetup22.pushbutton`](ExportSetup22.pushbutton/README.md).
+For **Revit 2022–2025** use the separate folder
+[`ExportSetupLegacy.pushbutton`](ExportSetupLegacy.pushbutton/README.md) (English · [Polski](ExportSetupLegacy.pushbutton/README.pl.md)).
+Wariant dla **Revita 2022–2025** znajduje się w osobnym folderze
+[`ExportSetupLegacy.pushbutton`](ExportSetupLegacy.pushbutton/README.pl.md).
 Poniższa instrukcja dotyczy wariantu `ExportSetup.pushbutton` dla Revita 2026.
 
 Generator `index.json` dla natywnego Autodesk Revit Extractor 2026. Czyta widoki

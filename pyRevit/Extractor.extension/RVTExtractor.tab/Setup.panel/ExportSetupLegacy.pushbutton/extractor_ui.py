@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Read-only Revit 2022 WPF editor; only the selected index file is written."""
+"""Read-only Revit 2022-2025 WPF editor; only the selected index file is written."""
 from __future__ import unicode_literals
 
 import os
@@ -10,7 +10,10 @@ from System.IO import File
 from System.Text import UTF8Encoding
 from pyrevit import forms
 
-from extractor_config import DEFAULTS, SetupError, build_index, filter_records, to_json
+from extractor_config import (DEFAULTS, SetupError, build_index, database_warning,
+                              filter_records, to_json)
+from extractor_i18n import tr
+from extractor_text import resources
 
 try:
     text = unicode
@@ -77,15 +80,21 @@ class ExportSetupWindow(forms.WPFWindow):
         }
         self._visible = {"2d": [], "3d": []}
         forms.WPFWindow.__init__(self, os.path.join(os.path.dirname(__file__), "ui.xaml"))
+        # ui.xaml labels are {DynamicResource key}; they update as soon as the keys exist.
+        for key, value in resources().items():
+            self.Resources[key] = value
         self.model_title.Text = snapshot["title"]
-        self.model_path.Text = snapshot["path"] or "Model nie ma jeszcze zapisanej ścieżki."
+        self.model_path.Text = snapshot["path"] or tr("The model has no saved path yet.",
+                                                      "Model nie ma jeszcze zapisanej ścieżki.")
         self.model_path.ToolTip = snapshot["path"]
-        self.model_note.Text = (
-            "Widoki pochodzą z aktywnego modelu. Extractor odczyta zapisaną wersję RVT."
-            + (" Model ma niezapisane zmiany." if snapshot["modified"] else ""))
+        self.model_note.Text = tr(
+            "Views come from the active model. The Extractor reads the saved RVT.",
+            "Widoki pochodzą z aktywnego modelu. Extractor odczyta zapisaną wersję RVT.") + (
+                tr(" The model has unsaved changes.", " Model ma niezapisane zmiany.")
+                if snapshot["modified"] else "")
 
         kinds = sorted(set(row.item["kind"] for row in self._rows["2d"]))
-        self.kind2d_cb.ItemsSource = ["Wszystkie typy"] + kinds
+        self.kind2d_cb.ItemsSource = [tr("All types", "Wszystkie typy")] + kinds
         self.kind2d_cb.SelectedIndex = 0
         for row in self._rows["2d"] + self._rows["3d"]:
             row.PropertyChanged += self._on_row_changed
@@ -156,17 +165,25 @@ class ExportSetupWindow(forms.WPFWindow):
             total = len(self._rows[dimension])
             visible = len(self._visible[dimension])
             getattr(self, "count" + dimension + "_text").Text = (
-                "Zaznaczone: {0} / {1}    •    Widoczne na liście: {2}"
+                tr("Selected: {0} / {1}    •    Shown in the list: {2}",
+                   "Zaznaczone: {0} / {1}    •    Widoczne na liście: {2}")
                 .format(selected, total, visible))
-            scope = ("wyłączone" if not settings["enable_" + dimension]
-                     else "domyślny zakres" if settings["scope_" + dimension] == "default"
-                     else "wybrane: {0}".format(selected))
+            if not settings["enable_" + dimension]:
+                scope = tr("off", "wyłączone")
+            elif settings["scope_" + dimension] == "default":
+                scope = tr("default scope", "domyślny zakres")
+            else:
+                scope = tr("selected: {0}", "wybrane: {0}").format(selected)
             summaries.append(dimension.upper() + ": " + scope)
-        summaries.append("Baza SQLite: " + ("tak" if settings["pdb"] else "nie"))
+        summaries.append(tr("SQLite database: ", "Baza SQLite: ")
+                         + (tr("yes", "tak") if settings["pdb"] else tr("no", "nie")))
         self.summary_text.Text = "   |   ".join(summaries)
         try:
             self.json_tb.Text = to_json(self._payload())
-            self.status_text.Text = "Gotowe do zapisania konfiguracji."
+            warning = database_warning(settings)
+            self.status_text.Text = tr("Ready to save the configuration.",
+                                       "Gotowe do zapisania konfiguracji.") + (
+                                           " " + warning if warning else "")
             self.save_btn.IsEnabled = True
         except SetupError as error:
             self.json_tb.Text = ""
@@ -207,19 +224,26 @@ class ExportSetupWindow(forms.WPFWindow):
             self.status_text.Text = text(error)
             return
         path = forms.save_file(
-            file_ext="json", files_filter="Konfiguracja Extractora (*.json)|*.json",
+            file_ext="json",
+            files_filter=tr("Extractor configuration (*.json)|*.json",
+                            "Konfiguracja Extractora (*.json)|*.json"),
             init_dir=os.path.dirname(self.last_saved_path) if self.last_saved_path else default_save_directory(),
-            default_name="index.json", title="Zapisz konfigurację eksportu")
+            default_name="index.json",
+            title=tr("Save export configuration", "Zapisz konfigurację eksportu"))
         if not path:
             return
         try:
             write_index_atomic(path, content)
         except Exception as error:
-            forms.alert("Nie udało się zapisać pliku.\n\n{0}".format(error),
-                        title="Eksport setup 2022")
+            forms.alert(tr("Could not save the file.\n\n{0}",
+                           "Nie udało się zapisać pliku.\n\n{0}").format(error),
+                        title=tr("Export setup", "Eksport setup"))
             return
         self.last_saved_path = path
-        self.status_text.Text = "Zapisano: " + path
+        # Keep the database note visible after saving: that is when it matters.
+        warning = database_warning(self._settings())
+        self.status_text.Text = tr("Saved: ", "Zapisano: ") + path + (
+            "\n" + warning if warning else "")
         self.status_text.ToolTip = path
 
     def _on_close(self, sender, args):
