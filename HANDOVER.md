@@ -54,6 +54,8 @@ Main machine (Revit 2023, no pyRevit), 2026-11-09, after slice 1:
 
 Done in session 3: the git clean-up, the window slice 1 test (all PASS) and the cloud check v2 report.
 
+**Step-by-step guide for items 1–3:** `pyRevit/…/Setup.panel/tests/cloud-cache-checks.html`. Open it in a browser on the Revit 2022 PC. Type the IDs from the cloud check and it fills in every PowerShell command. It writes only to `C:\RX-private\`. Results come back to the agent privately, **never through git**. The same page is also a private claude.ai artifact (`https://claude.ai/artifact/9SGyLicjwoZNbtPsH5jWVF`); its source is not in the repo, so regenerate the repo copy if the page changes.
+
 Open:
 1. **Cloud decision** (owner): which cloud candidate to try first (§5 Cloud, "Candidates").
 2. **Cache-copy test** (owner, manual, ~15 min, no code):

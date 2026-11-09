@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloud Cache Checks</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style id="page-style">
+/* Layout: one readable column of numbered jobs; each job is a card with steps, generated commands sit in copyable code panels. */
+:root {
+  --bg: #F2F4F7;
+  --surface: #FFFFFF;
+  --surface-2: #E9EDF2;
+  --ink: #16202B;
+  --muted: #566372;
+  --line: #D3DAE2;
+  --accent: #1F5FAD;
+  --accent-ink: #FFFFFF;
+  --warn: #9C4A17;
+  --warn-bg: #FBEFE6;
+  --ok: #24703F;
+  --ok-bg: #E7F4EC;
+  --bad: #B3261E;
+  --code-bg: #14202C;
+  --code-ink: #DCE6F0;
+  --font-display: "Archivo", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, "Cascadia Mono", monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E141B; --surface: #16202A; --surface-2: #1D2935; --ink: #E5ECF3; --muted: #9AA9B8;
+    --line: #2A3846; --accent: #77AEF0; --accent-ink: #0E141B; --warn: #E8A47A; --warn-bg: #2A1E16;
+    --ok: #7CCB98; --ok-bg: #15271D; --bad: #F08A84; --code-bg: #0A1016; --code-ink: #DCE6F0;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E141B; --surface: #16202A; --surface-2: #1D2935; --ink: #E5ECF3; --muted: #9AA9B8;
+  --line: #2A3846; --accent: #77AEF0; --accent-ink: #0E141B; --warn: #E8A47A; --warn-bg: #2A1E16;
+  --ok: #7CCB98; --ok-bg: #15271D; --bad: #F08A84; --code-bg: #0A1016; --code-ink: #DCE6F0;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 17px; line-height: 1.6;
+}
+.wrap {
+  max-width: 760px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+  display: flex; flex-direction: column; gap: 28px;
+}
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: 2.1rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; }
+h3 { font-size: 1.08rem; }
+p { margin: 0; }
+.lede { color: var(--muted); font-size: 1.05rem; max-width: 62ch; }
+.eyebrow { font-family: var(--font-mono); font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+header { display: flex; flex-direction: column; gap: 10px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 22px; display: flex; flex-direction: column; gap: 16px; min-width: 0;
+}
+.job-head { display: flex; gap: 14px; align-items: baseline; }
+.job-num {
+  flex: none; width: 2.1rem; height: 2.1rem; border-radius: 50%;
+  display: grid; place-items: center; background: var(--accent); color: var(--accent-ink);
+  font-family: var(--font-display); font-weight: 700; font-size: 1rem; transform: translateY(-2px);
+}
+.job-head .meta { color: var(--muted); font-size: .92rem; }
+ol.steps, ul.plain { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 10px; }
+ol.steps > li::marker { font-weight: 700; color: var(--accent); }
+.note { border-radius: 8px; padding: 12px 14px; font-size: .95rem; }
+.note.warn { background: var(--warn-bg); color: var(--ink); border-left: 4px solid var(--warn); }
+.note.ok { background: var(--ok-bg); color: var(--ink); border-left: 4px solid var(--ok); }
+.note strong { color: inherit; }
+.eli5 { background: var(--surface-2); border-radius: var(--r); padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
+code, kbd { font-family: var(--font-mono); font-size: .86em; }
+:not(pre) > code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); }
+.codebox { position: relative; min-width: 0; }
+.codebox pre {
+  margin: 0; background: var(--code-bg); color: var(--code-ink); border-radius: 8px;
+  padding: 16px 16px 16px 16px; padding-top: 44px; overflow-x: auto; font-family: var(--font-mono);
+  font-size: .8rem; line-height: 1.55; white-space: pre;
+}
+.codebox .label { position: absolute; top: 10px; left: 14px; font-family: var(--font-mono); font-size: .72rem; color: #8FA3B8; letter-spacing: .06em; text-transform: uppercase; }
+.copy {
+  position: absolute; top: 8px; right: 8px; font: 600 .8rem var(--font-body);
+  background: #2B3B4C; color: #E6EEF6; border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer;
+}
+.copy:hover { background: #3A4E63; }
+.copy:focus-visible, input:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.form { display: grid; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label { font-weight: 700; font-size: .95rem; }
+.field .hint { color: var(--muted); font-size: .85rem; }
+.field input {
+  font: .9rem var(--font-mono); padding: 9px 11px; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%;
+}
+.field input.invalid { border-color: var(--bad); }
+.field .err { color: var(--bad); font-size: .82rem; min-height: 0; }
+.pair { display: grid; grid-template-columns: 1.4fr 1fr; gap: 10px; }
+@media (max-width: 560px) { .pair { grid-template-columns: 1fr; } }
+.linkset { border: 1px dashed var(--line); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.linkset .tag { font-family: var(--font-mono); font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.status { font-size: .9rem; padding: 10px 12px; border-radius: 8px; }
+.status.ready { background: var(--ok-bg); border-left: 4px solid var(--ok); }
+.status.missing { background: var(--warn-bg); border-left: 4px solid var(--warn); }
+.report {
+  font-family: var(--font-mono); font-size: .8rem; background: var(--surface-2); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; white-space: pre; margin: 0;
+}
+.report mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--ink); border-radius: 3px; padding: 0 2px; }
+table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+.tablewrap { overflow-x: auto; }
+th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-display); font-weight: 600; }
+td:first-child { color: var(--muted); white-space: nowrap; }
+.send { display: flex; flex-direction: column; gap: 10px; }
+.send label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.send input { margin-top: 6px; accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+footer { color: var(--muted); font-size: .85rem; }
+.dlbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.btn {
+  font: 700 .95rem var(--font-body); background: var(--accent); color: var(--accent-ink);
+  border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+}
+.btn:hover { filter: brightness(1.08); }
+.dlbar .hint { color: var(--muted); font-size: .88rem; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<style>body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+<div class="wrap" id="page">
+
+<header>
+  <span class="eyebrow">Revit 2022 PC · about 30–45 minutes, mostly waiting</span>
+  <h1>Cloud Cache Checks</h1>
+  <p class="lede">Three small jobs that tell us how the export button should handle cloud (ACC) models.
+  You type a few IDs into the box in Job 0, and every command on this page fills itself in.
+  You copy, paste, wait, and send me the text it prints.</p>
+  <div class="dlbar" id="dlbar" hidden>
+    <button class="btn" type="button" id="dl">Download as HTML file</button>
+    <span class="hint" id="dlhint">One file that works offline in any browser on the Revit PC: double-click it, fill in the boxes, copy the commands.</span>
+  </div>
+</header>
+
+<section class="eli5" aria-labelledby="idea">
+  <h2 id="idea">The idea, explained simply</h2>
+  <p>When you open a cloud model, Revit quietly keeps a <strong>photocopy</strong> of it, and of every linked model, in a hidden folder on your PC
+  (the <code>CollaborationCache</code>). Last time we proved that a photocopy exists for <strong>all 28 links</strong>.
+  The copies just have number-names (GUIDs) instead of real names.</p>
+  <p>The exporter finds links <strong>by their real file name</strong>. So the question is simple:
+  <em>if we take the photocopies, give them their real names and put them in one folder, will the exporter accept them?</em></p>
+  <p>If yes, cloud export can be fast and easy. If no, the button must download fresh copies through Revit instead, which is slower.</p>
+</section>
+
+<section class="note warn" aria-label="Ground rules">
+  <strong>Three ground rules (client data):</strong>
+  <ul class="plain" style="margin-top:6px">
+    <li>Everything goes into <code>C:\RX-private\</code>. Never into the RevitExtractor repo folder.</li>
+    <li>Never <code>git add</code> or commit anything from these jobs.</li>
+    <li>Send results by pasting them into the Claude chat only.</li>
+  </ul>
+</section>
+
+<!-- JOB 0 -->
+<section class="card" aria-labelledby="j0">
+  <div class="job-head"><span class="job-num">0</span><div><h2 id="j0">Collect the IDs</h2><p class="meta">5 minutes · Revit open</p></div></div>
+  <ol class="steps">
+    <li>In Revit 2022, open the same cloud model as last time.</li>
+    <li>Hold <kbd>Shift</kbd> and click <strong>Export setup</strong>. The cloud check report appears in the pyRevit window.</li>
+    <li>In the <code>[model]</code> block at the top, find <code>model_guid:</code> and <code>title:</code>. Copy them into the first two boxes below.</li>
+    <li>Pick <strong>two or three small links</strong>, because big ones take a long time to copy.
+      <ul class="plain" style="margin-top:6px">
+        <li>In the <code>[cache files naming a known GUID]</code> list, find lines with <code>\LinkedModels\</code> and a small size, for example under <code>100000000 B</code> (100 MB).</li>
+        <li>Copy the GUID from the file name, then find the <code>[link …]</code> block whose <code>resource0_info_LinkedModelModelId:</code> is that GUID. Its <code>name:</code> line is the real file name.</li>
+      </ul>
+    </li>
+    <li>Also type the folder where RevitExtractor is cloned on this PC.</li>
+  </ol>
+
+  <div class="form" id="form">
+    <div class="field">
+      <label for="repo">RevitExtractor folder on this PC</label>
+      <span class="hint">The folder that contains <code>Analyzer</code> and <code>pyRevit</code>.</span>
+      <input id="repo" type="text" spellcheck="false" autocomplete="off" placeholder="C:\Users\you\...\RevitExtractor">
+    </div>
+    <div class="pair">
+      <div class="field">
+        <label for="hostName">Host model name (<code>title:</code>)</label>
+        <input id="hostName" type="text" spellcheck="false" autocomplete="off" placeholder="MyProject_Model">
+      </div>
+      <div class="field">
+        <label for="hostGuid">Host model GUID (<code>model_guid:</code>)</label>
+        <input id="hostGuid" type="text" spellcheck="false" autocomplete="off" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+        <span class="err" id="hostGuidErr"></span>
+      </div>
+    </div>
+    <div id="links"></div>
+    <div class="status missing" id="formStatus" role="status">Fill in the boxes above; the commands below update as you type.</div>
+    <p class="hint" style="color:var(--muted);font-size:.85rem">This page does not save or send what you type. If you reload it, the boxes are empty again.</p>
+  </div>
+
+  <p style="font-size:.95rem">An example of what the report looks like (made-up values):</p>
+<pre class="report">[model]
+  model_guid: <mark>11111111-2222-3333-4444-555555555555</mark>
+  title: <mark>Example_Host</mark>
+
+[link 3/28]
+  name: <mark>Example_Link_Structure.rvt</mark>
+  resource0_info_LinkedModelModelId: <mark>99999999-8888-7777-6666-555555555555</mark>
+
+[cache files naming a known GUID]
+  ...\LinkedModels\99999999-8888-7777-6666-555555555555.rvt  |  <mark>36536320 B</mark>  |  2026-11-02 15:21</pre>
+</section>
+
+<!-- JOB 1 -->
+<section class="card" aria-labelledby="j1">
+  <div class="job-head"><span class="job-num">1</span><div><h2 id="j1">The photocopy test</h2><p class="meta">20–40 minutes · Revit closed</p></div></div>
+
+  <h3>1.1 Close Revit</h3>
+  <p>Close Revit completely, so the photocopies aren't changing while you copy them.</p>
+
+  <h3>1.2 Copy the photocopies and give them real names</h3>
+  <p>Open <strong>Windows PowerShell</strong> (Start menu → type <em>PowerShell</em>). Paste this whole block and press <kbd>Enter</kbd>.
+  Every file should print a green <strong>Copied</strong> line. A red <strong>NOT FOUND</strong> means that GUID has a typo.</p>
+  <div class="codebox"><span class="label">PowerShell · copy</span><button class="copy" type="button" data-target="cmdCopy">Copy</button><pre id="cmdCopy"></pre></div>
+
+  <h3>1.3 Run the export on the copied host</h3>
+  <p>Paste this in the same PowerShell window. It asks <code>Uruchomic eksport? [T/N]</code>: type <kbd>T</kbd> and press <kbd>Enter</kbd>.
+  Then wait. It can take 10–30 minutes and the window may look frozen.</p>
+  <div class="codebox"><span class="label">PowerShell · export</span><button class="copy" type="button" data-target="cmdExport">Copy</button><pre id="cmdExport"></pre></div>
+  <div class="note ok">At the end you see either green <strong>Proces zakonczony</strong> (it worked) or red <strong>Blad: …</strong> (it failed). Both are useful answers. Press <kbd>Enter</kbd> to close.</div>
+  <div class="note warn">Warnings about the links you did <strong>not</strong> copy are expected (we copied only 2–3 of 28). The question is whether the ones you copied were found.</div>
+
+  <h3>1.4 Collect the result</h3>
+  <p>Paste this. It picks the important lines from the logs, saves them to <code>C:\RX-private\cache-test-result.txt</code> and opens that file in Notepad.</p>
+  <div class="codebox"><span class="label">PowerShell · collect result</span><button class="copy" type="button" data-target="cmdResult">Copy</button><pre id="cmdResult"></pre></div>
+  <p>Select everything in Notepad (<kbd>Ctrl</kbd>+<kbd>A</kbd>), copy it, and paste it into the Claude chat.</p>
+</section>
+
+<!-- JOB 2 -->
+<section class="card" aria-labelledby="j2">
+  <div class="job-head"><span class="job-num">2</span><div><h2 id="j2">The journal check</h2><p class="meta">2 minutes · Revit open or closed</p></div></div>
+  <p>Revit writes a diary of everything it does (the <em>journals</em>). We hoped it would contain the real project and file names
+  of cloud models, but the check found none. This shows how Revit 2022 actually writes them down.</p>
+  <div class="codebox"><span class="label">PowerShell · journals</span><button class="copy" type="button" data-target="cmdJournal">Copy</button><pre id="cmdJournal"></pre></div>
+  <p>Notepad opens with up to 20 lines. Copy them into the chat. If it says <code>(no lines found)</code>, send that too; it's an answer.</p>
+</section>
+
+<!-- JOB 3 -->
+<section class="card" aria-labelledby="j3">
+  <div class="job-head"><span class="job-num">3</span><div><h2 id="j3">Choose a direction</h2><p class="meta">1 minute · after Job 1</p></div></div>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th scope="col"></th><th scope="col">A · Use the photocopies</th><th scope="col">B · Download fresh copies</th></tr></thead>
+    <tbody>
+      <tr><td>Simply put</td><td>Take what's already in the drawer, rename it, export.</td><td>Ask Revit to fetch each model from the cloud and save it under its real name, then export.</td></tr>
+      <tr><td>Speed</td><td>Fast (file copy only)</td><td>Slow (opens up to 28 models, some several GB)</td></tr>
+      <tr><td>Up to date?</td><td>Only as new as the last time you opened each model or link. The page would warn about that.</td><td>Always current</td></tr>
+      <tr><td>Risk</td><td>The folder layout is undocumented, and Autodesk could change it.</td><td>Uses documented Revit API calls</td></tr>
+      <tr><td>Needs</td><td>Job 1 to succeed</td><td>Revit running, internet access</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p><strong>My recommendation:</strong> let Job 1 decide. If it succeeds → A, with a "might be old" warning and the dates shown.
+  If it fails → B. Tell me if you'd rather pick one regardless, for example B because the models must always be current.</p>
+</section>
+
+<!-- SEND -->
+<section class="card" aria-labelledby="send">
+  <h2 id="send">What to paste into the chat</h2>
+  <div class="send">
+    <label for="s1"><input type="checkbox" id="s1"> <span>The text from <code>cache-test-result.txt</code> (Job 1.4), plus whether you saw green <em>Proces zakonczony</em> or red <em>Blad</em>.</span></label>
+    <label for="s2"><input type="checkbox" id="s2"> <span>The text from <code>journal-lines.txt</code> (Job 2).</span></label>
+    <label for="s3"><input type="checkbox" id="s3"> <span>Your choice: "let the test decide", or A, or B (Job 3).</span></label>
+  </div>
+  <p style="color:var(--muted);font-size:.92rem">When you're done you can delete <code>C:\RX-private\</code>. It only holds copies; the real cache and the cloud models are never changed.</p>
+</section>
+
+<footer>The copy step only reads Revit's cache, and the export works on the copies in <code>C:\RX-private\staging</code>. Nothing is uploaded and nothing touches the cloud model.</footer>
+</div>
+<script id="page-script">
+(function () {
+  // Captured before the script adds the link boxes, so the downloaded copy starts clean.
+  var pristine = document.getElementById('page').outerHTML;
+  var scriptSource = document.getElementById('page-script').textContent;
+
+  function standaloneHtml() {
+    var fonts = document.querySelector('link[href*="fonts.googleapis"]');
+    return '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+      '<title>Cloud Cache Checks</title>\n' +
+      (fonts ? fonts.outerHTML + '\n' : '') +
+      document.getElementById('page-style').outerHTML + '\n' +
+      '<style>body{margin:0}[hidden]{display:none!important}</style>\n' +
+      '</head>\n<body>\n' + pristine + '\n' +
+      '<script id="page-script">' + scriptSource + '<\/script>\n</body>\n</html>\n';
+  }
+
+  // The download button exists only inside claude.ai; the downloaded file hides it.
+  if (window.claude && typeof window.claude.use === 'function') {
+    window.claude.use('downloads').then(function (downloads) {
+      if (!downloads) return;
+      var bar = document.getElementById('dlbar'), btn = document.getElementById('dl'), hint = document.getElementById('dlhint');
+      bar.hidden = false;
+      btn.addEventListener('click', function () {
+        downloads.save({ filename: 'cloud-cache-checks.html', data: standaloneHtml() }).then(function () {
+          hint.textContent = 'Saved. Copy cloud-cache-checks.html to the Revit PC and double-click it.';
+        }, function (err) {
+          var code = err && err.code;
+          if (code === 'declined') hint.textContent = 'Not saved. Click the button again when you want the file.';
+          else if (code === 'rate_limited') hint.textContent = 'A save prompt is already open. Finish that one first.';
+          else { bar.hidden = true; }
+        });
+      });
+    }, function () {});
+  }
+
+  var GUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  var LINKS = 3;
+  var linksEl = document.getElementById('links');
+  for (var i = 1; i <= LINKS; i++) {
+    var box = document.createElement('div');
+    box.className = 'linkset';
+    box.innerHTML =
+      '<span class="tag">Link ' + i + (i === 3 ? ' (optional)' : '') + '</span>' +
+      '<div class="pair">' +
+        '<div class="field"><label for="ln' + i + '">File name (<code>name:</code>)</label>' +
+        '<input id="ln' + i + '" type="text" spellcheck="false" autocomplete="off" placeholder="Example_Link.rvt"></div>' +
+        '<div class="field"><label for="lg' + i + '">GUID (<code>LinkedModelModelId:</code>)</label>' +
+        '<input id="lg' + i + '" type="text" spellcheck="false" autocomplete="off" placeholder="xxxxxxxx-xxxx-…">' +
+        '<span class="err" id="lg' + i + 'Err"></span></div>' +
+      '</div>';
+    linksEl.appendChild(box);
+  }
+
+  function val(id) { return document.getElementById(id).value.trim().replace(/^"+|"+$/g, ''); }
+  function ps(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+  function rvt(name) { return /\.rvt$/i.test(name) ? name : name + '.rvt'; }
+
+  function checkGuid(id) {
+    var el = document.getElementById(id), err = document.getElementById(id + 'Err'), v = val(id);
+    var bad = v !== '' && !GUID.test(v);
+    el.classList.toggle('invalid', bad);
+    err.textContent = bad ? 'That does not look like a GUID (8-4-4-4-12 characters).' : '';
+    return v !== '' && !bad;
+  }
+
+  function render() {
+    var repo = val('repo') || 'C:\\PATH\\TO\\RevitExtractor';
+    var hostName = val('hostName'), hostGuid = val('hostGuid');
+    var hostOk = checkGuid('hostGuid') && hostName !== '';
+    var links = [];
+    for (var i = 1; i <= LINKS; i++) {
+      var ok = checkGuid('lg' + i), n = val('ln' + i);
+      if (ok && n) links.push({ name: rvt(n), guid: val('lg' + i).toLowerCase() });
+    }
+    var hostFile = hostName ? rvt(hostName) : 'HOST_NAME.rvt';
+    var hg = hostOk ? hostGuid.toLowerCase() : 'HOST-GUID';
+
+    var st = document.getElementById('formStatus');
+    if (hostOk && links.length >= 2 && val('repo')) {
+      st.className = 'status ready';
+      st.textContent = 'Ready: host + ' + links.length + ' links. The commands below are filled in.';
+    } else {
+      var miss = [];
+      if (!val('repo')) miss.push('the repo folder');
+      if (!hostOk) miss.push('the host name and GUID');
+      if (links.length < 2) miss.push('at least 2 links (name + GUID)');
+      st.className = 'status missing';
+      st.textContent = 'Still needed: ' + miss.join(', ') + '. Until then the commands contain placeholders in CAPITALS.';
+    }
+
+    var lines = [];
+    lines.push("$cache = Join-Path $env:LOCALAPPDATA 'Autodesk\\Revit\\Autodesk Revit 2022\\CollaborationCache'");
+    lines.push("$stage = 'C:\\RX-private\\staging'");
+    lines.push("New-Item -ItemType Directory -Force -Path $stage, 'C:\\RX-private\\exports' | Out-Null");
+    lines.push("function Copy-FromCache($guid, $name, $kind) {");
+    lines.push("  $files = Get-ChildItem -LiteralPath $cache -Recurse -File -Filter \"$guid.rvt\"");
+    lines.push("  if ($kind -eq 'link') { $src = $files | Where-Object { $_.Directory.Name -eq 'LinkedModels' } | Select-Object -First 1 }");
+    lines.push("  else { $src = $files | Where-Object { $_.Directory.Name -notin @('CentralCache', 'LinkedModels') } | Select-Object -First 1 }");
+    lines.push("  if (-not $src) { Write-Host \"NOT FOUND: $name ($guid)\" -ForegroundColor Red; return }");
+    lines.push("  Write-Host \"Copying $name ($([math]::Round($src.Length / 1MB)) MB, cached $($src.LastWriteTime)) ...\"");
+    lines.push("  Copy-Item -LiteralPath $src.FullName -Destination (Join-Path $stage $name) -Force");
+    lines.push("  Write-Host \"Copied  $name\" -ForegroundColor Green");
+    lines.push("}");
+    lines.push("Copy-FromCache " + ps(hg) + " " + ps(hostFile) + " 'host'");
+    if (links.length) {
+      links.forEach(function (l) { lines.push("Copy-FromCache " + ps(l.guid) + " " + ps(l.name) + " 'link'"); });
+    } else {
+      lines.push("Copy-FromCache 'LINK-GUID-1' 'LINK_NAME_1.rvt' 'link'");
+      lines.push("Copy-FromCache 'LINK-GUID-2' 'LINK_NAME_2.rvt' 'link'");
+    }
+    lines.push("Get-ChildItem $stage | Format-Table Name, @{n='MB';e={[math]::Round($_.Length / 1MB)}}");
+    document.getElementById('cmdCopy').textContent = lines.join('\n');
+
+    document.getElementById('cmdExport').textContent = [
+      "Set-Location " + ps(repo),
+      "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\Analyzer\\public\\downloads\\Start-RevitExport.ps1 `",
+      "  -RevitVersion 2022 -UseDefaultIndex `",
+      "  -ModelPath " + ps('C:\\RX-private\\staging\\' + hostFile) + " `",
+      "  -OutputParent 'C:\\RX-private\\exports'"
+    ].join('\n');
+
+    document.getElementById('cmdResult').textContent = [
+      "$run = Get-ChildItem 'C:\\RX-private\\exports' -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1",
+      "$out = 'C:\\RX-private\\cache-test-result.txt'",
+      "& {",
+      "  \"Run folder: $($run.Name)\"",
+      "  \"bubble.json exists: $(Test-Path (Join-Path $run.FullName 'output\\bubble.json'))\"",
+      "  \"Resource folder exists: $(Test-Path (Join-Path $run.FullName 'output\\Resource'))\"",
+      "  '--- console.log ---'",
+      "  Select-String -LiteralPath (Join-Path $run.FullName 'console.log') -Pattern 'Success Jobs|Failed|error|exception|link|central|workshar|cloud' |",
+      "    Select-Object -First 40 | ForEach-Object { $_.Line.Trim() }",
+      "  '--- stderr.log ---'",
+      "  Get-Content -LiteralPath (Join-Path $run.FullName 'stderr.log') -TotalCount 20 -ErrorAction SilentlyContinue",
+      "  '--- logs ---'",
+      "  Get-ChildItem (Join-Path $run.FullName 'logs') -Recurse -File -ErrorAction SilentlyContinue |",
+      "    Select-String -Pattern 'ResolveLink|link|central|workshar|cloud|error|fail' |",
+      "    Select-Object -First 60 | ForEach-Object { '{0}: {1}' -f $_.Filename, $_.Line.Trim() }",
+      "} | Set-Content -Encoding UTF8 $out",
+      "notepad $out"
+    ].join('\n');
+
+    document.getElementById('cmdJournal').textContent = [
+      "$j = Join-Path $env:LOCALAPPDATA 'Autodesk\\Revit\\Autodesk Revit 2022\\Journals'",
+      "$out = 'C:\\RX-private\\journal-lines.txt'",
+      "New-Item -ItemType Directory -Force -Path 'C:\\RX-private' | Out-Null",
+      "$hits = Get-ChildItem -LiteralPath $j -Filter 'journal*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -First 40 |",
+      "  Select-String -Pattern " + ps(hg) + ", 'Autodesk Docs://', 'CLD:' -ErrorAction SilentlyContinue |",
+      "  Select-Object -First 20 | ForEach-Object { '{0}:{1}: {2}' -f $_.Filename, $_.LineNumber, $_.Line.Trim() }",
+      "if (-not $hits) { $hits = '(no lines found)' }",
+      "$hits | Set-Content -Encoding UTF8 $out",
+      "notepad $out"
+    ].join('\n');
+  }
+
+  document.getElementById('form').addEventListener('input', render);
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('.copy'); if (!b) return;
+    var pre = document.getElementById(b.getAttribute('data-target'));
+    var text = pre.textContent;
+    function selectIt() {
+      var r = document.createRange(); r.selectNodeContents(pre);
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      b.textContent = 'Selected: press Ctrl+C';
+    }
+    try {
+      navigator.clipboard.writeText(text).then(function () {
+        b.textContent = 'Copied';
+        setTimeout(function () { b.textContent = 'Copy'; }, 1600);
+      }, selectIt);
+    } catch (err) { selectIt(); }
+  });
+  render();
+})();
+</script>
+</body>
+</html>
