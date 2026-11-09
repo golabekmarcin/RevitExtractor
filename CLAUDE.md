@@ -1,6 +1,7 @@
 # RevitExtractor
 
 > **Current state, decisions and next steps live in `HANDOVER.md`.** Read it at the start of a session and update it at the end. `AGENTS.md` points other agents here.
+> **The one-button redesign is specified in `specs/`** (`SPEC.md` = capability map + shared rules; `SPEC-<module>.md`, `plan-<module>.md`). Keep every spec and plan file there.
 
 Tooling around Autodesk's native **Revit Extractor** (`RevitExtractor.exe`, shipped with Revit).
 Three independent parts:

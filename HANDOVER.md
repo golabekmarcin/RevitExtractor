@@ -23,7 +23,9 @@ Last updated: 2026-11-10, session 3 (Claude Code, with the repo owner Marcin Gol
 - **Window slice 1 (§3a) is pushed** as `85ebc6a` (2026-11-09, session 3) and **passed the owner's Revit 2022 test** (§2).
 - The owner's Revit 2022 machine was reset to `origin/mgo-changes`. The v2 report was copied to this machine as an ignored `tests/cloudcheck_output_v2.html`, read, and **deleted** (never committed; `git status --ignored` was clean afterwards).
 - The cache-copy test results (`cache-test-result.txt`, `journal-lines.txt`) reached this machine as untracked files in `tests/`. They were read and **deleted**, and `.gitignore` now also blocks `cache-test-result*.txt`, `journal-lines*.txt` and `RX-private/`.
-- **Next session starts with:** the redesign spec, then the plan (§4). Local/server models come first (Q9), then cloud via the cache (Q29). Nothing is waiting on the owner (§3).
+- **Redesign specs live in `specs/`** (2026-11-10). `specs/SPEC.md` has the capability map (approved by the owner), the shared rules and the v1 success criteria. **v1 stops after `export-button`** (local/server end to end); cloud is v1.1, the IFC command v1.2.
+- `SPEC-shared-ui.md` and `SPEC-capabilities.md` are **approved** (2026-11-10). Install layout confirmed: clone + `<clone>\pyRevit` as a custom extension folder.
+- **Next session starts with:** the plans for those two modules (`specs/plan-shared-ui.md`, `specs/plan-capabilities.md`), then the specs of the next tier (`index-builder`, `model-catalog`, `model-reader`, `export-runner`).
 - The fork's default branch is still **`master`**. The owner switches it to `online` in GitHub → Settings → Branches (decision Q16/Q21).
 
 ## 2. Verification (commands in `CLAUDE.md`)
