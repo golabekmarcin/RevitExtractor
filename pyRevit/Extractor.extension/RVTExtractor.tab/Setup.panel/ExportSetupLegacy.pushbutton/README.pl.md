@@ -15,12 +15,18 @@ kopia `ExportSetup22.pushbutton`, najpierw ją usuń; inaczej Revit 2022 pokaże
 eksportu. Przycisk i okno korzystają z ustawienia języka pyRevit, według tej samej reguły,
 której pyRevit używa dla tytułu z `bundle.yaml`: polski pokazuje polski, każdy inny (lub brak
 ustawienia) — angielski. Cały tekst okna jest w obu językach (`extractor_text.py`).
-Wyszukiwanie typu widoku działa po nazwie angielskiej i polskiej, np. „sheets” lub „arkusze”.
+Pole wyszukiwania dopasowuje wszystkie słowa w dowolnej kolejności, także typ widoku po angielsku
+i po polsku (np. „sheets” lub „arkusze”); zaznacz **Regex**, aby użyć wyrażenia regularnego.
+Na liście 2D przycisk ▾ w nagłówku **Typ** filtruje według typu, jak w Excelu; **Wyczyść
+wszystkie filtry** usuwa te filtry i zostawia wyszukiwanie.
 
-- **Wybieranie widoków** działa jak w Eksploratorze: Ctrl+klik dodaje lub usuwa wiersz,
-  Shift+klik wybiera zakres, Ctrl+A wybiera wszystkie widoczne wiersze. Spacja lub pole wyboru
-  w wybranym wierszu zaznacza albo odznacza wszystkie wybrane wiersze. Eksportowane są tylko
-  zaznaczone wiersze.
+- **Zaznaczanie widoków:** zaznaczone pole wyboru oznacza, że widok trafi do eksportu.
+  **Zaznacz wszystkie widoczne** / **Odznacz wszystkie widoczne** działają tylko na wierszach
+  pokazanych przez wyszukiwanie i filtry. Wiersze *podświetla* się jak w Eksploratorze:
+  Ctrl+klik dodaje lub usuwa wiersz, Shift+klik zakres, Ctrl+A wszystkie widoczne. Spacja lub
+  pole wyboru w podświetlonym wierszu zaznacza albo odznacza wszystkie podświetlone wiersze.
+- **Klawisze:** Esc czyści wypełnione pole wyszukiwania, a w innym przypadku zamyka okno;
+  Enter zapisuje.
 - **Shift+klik na przycisku** uruchamia sprawdzenie modelu w chmurze (ACC), tylko do odczytu,
   zamiast okna konfiguracji. Wypisuje w oknie wyników pyRevit ścieżki modelu i linków, GUID
   chmury oraz pasujące nazwy plików w lokalnym `CollaborationCache` Revita. Niczego nie otwiera,
@@ -64,16 +70,24 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.exte
 ```
 
 Testy jednostkowe obejmują indeks, odczyt ID, kontrolę wersji i wybór języka, z atrapą hosta.
+`test_window_legacy.py` sprawdza pasek wyszukiwania, filtry kolumn, klucze motywu i zachowanie
+okna (zaznaczanie, leniwy podgląd, reset) z atrapami WPF i pyRevit.
 Drugi skrypt używa pierwszego znalezionego Extractora Revita 2022–2025 (albo `-ExtractorDirectory`)
 i sprawdza dziewięć profili rzeczywistym parserem. Obsługuje oba warianty parsera (2025.3+ i 2024.0.x).
 
 Sprawdzono:
 - 9.11.2026: wszystkie dziewięć profili przechodzi z parserem Revita 2023 (2024.0.2022.0415).
+- 9.11.2026: `ui.xaml`, `rx_theme.xaml` i `rx_search_bar.xaml` wczytują się w WPF (.NET Framework,
+  Windows PowerShell), a okno renderuje się z motywem. W tej próbie nie było IronPythona ani pyRevit.
+- 9.11.2026, Revit 2022 właściciela: poprzednie okno działało, ale mocno się zacinało przy każdym
+  zaznaczeniu przy ponad 1000 arkuszy. Przyczyna: `forms.Reactive` w pyRevit ma jedną wspólną
+  listę `PropertyChanged` dla wszystkich wierszy, a okno podpinało obsługę do każdego wiersza,
+  co przebudowywało JSON.
 - Wcześniej: osiem profili przeszło z parserem Revita 2022 (2025.3.0.12), a okno przetestowano w IronPython 2.7 / .NET Framework poza Revitem.
 
 **Nie sprawdzono:**
 - działania przycisku w Revicie 2022–2025
-- okna po tej zmianie
+- przebudowanego okna (pasek wyszukiwania, filtr Typ, szybkość zaznaczania) w pyRevit/IronPython
 - instalacji pyRevit z lokalizowanym `bundle.yaml`
 - parserów Revita 2024/2025
 - `db_export` z parserem 2025.3

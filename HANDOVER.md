@@ -3,7 +3,7 @@
 For any AI agent (Claude, Codex, …) or person picking this up. **Read `CLAUDE.md` first** (project rules), then this file.
 **Update this file at the end of every session.** Facts here are dated; re-check anything about the repo state with `git status` / `git log`.
 
-Last updated: 2026-11-09 (Claude Code, session with the repo owner Marcin Golabek).
+Last updated: 2026-11-09, session 3 (Claude Code, with the repo owner Marcin Golabek): window slice 1 committed and pushed; waiting on the owner's Revit 2022 test.
 
 ## 1. Repo and branch state
 
@@ -12,16 +12,23 @@ Last updated: 2026-11-09 (Claude Code, session with the repo owner Marcin Golabe
 - **Privacy incident, 2026-11-09:** the owner committed a cloud check report (client project name, model name, GUIDs, URN, Windows user name) as `b42b7b4` to this **public** fork.
   - It was removed by resetting to `4a41c58` and force-pushing (`--force-with-lease`), followed by `18ecea1`, which `.gitignore`s `cloudcheck*.html` / `cloudcheck*.txt`.
   - GitHub may keep the orphaned commit reachable by SHA until GitHub Support purges it.
-  - The owner's Revit 2022 machine still has `b42b7b4` locally. It must run `git fetch origin; git reset --keep origin/mgo-changes` before pushing again.
+  - **It happened again, same day (session 2):** the Revit 2022 machine still had `b42b7b4`. A `git pull` + push merged it back as `fa6349b` ("Merge branch 'mgo-changes' of …"), which re-added `tests/cloudcheck_output.html` (Autodesk Docs paths, 6 GUIDs, a URN, user paths).
+    - Removed again: `git push --force-with-lease=mgo-changes:fa6349b origin 8de9788:mgo-changes`.
+    - `git ls-remote origin` afterwards: only `master`, `online` and `mgo-changes` (`8de9788`). No tags or pull-request refs, and no branch contains `b42b7b4`.
+    - `b42b7b4` and `fa6349b` may stay reachable by SHA on GitHub until GitHub Support purges them.
+  - **Before any pull or push on the Revit 2022 machine:** `git fetch origin; git reset --keep origin/mgo-changes`, then delete `tests\cloudcheck_output.html`. **Never `git pull` there until that is done.** A plain pull merges the leaked commit back in.
+  - The cloud check itself writes nothing; the HTML was saved by hand from pyRevit's output window. `.gitignore` blocks new reports, but not a commit that is already in local history.
   - **Cloud reports go to the agent privately, never into the repo.**
-- Cloud check **v2** and this handover update are committed and pushed as the commit after `18ecea1` ("Fix cloud check: link names, resources, journals, plain text"). Nothing else was uncommitted. Check `git status`.
-- **Next session starts with:** (1) the owner's v2 report, pasted privately; (2) window slice 1 (§3a). The owner approved slice 1 ("now, as redesign slice 1"), so plan it briefly, then build it test-first.
+- Cloud check **v2** is committed and pushed as `8de9788`.
+- **Window slice 1 (§3a) is committed and pushed** to `origin/mgo-changes` (2026-11-09, session 3, owner approved), together with this handover. Files: all in `ExportSetupLegacy.pushbutton` (`extractor_ui.py`, `ui.xaml`, `extractor_text.py`, `extractor_config.py`, both READMEs, new `rx_*.py`/`rx_*.xaml`), plus `tests/test_config_legacy.py` and the new `tests/test_window_legacy.py`. Unit tests 108 OK before the commit.
+- **Next session starts with:** (1) the owner's Revit 2022 test of slice 1 (§3, item 3). This is the main blocker; (2) the owner's v2 cloud report, pasted privately (still not received); (3) then the redesign spec/plan (§4).
 - The fork's default branch is still **`master`**. The owner switches it to `online` in GitHub → Settings → Branches (decision Q16/Q21).
 
 ## 2. Verification (commands in `CLAUDE.md`)
 
-Main machine (Revit 2023, no pyRevit), 2026-11-09:
-- pyRevit unit tests: **74 OK**;
+Main machine (Revit 2023, no pyRevit), 2026-11-09, after slice 1:
+- pyRevit unit tests: **108 OK** (74 before slice 1);
+- `ui.xaml`, `rx_theme.xaml` and `rx_search_bar.xaml` load in real WPF (Windows PowerShell). A render with sample rows looked right. No IronPython or pyRevit was involved;
 - `validate_native_legacy.ps1`: **9/9 PASS** (Extractor 2024.0.2022.0415);
 - Analyzer `check` OK; `test:pages` 15 pass, 1 skip.
 
@@ -42,16 +49,36 @@ Main machine (Revit 2023, no pyRevit), 2026-11-09:
 
 ## 3. Waiting on the owner (Revit 2022 machine)
 
-1. Clean up first: `git fetch origin; git reset --keep origin/mgo-changes`, and delete the local `cloudcheck_output.html`.
-2. Once v2 is pushed: Shift+click with the same ACC model open, and **send the plain-text report privately** (paste it to the agent). It should show:
+1. Clean up and update first. **Do not `git pull`.** Run `git fetch origin; git reset --keep origin/mgo-changes`, delete `tests\cloudcheck_output.html` if it is still there, then reload pyRevit. `git log -1` should show the slice 1 commit.
+2. Cloud check v2 (pushed in `8de9788`): Shift+click with the same ACC model open, and **send the plain-text report privately** (paste it to the agent, never commit it). Project names, user names and the URN may be replaced by consistent placeholders; keep link file names and GUIDs. It should show:
    - link names;
    - for each link: file reference ok/None/ERROR;
    - every external resource with its reference information;
    - every cached `.rvt` in the project folders;
    - project and file names from journals.
-3. After window slice 1 (§3a): retest selection speed on the 1000+ sheet model.
+3. Test window slice 1 (§3a) on the 1000+ sheet model in Revit 2022 + pyRevit. Report each item:
+   - speed of a checkbox click, Select/Unselect all shown, and Space on 1000+ highlighted rows;
+   - whether the row highlight survives a multi-row checkbox click or Space (both call `Items.Refresh()`);
+   - the Type header ▾ popup: values with counts, filtering, "Clear all filters";
+   - search: words in any order, Regex, a red border on invalid regex, ✕, Esc (clear first, then close);
+   - Enter saves; Close/Esc closes without an error;
+   - the theme looks like FamilyManager, in English and Polish;
+   - any pyRevit error or traceback (copy the full text).
 
-## 3a. Window slice 1 (agreed 2026-11-09, not started)
+**After the owner reports:**
+- Slice 1 problems → fix them first (test-first), push, and the owner retests.
+- Slice 1 OK → record the result in §2 and the legacy README Validation section, then write the redesign spec and plan (§4, `agent-skills:spec` → `plan`) before any redesign code.
+- Cloud report → decide the cloud approach (CLAUDE.md "Cloud (ACC) models"); it does not block the local/server part of the redesign (Q9).
+
+## 3a. Window slice 1 (agreed 2026-11-09; built 2026-11-09, pushed in session 3, unverified in Revit)
+
+**What was built** (ExportSetupLegacy only; the 2026 button is unchanged):
+- **Lag root cause, confirmed in pyRevit source** (`pyrevitlib/pyrevit/forms/_ipy.py`): `Reactive` declares `PropertyChanged, _propertyChangedCaller = pyevent.make_event()` at **class level**, so all rows share one handler list. The old window added `_on_row_changed` per row (~3,000 handlers), so each tick fired all of them, and each rebuilt the JSON: O(N²).
+- Fix as planned: `ViewRow(forms.Reactive)` with plain attributes plus a reactive `Checked`. Lists are an `ObservableCollection` behind a `CollectionView` filter. There are no row subscriptions: one `ButtonBase.ClickEvent` handler per ListView. Bulk changes use `set_quietly` and then one `Items.Refresh()`. JSON is built only while the preview tab is open and on save. A test guards against row subscriptions.
+- Ported modules sit flat in the bundle with an `rx_` prefix, so they can't collide with FamilyManager's bare `search_bar` module in a shared engine: `rx_search_bar.py/.xaml` (scope combo dropped; plain search = every word), `rx_column_filter_model.py`, `rx_column_filter_ui.py`, `rx_search_placeholder.py` (inlined MGo dependency) and `rx_theme.xaml` (FamilyManager theme with `Fs*` renamed to `Rx*`, minus the two Rename-only entries, plus a GridViewColumnHeader style). All text uses `tr()`. When they move to the shared `lib/`, move these files unchanged.
+- The view-type combo is gone; the Type column (index 2) has the ▾ filter. Labels are "Select all shown" / "Unselect all shown", and the hints say "highlight". Scope hints moved to tooltips. The footer is Reset | summary/status | Close (`IsCancel`) | Save (`IsDefault`, primary). A separate red `error_text` line was added, and `handle_esc=False` (as in FamilyManager).
+
+Original owner feedback and plan:
 
 Owner feedback on the view window and the plan. The ported pieces must move unchanged into the redesign's shared `lib/` later.
 
@@ -142,4 +169,6 @@ Goal: run the whole workflow from Revit through **one pyRevit button**, with no 
 - Passing cmdlet output (e.g. `Join-Path`) to .NET reflection fails ("Constructor not found") unless cast with `[string]`: it is wrapped in a `PSObject`.
 - Python tests add the legacy bundle to `sys.path` with **append**, never insert: the 2026 bundle's tests import same-named modules.
 - A git commit message with quotes breaks in PS 5.1 here-strings. Use `git commit -F <file>`.
-- `ui.xaml` comments must not contain the literal `{DynamicResource word}`: a test counts it as a key.
+- `ui.xaml` comments must not contain the literal `{DynamicResource word}`: a test counts it as a key. Theme keys must start with `Rx`; the text-key test skips them.
+- pyRevit `forms.Reactive` / `TemplateListItem` share **one** `PropertyChanged` handler list across all instances. Never subscribe a window handler per row.
+- The window tests pin the legacy `extractor_config` in `sys.modules` while loading `extractor_ui.py`, because the 2026 tests prepend a same-named module.

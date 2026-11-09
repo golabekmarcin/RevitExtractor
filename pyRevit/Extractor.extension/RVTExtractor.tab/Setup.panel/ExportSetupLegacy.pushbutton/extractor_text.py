@@ -22,20 +22,19 @@ UI_TEXT = {
                 "to pick specific drawings.",
                 "Domyślny zakres pozostawia wybór Extractorowi. Wybierz „Tylko zaznaczone”, "
                 "aby wskazać konkretne rysunki."),
-    "hint_3d": ("Selections are kept while you search. The list contains the active model's views.",
-                "Zaznaczenia są zachowywane podczas wyszukiwania. Lista obejmuje widoki "
-                "aktywnego modelu."),
-    "search_2d": ("Search by name, sheet number or ID", "Szukaj po nazwie, numerze arkusza lub ID"),
-    "search_3d": ("Search by name or ID", "Szukaj po nazwie lub ID"),
-    "view_type": ("View type", "Typ widoku"),
-    "check_visible": ("Tick all shown", "Zaznacz wszystkie widoczne"),
-    "uncheck_visible": ("Untick all shown", "Odznacz wszystkie widoczne"),
-    "selection_hint": ("Ctrl/Shift+click or Ctrl+A selects rows; Space or a checkbox ticks all "
-                       "selected rows.",
-                       "Ctrl/Shift+klik lub Ctrl+A wybiera wiersze; Spacja lub pole wyboru "
-                       "zaznacza wszystkie wybrane."),
-    "check_tooltip": ("Tick for export (applies to all selected rows)",
-                      "Zaznacz do eksportu (dotyczy wszystkich wybranych wierszy)"),
+    "hint_3d": ("Selected views stay selected while you search and filter. The list contains "
+                "the active model's views.",
+                "Zaznaczenia są zachowywane podczas wyszukiwania i filtrowania. Lista obejmuje "
+                "widoki aktywnego modelu."),
+    # "Select" = mark for export (checkbox); "highlight" = row highlighting (Ctrl/Shift/Ctrl+A).
+    "check_visible": ("Select all shown", "Zaznacz wszystkie widoczne"),
+    "uncheck_visible": ("Unselect all shown", "Odznacz wszystkie widoczne"),
+    "selection_hint": ("Ctrl/Shift+click or Ctrl+A highlights rows; Space or a checkbox selects "
+                       "or unselects every highlighted row.",
+                       "Ctrl/Shift+klik lub Ctrl+A podświetla wiersze; Spacja lub pole wyboru "
+                       "zaznacza albo odznacza wszystkie podświetlone."),
+    "check_tooltip": ("Select for export (applies to every highlighted row)",
+                      "Zaznacz do eksportu (dotyczy wszystkich podświetlonych wierszy)"),
     "col_name_2d": ("View name / sheet number and name", "Nazwa widoku / numer i nazwa arkusza"),
     "col_name_3d": ("View name", "Nazwa widoku"),
     "col_type": ("Type", "Typ"),

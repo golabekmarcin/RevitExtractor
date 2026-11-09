@@ -14,12 +14,17 @@ in a Revit 2022–2025 project. If your panel still has the older `ExportSetup22
 copy, delete it first; otherwise Revit 2022 shows two export setup buttons.
 The button and its window follow pyRevit's language setting, using the same rule pyRevit applies
 to the `bundle.yaml` title: Polish shows Polish, anything else (or no setting) English.
-All window text is in both languages (`extractor_text.py`). View-type search matches the
-English and the Polish name, e.g. "sheets" or "arkusze".
+All window text is in both languages (`extractor_text.py`). The search box matches every word in
+any order, including the view type in English and Polish (e.g. "sheets" or "arkusze"); tick
+**Regex** for a regular expression. On the 2D list, the ▾ button on the **Type** header filters by
+type, Excel-style; **Clear all filters** removes those filters and keeps the search.
 
-- **Selecting views** works like Explorer: Ctrl+click adds or removes a row, Shift+click selects
-  a range, Ctrl+A selects all shown rows. Space, or a checkbox on a selected row, ticks or
-  unticks every selected row. Only ticked rows are exported.
+- **Selecting views:** a ticked checkbox means the view is exported. **Select all shown** /
+  **Unselect all shown** act only on the rows the search and filters show. Rows are
+  *highlighted* like in Explorer: Ctrl+click adds or removes a row, Shift+click a range, Ctrl+A
+  all shown rows. Space, or a checkbox on a highlighted row, selects or unselects every
+  highlighted row.
+- **Keys:** Esc clears a filled search box, otherwise closes the window; Enter saves.
 - **Shift+click on the button** runs a read-only cloud (ACC) check instead of the setup window.
   It prints the model and link paths, cloud GUIDs and matching file names in Revit's local
   `CollaborationCache` to pyRevit's output window. It opens, copies and writes nothing.
@@ -63,16 +68,23 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.exte
 ```
 
 The unit tests cover the index, ID reading, the version check and language choice, using a stub host.
+`test_window_legacy.py` covers the search bar, column filters, theme keys and the window's
+behaviour (selection, lazy preview, reset) with WPF and pyRevit stubbed.
 The second script uses the first Revit 2022–2025 Extractor it finds (or `-ExtractorDirectory`) and
 checks nine profiles with the real parser. It supports both parser shapes (2025.3+ and 2024.0.x).
 
 Verified:
 - 2026-11-09: all nine profiles pass with the Revit 2023 parser (2024.0.2022.0415).
+- 2026-11-09: `ui.xaml`, `rx_theme.xaml` and `rx_search_bar.xaml` load in WPF (.NET Framework,
+  Windows PowerShell) and the window renders with the theme. That run had no IronPython or pyRevit.
+- 2026-11-09, owner's Revit 2022: the previous window worked, but it lagged badly on every
+  tick with 1000+ sheets. The cause: pyRevit's `forms.Reactive` shares one `PropertyChanged`
+  list across all rows, and the window subscribed a handler per row, which rebuilt the JSON.
 - Earlier: eight profiles passed with the Revit 2022 parser (2025.3.0.12), and the window was tested in IronPython 2.7 / .NET Framework outside Revit.
 
 **Not verified:**
 - the button running inside Revit 2022–2025
-- the window after this change
+- the reworked window (search bar, Type filter, selection speed) in pyRevit/IronPython
 - a pyRevit install with the localized `bundle.yaml`
 - the Revit 2024/2025 parsers
 - `db_export` with the 2025.3 parser

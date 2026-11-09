@@ -1,22 +1,33 @@
 # -*- coding: utf-8 -*-
-"""Read-only Revit 2022-2025 WPF editor; only the selected index file is written."""
+"""Read-only Revit 2022-2025 WPF editor; only the selected index file is written.
+
+Speed with 1000+ views: pyRevit's forms.Reactive declares PropertyChanged once at class
+level, so all rows share one handler list. The window therefore never subscribes to row
+events. Each list is one CollectionView (search and column filters refresh it). A checkbox
+Click bubbles to one ListView handler. Bulk changes set the rows quietly and refresh the list
+once, and the JSON preview is built only while its tab is open (and on save).
+"""
 from __future__ import unicode_literals
 
 import os
 import uuid
 
-from System import Environment
+from System import Environment, Predicate
+from System.Collections.ObjectModel import ObservableCollection
 from System.IO import File
 from System.Text import UTF8Encoding
+from System.Windows import RoutedEventHandler
+from System.Windows.Controls.Primitives import ButtonBase
+from System.Windows.Data import CollectionViewSource
+from System.Windows.Input import Key
 from pyrevit import forms
 
-from System.Windows.Controls import TextBox
-from System.Windows.Input import Key
-
 from extractor_config import (DEFAULTS, SetupError, build_index, database_warning,
-                              filter_records, tick_targets, to_json, toggled_state)
+                              tick_targets, to_json, toggled_state)
 from extractor_i18n import tr
 from extractor_text import resources
+from rx_column_filter_ui import ColumnFilterController
+from rx_search_bar import SearchBar
 
 try:
     text = unicode
@@ -24,6 +35,10 @@ except NameError:
     text = str
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+THEME_PATH = os.path.join(HERE, "rx_theme.xaml")
+DIMENSIONS = ("2d", "3d")
+TYPE_COLUMN = 2  # views2d_lv: check, name, type, ElementId
 BOOL_CONTROLS = {
     "enable_2d": "enable2d_cb", "enable_3d": "enable3d_cb", "pdb": "pdb_cb",
     "aec_model_data": "aec_cb", "design_description": "description_cb",
@@ -31,23 +46,32 @@ BOOL_CONTROLS = {
 }
 
 
-class ViewRow(forms.TemplateListItem):
-    @property
-    def name(self):
-        return self.item["name"]
+class ViewRow(forms.Reactive):
+    """One view or sheet. Plain attributes for the columns; Checked notifies the checkbox."""
 
-    @property
-    def kind(self):
-        return self.item["kind"]
+    def __init__(self, record):
+        self.Name = record["name"]
+        self.Kind = record["kind"]
+        self.ElementId = record["id"]
+        self.SearchText = record["search"]
+        self._checked = False
 
-    @property
-    def element_id(self):
-        return self.item["id"]
+    @forms.reactive
+    def Checked(self):
+        return self._checked
+
+    @Checked.setter
+    def Checked(self, value):
+        self._checked = bool(value)
+
+    def set_quietly(self, value):
+        """No PropertyChanged: the caller refreshes the list once afterwards."""
+        self._checked = bool(value)
 
 
 def default_save_directory():
     # When run from this checkout, offer the index used by extractorScript_v1.ps1.
-    candidate = os.path.dirname(os.path.abspath(__file__))
+    candidate = HERE
     for unused in range(7):
         if os.path.isfile(os.path.join(candidate, "extractorScript_v1.ps1")):
             return candidate
@@ -77,15 +101,17 @@ class ExportSetupWindow(forms.WPFWindow):
         self._updating = True
         self.snapshot = snapshot
         self.last_saved_path = None
-        self._rows = {
-            "2d": [ViewRow(row) for row in snapshot["views_2d"]],
-            "3d": [ViewRow(row) for row in snapshot["views_3d"]],
-        }
-        self._visible = {"2d": [], "3d": []}
-        forms.WPFWindow.__init__(self, os.path.join(os.path.dirname(__file__), "ui.xaml"))
+        # Esc: the search bar clears a filled box first, then Close (IsCancel) closes.
+        # pyRevit's own Esc hook would close the window over a filled search box.
+        forms.WPFWindow.__init__(self, os.path.join(HERE, "ui.xaml"), handle_esc=False)
         # ui.xaml labels are {DynamicResource key}; they update as soon as the keys exist.
         for key, value in resources().items():
             self.Resources[key] = value
+        self.merge_resource_dict(THEME_PATH)
+        try:
+            self.Style = self.FindResource("RxWindow")
+        except Exception:
+            pass
         self.model_title.Text = snapshot["title"]
         self.model_path.Text = snapshot["path"] or tr("The model has no saved path yet.",
                                                       "Model nie ma jeszcze zapisanej ścieżki.")
@@ -96,30 +122,118 @@ class ExportSetupWindow(forms.WPFWindow):
                 tr(" The model has unsaved changes.", " Model ma niezapisane zmiany.")
                 if snapshot["modified"] else "")
 
-        kinds = sorted(set(row.item["kind"] for row in self._rows["2d"]))
-        self.kind2d_cb.ItemsSource = [tr("All types", "Wszystkie typy")] + kinds
-        self.kind2d_cb.SelectedIndex = 0
-        for row in self._rows["2d"] + self._rows["3d"]:
-            row.PropertyChanged += self._on_row_changed
+        self._search = {
+            "2d": SearchBar(self.search2d_host, self._on_filter_changed, regex=True,
+                            tooltip=tr("Search by name, sheet number, type or ID",
+                                       "Szukaj po nazwie, numerze arkusza, typie lub ID")),
+            "3d": SearchBar(self.search3d_host, self._on_filter_changed, regex=True,
+                            tooltip=tr("Search by name or ID", "Szukaj po nazwie lub ID")),
+        }
+        self._rows, self._views, self._shown = {}, {}, {}
+        for dimension in DIMENSIONS:
+            rows = ObservableCollection[object]()
+            for record in snapshot["views_" + dimension]:
+                rows.Add(ViewRow(record))
+            self._rows[dimension] = rows
+        # Before any Filter is assigned: the view may run the predicate at once.
+        self._filters = ColumnFilterController(
+            lambda: self._rows["2d"], self._on_filter_changed,
+            base_visible=lambda row: self._search["2d"].matches(row.SearchText))
+        self._filters.register(self.views2d_lv.View.Columns[TYPE_COLUMN],
+                               self.Resources["col_type"], "Kind")
+        self._search["2d"].bind_filters(self._filters)
+        predicates = {"2d": self._visible_2d, "3d": self._visible_3d}
+        for dimension in DIMENSIONS:
+            view = CollectionViewSource.GetDefaultView(self._rows[dimension])
+            view.Filter = Predicate[object](predicates[dimension])
+            self._views[dimension] = view
+            list_view = self._list(dimension)
+            list_view.ItemsSource = view
+            # One handler per list: a row checkbox Click bubbles up here.
+            list_view.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._on_check_click))
+            # SelectionMode="Extended" (ui.xaml) gives Explorer-like Ctrl/Shift-click and
+            # Ctrl+A highlighting over the shown rows; Space selects the highlighted rows.
+            list_view.PreviewKeyDown += self._on_list_key_down
+
         for name in BOOL_CONTROLS.values():
             control = getattr(self, name)
             control.Checked += self._on_settings_changed
             control.Unchecked += self._on_settings_changed
         for name in ("default2d_rb", "selected2d_rb", "default3d_rb", "selected3d_rb"):
             getattr(self, name).Checked += self._on_settings_changed
-        self.search2d_tb.TextChanged += self._on_filter_changed
-        self.search3d_tb.TextChanged += self._on_filter_changed
-        self.kind2d_cb.SelectionChanged += self._on_filter_changed
         for name in ("all2d_btn", "none2d_btn", "all3d_btn", "none3d_btn"):
             getattr(self, name).Click += self._on_bulk_check
-        # SelectionMode="Extended" (ui.xaml) gives Explorer-like Ctrl/Shift-click and Ctrl+A
-        # over the shown rows; Space ticks the selected rows.
-        for name in ("views2d_lv", "views3d_lv"):
-            getattr(self, name).PreviewKeyDown += self._on_list_key_down
+        self.tabs.SelectionChanged += self._on_tab_changed
         self.reset_btn.Click += self._on_reset
         self.save_btn.Click += self._on_save
         self.close_btn.Click += self._on_close
         self._on_reset(None, None)
+
+    # -- Rows ---------------------------------------------------------------------------
+
+    def _list(self, dimension):
+        return getattr(self, "views" + dimension + "_lv")
+
+    def _visible_2d(self, row):
+        return self._search["2d"].matches(row.SearchText) and self._filters.matches(row)
+
+    def _visible_3d(self, row):
+        return self._search["3d"].matches(row.SearchText)
+
+    def _selected(self, dimension):
+        # Includes selected rows hidden by the current search/filter.
+        return [row.ElementId for row in self._rows[dimension] if row.Checked]
+
+    def _set_checked(self, list_view, rows, state):
+        for row in rows:
+            row.set_quietly(state)
+        list_view.Items.Refresh()
+
+    def _on_check_click(self, sender, args):
+        row = getattr(args.OriginalSource, "DataContext", None)
+        if not isinstance(row, ViewRow):
+            return  # e.g. a column header or its filter button
+        # The binding has already updated row.Checked. A checkbox on a row that is part of a
+        # multi-row highlight applies to the whole highlight.
+        targets = tick_targets(sender.SelectedItems, row)
+        if len(targets) > 1:
+            self._set_checked(sender, targets, row.Checked)
+        self._refresh_state()
+
+    def _on_list_key_down(self, sender, args):
+        if args.Key != Key.Space:
+            return
+        # Only on a row or the list itself: a filter popup's search box and value checkboxes
+        # route their keys through the column header into this list.
+        source = args.OriginalSource
+        if source is not sender and not isinstance(getattr(source, "DataContext", None), ViewRow):
+            return
+        highlighted = list(sender.SelectedItems)
+        if not highlighted:
+            return
+        # Handled first, so a focused checkbox does not also toggle itself.
+        args.Handled = True
+        self._set_checked(sender, highlighted,
+                          toggled_state([row.Checked for row in highlighted]))
+        self._refresh_state()
+
+    def _on_bulk_check(self, sender, args):
+        dimension, action = text(sender.Tag).split(":")
+        self._set_checked(self._list(dimension), list(self._views[dimension]), action == "all")
+        self._refresh_state()
+
+    def _on_filter_changed(self, *unused):
+        if not self._updating:
+            self._refresh_lists()
+            self._refresh_state()
+
+    def _refresh_lists(self):
+        for dimension in DIMENSIONS:
+            view = self._views[dimension]
+            view.Refresh()
+            self._shown[dimension] = view.Count
+
+    # -- Settings and state -------------------------------------------------------------
 
     def _settings(self):
         settings = dict((key, bool(getattr(self, name).IsChecked))
@@ -128,10 +242,6 @@ class ExportSetupWindow(forms.WPFWindow):
         settings["scope_3d"] = "selected" if self.selected3d_rb.IsChecked else "default"
         return settings
 
-    def _selected(self, dimension):
-        # Includes checked items hidden by the current search/filter.
-        return [row.item["id"] for row in self._rows[dimension] if row.checked]
-
     def _payload(self):
         return build_index(self._settings(), self._selected("2d"), self._selected("3d"))
 
@@ -139,52 +249,15 @@ class ExportSetupWindow(forms.WPFWindow):
         if not self._updating:
             self._refresh_state()
 
-    def _on_row_changed(self, sender, args):
-        if self._updating:
-            return
-        if getattr(args, "PropertyName", None) == "checked":
-            # A checkbox clicked on a row that is part of a multi-row selection ticks the
-            # whole selection (clicking a checkbox does not change the selection itself).
-            for name in ("views2d_lv", "views3d_lv"):
-                targets = tick_targets(getattr(self, name).SelectedItems, sender)
-                if len(targets) > 1:
-                    self._set_checked(targets, sender.checked)
-                    break
-        self._refresh_state()
+    def _on_tab_changed(self, sender, args):
+        if self.preview_tab.IsSelected:
+            self._refresh_preview()
 
-    def _set_checked(self, rows, state):
-        self._updating = True
+    def _refresh_preview(self):
         try:
-            for row in rows:
-                row.checked = state
-        finally:
-            self._updating = False
-
-    def _on_list_key_down(self, sender, args):
-        if args.Key != Key.Space or isinstance(args.OriginalSource, TextBox):
-            return
-        selected = list(sender.SelectedItems)
-        if not selected:
-            return
-        # Handled first, so a focused checkbox does not also toggle itself.
-        args.Handled = True
-        self._set_checked(selected, toggled_state([row.checked for row in selected]))
-        self._refresh_state()
-
-    def _on_filter_changed(self, sender, args):
-        if not self._updating:
-            self._refresh_lists()
-            self._refresh_state()
-
-    def _refresh_lists(self):
-        kind = self.kind2d_cb.SelectedItem if self.kind2d_cb.SelectedIndex > 0 else None
-        for dimension, query in (("2d", self.search2d_tb.Text), ("3d", self.search3d_tb.Text)):
-            matches = filter_records([row.item for row in self._rows[dimension]],
-                                     query, kind if dimension == "2d" else None)
-            uids = set(row["uid"] for row in matches)
-            visible = [row for row in self._rows[dimension] if row.item["uid"] in uids]
-            self._visible[dimension] = visible
-            getattr(self, "views" + dimension + "_lv").ItemsSource = visible
+            self.json_tb.Text = to_json(self._payload())
+        except SetupError:
+            self.json_tb.Text = ""  # the error line says why
 
     def _refresh_state(self):
         settings = self._settings()
@@ -194,64 +267,65 @@ class ExportSetupWindow(forms.WPFWindow):
         self.choose3d_panel.IsEnabled = settings["enable_3d"] and settings["scope_3d"] == "selected"
         self.advanced3d_panel.IsEnabled = settings["enable_3d"]
         self.f2d_cb.IsEnabled = settings["enable_2d"]
+        selected = dict((dimension, self._selected(dimension)) for dimension in DIMENSIONS)
         summaries = []
-        for dimension in ("2d", "3d"):
-            selected = len(self._selected(dimension))
-            total = len(self._rows[dimension])
-            visible = len(self._visible[dimension])
+        for dimension in DIMENSIONS:
+            count = len(selected[dimension])
             getattr(self, "count" + dimension + "_text").Text = (
                 tr("Selected: {0} / {1}    •    Shown in the list: {2}",
                    "Zaznaczone: {0} / {1}    •    Widoczne na liście: {2}")
-                .format(selected, total, visible))
+                .format(count, len(self._rows[dimension]), self._shown[dimension]))
             if not settings["enable_" + dimension]:
                 scope = tr("off", "wyłączone")
             elif settings["scope_" + dimension] == "default":
                 scope = tr("default scope", "domyślny zakres")
             else:
-                scope = tr("selected: {0}", "wybrane: {0}").format(selected)
+                scope = tr("selected: {0}", "wybrane: {0}").format(count)
             summaries.append(dimension.upper() + ": " + scope)
         summaries.append(tr("SQLite database: ", "Baza SQLite: ")
                          + (tr("yes", "tak") if settings["pdb"] else tr("no", "nie")))
         self.summary_text.Text = "   |   ".join(summaries)
         try:
-            self.json_tb.Text = to_json(self._payload())
+            # Validation only; the JSON text is built lazily (preview tab, save).
+            build_index(settings, selected["2d"], selected["3d"])
+        except SetupError as error:
+            self.error_text.Text = text(error)
+            self.status_text.Text = ""
+            self.save_btn.IsEnabled = False
+        else:
             warning = database_warning(settings)
+            self.error_text.Text = ""
             self.status_text.Text = tr("Ready to save the configuration.",
                                        "Gotowe do zapisania konfiguracji.") + (
                                            " " + warning if warning else "")
             self.save_btn.IsEnabled = True
-        except SetupError as error:
-            self.json_tb.Text = ""
-            self.status_text.Text = text(error)
-            self.save_btn.IsEnabled = False
-
-    def _on_bulk_check(self, sender, args):
-        dimension, action = str(sender.Tag).split(":")
-        self._set_checked(self._visible[dimension], action == "all")
-        self._refresh_state()
+        if self.preview_tab.IsSelected:
+            self._refresh_preview()
 
     def _on_reset(self, sender, args):
         self._updating = True
         try:
             for key, name in BOOL_CONTROLS.items():
                 getattr(self, name).IsChecked = DEFAULTS[key]
-            self.default2d_rb.IsChecked = True
-            self.default3d_rb.IsChecked = True
-            self.search2d_tb.Text = ""
-            self.search3d_tb.Text = ""
-            self.kind2d_cb.SelectedIndex = 0
-            for row in self._rows["2d"] + self._rows["3d"]:
-                row.checked = False
+            for dimension in DIMENSIONS:
+                getattr(self, "default" + dimension + "_rb").IsChecked = True
+                getattr(self, "selected" + dimension + "_rb").IsChecked = False
+                self._search[dimension].Text = ""
+            self._filters.clear_all()
+            for dimension in DIMENSIONS:
+                self._set_checked(self._list(dimension), self._rows[dimension], False)
         finally:
             self._updating = False
         self._refresh_lists()
         self._refresh_state()
 
+    # -- Footer -------------------------------------------------------------------------
+
     def _on_save(self, sender, args):
         try:
             content = to_json(self._payload())
         except SetupError as error:
-            self.status_text.Text = text(error)
+            self.error_text.Text = text(error)
             return
         path = forms.save_file(
             file_ext="json",

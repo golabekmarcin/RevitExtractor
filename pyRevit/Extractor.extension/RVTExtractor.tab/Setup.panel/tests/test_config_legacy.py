@@ -175,8 +175,11 @@ class WindowTextTests(unittest.TestCase):
         self.text = load_module("text_legacy_under_test", "extractor_text.py")
 
     def test_xaml_keys_and_text_table_match_both_ways(self):
-        used = set(re.findall(r"\{DynamicResource (\w+)\}", self.XAML))
+        # Rx* keys are the theme (rx_theme.xaml, checked in test_window_legacy.py).
+        used = set(key for key in re.findall(r"\{DynamicResource (\w+)\}", self.XAML)
+                   if not key.startswith("Rx"))
         self.assertEqual(used, set(self.text.UI_TEXT))
+        self.assertFalse([key for key in self.text.UI_TEXT if key.startswith("Rx")])
 
     def test_no_hard_coded_label_left_in_xaml(self):
         attributes = re.findall(r'\b(Title|Text|Content|Header|ToolTip)="([^"]*)"', self.XAML)

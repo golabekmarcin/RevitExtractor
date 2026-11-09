@@ -143,10 +143,3 @@ def toggled_state(checked_states):
 
 def to_json(index):
     return json.dumps(index, ensure_ascii=False, indent=2) + "\n"
-
-
-def filter_records(records, search="", kind=None):
-    words = search.lower().split()
-    return [row for row in records
-            if (not kind or row["kind"] == kind)
-            and all(word in row["search"] for word in words)]
