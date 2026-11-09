@@ -80,14 +80,17 @@ Verified:
 - 2026-11-09, owner's Revit 2022: the previous window worked, but it lagged badly on every
   tick with 1000+ sheets. The cause: pyRevit's `forms.Reactive` shares one `PropertyChanged`
   list across all rows, and the window subscribed a handler per row, which rebuilt the JSON.
+- 2026-11-09, owner's Revit 2022 (22.1.80.32, pyRevit 6.5.5), reworked window on a 1000+ sheet
+  model: ticking, Select/Unselect all shown and Space are fast; the row highlight survives
+  multi-row ticks; the Type ▾ filter, search (any word order, regex, invalid-regex border, ✕, Esc)
+  and Enter/Close/Esc work; the theme matches FamilyManager in English and Polish; no errors.
+- 2026-11-09, owner's Revit 2022: the 2025.3 parser accepts `3dviewing.db_export`.
 - Earlier: eight profiles passed with the Revit 2022 parser (2025.3.0.12), and the window was tested in IronPython 2.7 / .NET Framework outside Revit.
 
 **Not verified:**
-- the button running inside Revit 2022–2025
-- the reworked window (search bar, Type filter, selection speed) in pyRevit/IronPython
+- the button running inside Revit 2023–2025
 - a pyRevit install with the localized `bundle.yaml`
 - the Revit 2024/2025 parsers
-- `db_export` with the 2025.3 parser
 - a full model export
 
 The parser and stub tests don't replace a run in Revit.

@@ -3,7 +3,7 @@
 For any AI agent (Claude, Codex, …) or person picking this up. **Read `CLAUDE.md` first** (project rules), then this file.
 **Update this file at the end of every session.** Facts here are dated; re-check anything about the repo state with `git status` / `git log`.
 
-Last updated: 2026-11-09, session 3 (Claude Code, with the repo owner Marcin Golabek): window slice 1 committed and pushed; waiting on the owner's Revit 2022 test.
+Last updated: 2026-11-09, session 3 (Claude Code, with the repo owner Marcin Golabek): window slice 1 pushed and **verified by the owner in Revit 2022**; cloud check v2 report received and analysed (§5 Cloud).
 
 ## 1. Repo and branch state
 
@@ -20,8 +20,9 @@ Last updated: 2026-11-09, session 3 (Claude Code, with the repo owner Marcin Gol
   - The cloud check itself writes nothing; the HTML was saved by hand from pyRevit's output window. `.gitignore` blocks new reports, but not a commit that is already in local history.
   - **Cloud reports go to the agent privately, never into the repo.**
 - Cloud check **v2** is committed and pushed as `8de9788`.
-- **Window slice 1 (§3a) is committed and pushed** to `origin/mgo-changes` (2026-11-09, session 3, owner approved), together with this handover. Files: all in `ExportSetupLegacy.pushbutton` (`extractor_ui.py`, `ui.xaml`, `extractor_text.py`, `extractor_config.py`, both READMEs, new `rx_*.py`/`rx_*.xaml`), plus `tests/test_config_legacy.py` and the new `tests/test_window_legacy.py`. Unit tests 108 OK before the commit.
-- **Next session starts with:** (1) the owner's Revit 2022 test of slice 1 (§3, item 3). This is the main blocker; (2) the owner's v2 cloud report, pasted privately (still not received); (3) then the redesign spec/plan (§4).
+- **Window slice 1 (§3a) is pushed** as `85ebc6a` (2026-11-09, session 3) and **passed the owner's Revit 2022 test** (§2).
+- The owner's Revit 2022 machine was reset to `origin/mgo-changes`. The v2 report was copied to this machine as an ignored `tests/cloudcheck_output_v2.html`, read, and **deleted** (never committed; `git status --ignored` was clean afterwards).
+- **Next session starts with:** (1) the redesign spec, then the plan (§4), local/server models first (Q9); (2) the owner's cloud decision and the two small cloud checks (§3).
 - The fork's default branch is still **`master`**. The owner switches it to `online` in GitHub → Settings → Branches (decision Q16/Q21).
 
 ## 2. Verification (commands in `CLAUDE.md`)
@@ -36,41 +37,36 @@ Main machine (Revit 2023, no pyRevit), 2026-11-09, after slice 1:
 - `validate_native_legacy.ps1`: **9/9 PASS**, `ExtractorUtility.dll` 2025.3.0.12, shape `Parse (2025.3+)`. So the 2025.3 parser **accepts `3dviewing.db_export`**, and the `no-database` / `2d-only-no-database` profiles give `PropertyDbStorageType=None`.
 - Only one "Export setup" button shows (it works), and the window language follows pyRevit (it works).
 - Multi-select works, but there is **severe lag with 1000+ sheets on every select/unselect**. See §3a.
+- **Window slice 1, session 3: all items PASS** on the 1000+ sheet model. Ticking, Select/Unselect all shown and Space are fast. The highlight survives multi-row ticks. The Type ▾ filter works. Search works: any word order, regex, the invalid-regex border, ✕ and Esc. Enter, Close and Esc work. The theme matches FamilyManager in English and Polish. No errors.
+- **Cloud check v2: ran without errors** on the same ACC model (28 links). Findings are in §5 Cloud.
 - Cloud check v1 on a real ACC model (Revit 2022, workshared), facts:
   - cache layout confirmed: `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit 2022\CollaborationCache\<account id>\<project GUID>\<model GUID>.rvt`, plus `…\<project GUID>\CentralCache\<model GUID>.rvt` (same size, here 432 MB);
   - the model path is `Autodesk Docs://<ACC project name>/<file>.rvt` (ServerPath and CloudPath both True), and a URN is available.
   - **probe bugs:** all 28 link names were `ERROR: Name` (IronPython quirk), and the links showed no path, status or GUIDs. pyRevit's Markdown renderer merged all tables and dropped headings, so it was unclear whether those rows were missing or lost. v2 fixes all of this (§3).
 
 **Never verified:**
-- the Shift+click check v2;
 - the 2024/2025 parsers;
+- the Extractor reading a model or links copied from the `CollaborationCache`;
 - real exports;
 - the headless Extractor running next to an interactive Revit.
 
 ## 3. Waiting on the owner (Revit 2022 machine)
 
-1. Clean up and update first. **Do not `git pull`.** Run `git fetch origin; git reset --keep origin/mgo-changes`, delete `tests\cloudcheck_output.html` if it is still there, then reload pyRevit. `git log -1` should show the slice 1 commit.
-2. Cloud check v2 (pushed in `8de9788`): Shift+click with the same ACC model open, and **send the plain-text report privately** (paste it to the agent, never commit it). Project names, user names and the URN may be replaced by consistent placeholders; keep link file names and GUIDs. It should show:
-   - link names;
-   - for each link: file reference ok/None/ERROR;
-   - every external resource with its reference information;
-   - every cached `.rvt` in the project folders;
-   - project and file names from journals.
-3. Test window slice 1 (§3a) on the 1000+ sheet model in Revit 2022 + pyRevit. Report each item:
-   - speed of a checkbox click, Select/Unselect all shown, and Space on 1000+ highlighted rows;
-   - whether the row highlight survives a multi-row checkbox click or Space (both call `Items.Refresh()`);
-   - the Type header ▾ popup: values with counts, filtering, "Clear all filters";
-   - search: words in any order, Regex, a red border on invalid regex, ✕, Esc (clear first, then close);
-   - Enter saves; Close/Esc closes without an error;
-   - the theme looks like FamilyManager, in English and Polish;
-   - any pyRevit error or traceback (copy the full text).
+Done in session 3: the git clean-up, the window slice 1 test (all PASS) and the cloud check v2 report.
 
-**After the owner reports:**
-- Slice 1 problems → fix them first (test-first), push, and the owner retests.
-- Slice 1 OK → record the result in §2 and the legacy README Validation section, then write the redesign spec and plan (§4, `agent-skills:spec` → `plan`) before any redesign code.
-- Cloud report → decide the cloud approach (CLAUDE.md "Cloud (ACC) models"); it does not block the local/server part of the redesign (Q9).
+Open:
+1. **Cloud decision** (owner): which cloud candidate to try first (§5 Cloud, "Candidates").
+2. **Cache-copy test** (owner, manual, ~15 min, no code):
+   - copy the host and two or three of its links from the `CollaborationCache` into an empty staging folder: host from `<project>\<model GUID>.rvt`, links from `<project>\LinkedModels\<link GUID>.rvt`;
+   - rename each file to its real name (the link names the check printed);
+   - export it with `Start-RevitExport.ps1`.
+   - Report: did it succeed (`Success Jobs`/`Failed Jobs` in `console.log`), were the links resolved, and any warning about the central model or worksharing?
+   - Do it with Revit closed, and keep everything (staging folder, output, logs) out of the repo.
+3. **Journal check** (owner): the check found no `CLD://` lines in the newest Revit 2022 journals. Search one journal for the host model's GUID, e.g. `Select-String -Path "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit 2022\Journals\journal.*.txt" -Pattern '<model GUID>' | Select-Object -First 5`, and paste those lines privately. They show how Revit 2022 logs a cloud open, which Q27's cloud list depends on.
 
-## 3a. Window slice 1 (agreed 2026-11-09; built 2026-11-09, pushed in session 3, unverified in Revit)
+**Next for the agent:** the redesign spec (`agent-skills:spec`), then the plan (`plan`), for the local/server part (Q9). The cloud part goes into the spec as an open section until items 1–3 are in.
+
+## 3a. Window slice 1 (agreed 2026-11-09; built 2026-11-09, pushed as `85ebc6a`, verified by the owner in Revit 2022)
 
 **What was built** (ExportSetupLegacy only; the 2026 button is unchanged):
 - **Lag root cause, confirmed in pyRevit source** (`pyrevitlib/pyrevit/forms/_ipy.py`): `Reactive` declares `PropertyChanged, _propertyChangedCaller = pyevent.make_event()` at **class level**, so all rows share one handler list. The old window added `_on_row_changed` per row (~3,000 handlers), so each tick fired all of them, and each rebuilt the JSON: O(N²).
@@ -158,8 +154,22 @@ Goal: run the whole workflow from Revit through **one pyRevit button**, with no 
   - `applocales.get_locale_string` resolves `bundle.yaml` `en_us`/`pl` maps and ignores the Revit UI language (`user_locale` defaults to `""` → English).
 - **Cloud:**
   - Revit API 2022–2026 **cannot browse ACC**. It can open a known model via `ModelPathUtils.ConvertCloudGUIDsToCloudPath(region, projectGuid, modelGuid)` + `OpenOptions` + `WorksetConfiguration(CloseAllWorksets)`.
-  - Cache layout (Autodesk article, not yet observed here): `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit 20xx\CollaborationCache\<account>\<projectGUID>\<modelGUID>.rvt`.
-  - Journals contain `CLD://{projGUID}(ProjectName)/{modelGUID}(Model.rvt)`.
+  - **Cache layout, observed in cloud check v2 (Revit 2022, real ACC project):** under `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit 2022\CollaborationCache\<account id>\<project GUID>\`:
+    - `<model GUID>.rvt`: models opened directly (local copies);
+    - `CentralCache\<model GUID>.rvt`: their central cache;
+    - `LinkedModels\<model GUID>.rvt` + `LinkedModels\CentralCache\<model GUID>.rvt`: models loaded **as links**.
+    - One project folder held about 300 `.rvt` files, the largest 3.4 GB.
+  - **Link → cache mapping works for all 28 of 28 links:**
+    - each link's `RevitLinkType.GetExternalResourceReferences()` has `LinkedModelModelId` (= the cache file GUID), `LinkedModelProjectId` (= the project folder), `LinkedModelRegion` (`US`), `ForgeDmItemUrn` and `ForgeDmProjectId`;
+    - every link GUID had a file in `LinkedModels\`.
+    - Link file names come from the open host (`RevitLinkType` name), not from the cache.
+  - **Freshness differs between copies:** a model that was opened directly *and* loaded as a link had a newer root copy than its `LinkedModels\` copy (days apart), and the root and `CentralCache` sizes differed for some models. The cache is not guaranteed current.
+  - `ExternalFileUtils.GetExternalFileReference(doc, linkType.Id)` **throws for every cloud link** in Revit 2022 ("elemId does not represent an external file reference"). For cloud links use external resource references, not external file references.
+  - Journals were said to contain `CLD://{projGUID}(ProjectName)/{modelGUID}(Model.rvt)`, but the check found **none** in the newest 40 Revit 2022 journals. Q27's "names from journals" is unconfirmed (§3 item 3).
+  - **Candidates for cloud export** (owner decides, §3 item 1):
+    - (a) **Copy from the cache:** copy host + `LinkedModels\` files into a staging folder under their real names, then export. Fast, works without a Revit API session, but the cache may be stale, its layout is undocumented, and it is unknown whether the Extractor accepts cached workshared cloud copies (§3 item 2 tests this).
+    - (b) **Detached save-as through the API:** with no document open, open each model from its GUIDs (`ConvertCloudGUIDsToCloudPath`, detached, worksets closed) and `SaveAs` into the staging folder. Gets current versions and is documented, but slow (28 links, up to GBs each) and needs Revit. Check the API overloads per version with `revit-api` first.
+    - The agent's recommendation: run the cache-copy test first. If it passes, use (a) with a freshness warning; otherwise use (b).
   - Desktop Connector can't host cloud workshared models.
 - **Style reference:** FamilyManager uses `family_standards_resources.xaml` (light palette: `FsAccent #0A64D8`, `FsWindowBackground #F5F5F7`, `FsText #1D1D1F` …), merged after load, so windows use `DynamicResource` only. Our window already uses `DynamicResource` for its English/Polish text.
 

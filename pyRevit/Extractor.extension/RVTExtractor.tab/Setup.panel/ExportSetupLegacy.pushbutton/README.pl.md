@@ -83,14 +83,19 @@ Sprawdzono:
   zaznaczeniu przy ponad 1000 arkuszy. Przyczyna: `forms.Reactive` w pyRevit ma jedną wspólną
   listę `PropertyChanged` dla wszystkich wierszy, a okno podpinało obsługę do każdego wiersza,
   co przebudowywało JSON.
+- 9.11.2026, Revit 2022 właściciela (22.1.80.32, pyRevit 6.5.5), przebudowane okno na modelu
+  z ponad 1000 arkuszy: zaznaczanie, „Zaznacz wszystkie widoczne” / „Odznacz wszystkie widoczne”
+  i Spacja działają szybko; podświetlenie wierszy zostaje po zaznaczeniu wielu wierszy; filtr Typ ▾,
+  wyszukiwanie (słowa w dowolnej kolejności, regex, czerwona ramka przy błędnym regexie, ✕, Esc)
+  oraz Enter/Zamknij/Esc działają; motyw odpowiada FamilyManagerowi po angielsku i po polsku;
+  bez błędów.
+- 9.11.2026, Revit 2022 właściciela: parser 2025.3 akceptuje `3dviewing.db_export`.
 - Wcześniej: osiem profili przeszło z parserem Revita 2022 (2025.3.0.12), a okno przetestowano w IronPython 2.7 / .NET Framework poza Revitem.
 
 **Nie sprawdzono:**
-- działania przycisku w Revicie 2022–2025
-- przebudowanego okna (pasek wyszukiwania, filtr Typ, szybkość zaznaczania) w pyRevit/IronPython
+- działania przycisku w Revicie 2023–2025
 - instalacji pyRevit z lokalizowanym `bundle.yaml`
 - parserów Revita 2024/2025
-- `db_export` z parserem 2025.3
 - pełnego eksportu modelu
 
 Testy parsera i atrapy nie zastępują próby w Revicie.
