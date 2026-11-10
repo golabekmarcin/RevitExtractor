@@ -1,6 +1,10 @@
 # Spec: one-button export (pyRevit)
 
-Status: **capability map approved by the owner 2026-11-10**. Module specs are written and approved one by one, in build order.
+Status: **capability map approved by the owner 2026-11-10**. `shared-ui` and `capabilities` were approved one by one. From 2026-11-10 the owner's working mode applies:
+- the agent writes the later module specs and builds them;
+- decisions that are really the owner's are batched in `HANDOVER.md`, and building proceeds on their recommended defaults;
+- there is one Revit test at the end of v1 (`v1-revit-test.md`);
+- each module gets a local commit, and everything is pushed once, before that test.
 Decisions referenced as Q1–Q29 are in `HANDOVER.md` §4.
 
 All spec and plan files for this work live in this folder (`specs/`). This replaces the skill default `tasks/`:
@@ -42,7 +46,7 @@ Out of scope: `Start-RevitExport.ps1` stays as it is, with bug fixes only (Q25).
 ## Tech stack
 
 - **pyRevit with IronPython 2.7** (pyRevit's default engine). No CPython engine, no `#! python3`.
-- .NET Framework through IronPython: WPF windows loaded from XAML, `System.Diagnostics.Process` for the Extractor, the WPF `Dispatcher` for UI updates from process events. No Python threads.
+- .NET Framework through IronPython: WPF windows loaded from XAML, `System.Diagnostics.Process` for the Extractor, a WPF `DispatcherTimer` that polls the process state (no process events, which fire on thread-pool threads). No Python threads.
 - Revit API, 2022 floor (`revit-api.json`). Every API member is checked with the `revit-api` skill for the 2022 floor and the newest indexed revision.
 - The Extractor shipped with the running Revit: `<Revit folder>\RevitExtractor\RevitExtractor.exe` (same lookup as `Start-RevitExport.ps1`).
 - Settings (remembered roots, output folder, max parallel) in pyRevit's per-user config (`script.get_config()`).

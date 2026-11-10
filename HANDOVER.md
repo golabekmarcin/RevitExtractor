@@ -13,9 +13,39 @@ Last updated: 2026-11-10, end of session 3 (Claude Code, with the repo owner Mar
    - **capabilities:** `lib/rx_capabilities.py`, `tests/test_capabilities.py`.
    - The owner added a `tested` field: `TESTED_YEARS = (2022,)`. 2025 is added after the owner tests it on the second machine, which has Revit 2022 and 2025.
    - Unit tests: **153 OK**. `validate_xaml.ps1`: 2 PASS.
-3. Waiting on the owner:
-   - say when to commit and push;
-   - after pulling, check in Revit 2022 that the old "Export setup" button still opens and searches (shared-ui criterion 6).
+   Committed locally as `68a9424`, not pushed.
+3. **Owner's working mode (2026-11-10):**
+   - the agent writes and builds the module specs, with decisions batched below;
+   - one Revit test at the end of v1, using `specs/v1-revit-test.md`;
+   - a local commit per module, and one push before that test.
+4. Specs and plans for `index-builder`, `model-catalog`, `model-reader` and `export-runner` are written; building started in session 4.
+
+**Owner decisions, batched (building uses the defaults until the owner says otherwise):**
+
+| # | Question | Default |
+| --- | --- | --- |
+| D1 | Model list speed target | warm list of 1,000 files ≤ 2 s; cold scan fills progressively, time measured in the owner's test |
+| D2 | Catalog cache location (holds model paths) | `%APPDATA%\RevitExtractor\catalog-cache.json` (`%LOCALAPPDATA%\RevitExtractor` is the repo clone here) |
+| D3 | "Server" models | folders on a file server (UNC / mapped drive); Autodesk Revit Server `RSN://` not in v1 |
+| D4 | Files whose version can't be read | greyed out with a tooltip |
+| D5 | Queued exports when Revit closes | the running export finishes; not-yet-started ones are dropped, and the status window says so |
+| D6 | Windows built-ins `cmd.exe` (redirects the log so it survives Revit closing) and `taskkill.exe` (Cancel kills the Extractor's child too) | use both |
+| D7 | IFC setup list for Revit 2026+ in v1 | include it read-only, labelled untested |
+
+Small build-time defaults (index-builder, accepted by the agent; change if needed):
+- on the newest row, empty UniqueIds (`""`, `None`) are dropped as today, and other non-text ids raise a bilingual `SetupError`;
+- `require_index_shape` returns its input;
+- the new messages with no old equivalent were written by the agent.
+
+model-catalog defaults:
+- `local_copy` rows are yielded disabled, and the caller counts them as skipped;
+- error reads are not cached;
+- an unreadable root keeps its cache entries.
+
+Spec corrections made while planning:
+- `rx_capabilities` gets `db_export_key`, because today's 2026 button never writes `3dviewing.db_export`;
+- the 2026 button's two bugs (a string selection, an unknown scope) become `SetupError`;
+- process state is polled from a `DispatcherTimer`, with no process events.
 4. Then write the next-tier specs, one by one with owner approval: `index-builder`, `model-catalog`, `model-reader`, `export-runner`.
 5. Nothing is waiting on the owner's Revit 2022 machine. After `shared-ui` lands, the owner only checks that the old "Export setup" button still opens and searches.
 
