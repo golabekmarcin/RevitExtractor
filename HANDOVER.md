@@ -3,7 +3,27 @@
 For any AI agent (Claude, Codex, …) or person picking this up. **Read `CLAUDE.md` first** (project rules), then this file.
 **Update this file at the end of every session.** Facts here are dated; re-check anything about the repo state with `git status` / `git log`.
 
-Last updated: 2026-11-10, session 3 (Claude Code, with the repo owner Marcin Golabek): window slice 1 **verified in Revit 2022**; cloud cache-copy test **passed**; **cloud decision: copy from the cache** (Q29).
+Last updated: 2026-11-10, end of session 3 (Claude Code, with the repo owner Marcin Golabek).
+
+## Pick up here (next session)
+
+1. Read `CLAUDE.md`, then `specs/SPEC.md`, `specs/SPEC-shared-ui.md`, `specs/SPEC-capabilities.md`. All three are approved; the last push was `26566d1`.
+2. Session 4 (2026-11-10): both plans were approved, and both modules are **built, uncommitted**.
+   - **shared-ui:** `pyRevit/Extractor.extension/lib/`, `tests/test_shared_ui.py`, `tests/validate_xaml.ps1`. `test_window_legacy.py` was refactored into folder-parameterized mixins; its 130 assertions are unchanged.
+   - **capabilities:** `lib/rx_capabilities.py`, `tests/test_capabilities.py`.
+   - The owner added a `tested` field: `TESTED_YEARS = (2022,)`. 2025 is added after the owner tests it on the second machine, which has Revit 2022 and 2025.
+   - Unit tests: **153 OK**. `validate_xaml.ps1`: 2 PASS.
+3. Waiting on the owner:
+   - say when to commit and push;
+   - after pulling, check in Revit 2022 that the old "Export setup" button still opens and searches (shared-ui criterion 6).
+4. Then write the next-tier specs, one by one with owner approval: `index-builder`, `model-catalog`, `model-reader`, `export-runner`.
+5. Nothing is waiting on the owner's Revit 2022 machine. After `shared-ui` lands, the owner only checks that the old "Export setup" button still opens and searches.
+
+What session 3 did:
+- window slice 1 pushed (`85ebc6a`) and **verified in Revit 2022**;
+- the cloud check v2 and the cache-copy test **passed**, and the owner chose **copy from the cache** (Q29);
+- the guide `tests/cloud-cache-checks.html` was added;
+- the redesign specs were written in `specs/`, and v1 stops after `export-button`.
 
 ## 1. Repo and branch state
 

@@ -22,12 +22,13 @@ XNAME = "{http://schemas.microsoft.com/winfx/2006/xaml}Name"
 XKEY = "{http://schemas.microsoft.com/winfx/2006/xaml}Key"
 
 
-def load(name, filename, stubs=None):
-    """Load a bundle module with stubbed imports; sys.modules is restored afterwards."""
+def load(name, filename, stubs=None, folder=BUNDLE):
+    """Load a module from `folder` (the bundle by default) with stubbed imports; sys.modules is
+    restored afterwards."""
     saved = dict(sys.modules)
     try:
         sys.modules.update(stubs or {})
-        spec = importlib.util.spec_from_file_location(name, str(BUNDLE / filename))
+        spec = importlib.util.spec_from_file_location(name, str(folder / filename))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     finally:
@@ -139,8 +140,6 @@ SEARCH_BAR_STUBS = {
     # The placeholder needs real WPF; the bar must survive it failing.
     "rx_search_placeholder": stub_module("rx_search_placeholder"),
 }
-SEARCH = load("rx_search_bar_under_test", "rx_search_bar.py", SEARCH_BAR_STUBS)
-SearchBar = SEARCH.SearchBar
 
 
 class Args(object):
@@ -162,23 +161,23 @@ class Host(object):
     Content = None
 
 
-class TextMatchTests(unittest.TestCase):
+class TextMatchCases(object):
     def test_plain_search_needs_every_word_in_any_order_and_case(self):
-        self.assertTrue(SEARCH.text_matches("  101 a- ", False, "A-101 — Ground floor"))
-        self.assertTrue(SEARCH.text_matches("FLOOR ground", False, "a-101 — ground floor"))
-        self.assertFalse(SEARCH.text_matches("floor roof", False, "a-101 — ground floor"))
-        self.assertTrue(SEARCH.text_matches("", False, "anything"))
-        self.assertFalse(SEARCH.text_matches("x", False, None))
+        self.assertTrue(self.kit.SEARCH.text_matches("  101 a- ", False, "A-101 — Ground floor"))
+        self.assertTrue(self.kit.SEARCH.text_matches("FLOOR ground", False, "a-101 — ground floor"))
+        self.assertFalse(self.kit.SEARCH.text_matches("floor roof", False, "a-101 — ground floor"))
+        self.assertTrue(self.kit.SEARCH.text_matches("", False, "anything"))
+        self.assertFalse(self.kit.SEARCH.text_matches("x", False, None))
 
     def test_regex_any_case_and_invalid_pattern_matches_nothing(self):
-        self.assertTrue(SEARCH.text_matches("^a-1\\d\\d", True, "A-101 — Ground floor"))
-        self.assertFalse(SEARCH.text_matches("^101", True, "A-101"))
-        self.assertFalse(SEARCH.text_matches("(a", True, "(a"))
-        self.assertIsNotNone(SEARCH.regex_error("(a"))
-        self.assertIsNone(SEARCH.regex_error("a|b"))
+        self.assertTrue(self.kit.SEARCH.text_matches("^a-1\\d\\d", True, "A-101 — Ground floor"))
+        self.assertFalse(self.kit.SEARCH.text_matches("^101", True, "A-101"))
+        self.assertFalse(self.kit.SEARCH.text_matches("(a", True, "(a"))
+        self.assertIsNotNone(self.kit.SEARCH.regex_error("(a"))
+        self.assertIsNone(self.kit.SEARCH.regex_error("a|b"))
 
 
-class SearchBarTests(unittest.TestCase):
+class SearchBarCases(object):
     def setUp(self):
         self.changes = Changes()
 
@@ -187,7 +186,7 @@ class SearchBarTests(unittest.TestCase):
 
     def test_placed_in_its_host_with_only_the_box_shown(self):
         host = Host()
-        bar = SearchBar(host, self.changes, tooltip="Find")
+        bar = self.kit.SearchBar(host, self.changes, tooltip="Find")
         self.assertIs(bar.Root, host.Content)
         for name in ("ClearSearch", "SearchRegex", "ClearFilters"):
             self.assertEqual("Collapsed", self.parts(bar)[name].Visibility, name)
@@ -195,7 +194,7 @@ class SearchBarTests(unittest.TestCase):
         self.assertEqual([], self.changes.calls)
 
     def test_text_changes_notify_and_show_the_clear_button(self):
-        bar = SearchBar(None, self.changes)
+        bar = self.kit.SearchBar(None, self.changes)
         bar.Text = "door"
         self.assertEqual("Visible", self.parts(bar)["ClearSearch"].Visibility)
         self.assertEqual([(bar, None)], self.changes.calls)
@@ -205,7 +204,7 @@ class SearchBarTests(unittest.TestCase):
         self.assertEqual("Collapsed", self.parts(bar)["ClearSearch"].Visibility)
 
     def test_escape_clears_a_filled_box_only(self):
-        bar = SearchBar(None, self.changes, text="door")
+        bar = self.kit.SearchBar(None, self.changes, text="door")
         args = Args("Escape")
         self.parts(bar)["SearchText"].KeyDown.fire(None, args)
         self.assertEqual("", bar.Text)
@@ -220,9 +219,9 @@ class SearchBarTests(unittest.TestCase):
         self.assertFalse(args.Handled)
 
     def test_regex_only_where_offered(self):
-        bar = SearchBar(None, self.changes, text="^d.*r$")
+        bar = self.kit.SearchBar(None, self.changes, text="^d.*r$")
         self.assertFalse(bar.matches("door"))
-        bar = SearchBar(None, self.changes, regex=True, text="^d.*r$")
+        bar = self.kit.SearchBar(None, self.changes, regex=True, text="^d.*r$")
         self.assertEqual("Visible", self.parts(bar)["SearchRegex"].Visibility)
         self.assertFalse(bar.IsRegex)
         bar.IsRegex = True
@@ -230,7 +229,7 @@ class SearchBarTests(unittest.TestCase):
         self.assertFalse(bar.matches("doors"))
 
     def test_invalid_regex_matches_nothing_and_marks_the_box(self):
-        bar = SearchBar(None, self.changes, tooltip="Find", regex=True)
+        bar = self.kit.SearchBar(None, self.changes, tooltip="Find", regex=True)
         bar.IsRegex = True
         bar.Text = "(door"
         box = self.parts(bar)["SearchText"]
@@ -244,7 +243,7 @@ class SearchBarTests(unittest.TestCase):
         self.assertEqual("Find", box.ToolTip)
 
     def test_regex_click_notifies(self):
-        bar = SearchBar(None, self.changes, regex=True)
+        bar = self.kit.SearchBar(None, self.changes, regex=True)
         self.parts(bar)["SearchRegex"].Click.fire(None, None)
         self.assertEqual(1, len(self.changes.calls))
 
@@ -262,7 +261,7 @@ class SearchBarTests(unittest.TestCase):
                 callback(self.IsActive)
 
         controller = Controller()
-        bar = SearchBar(None, self.changes, text="door")
+        bar = self.kit.SearchBar(None, self.changes, text="door")
         bar.bind_filters(controller)
         button = self.parts(bar)["ClearFilters"]
         self.assertEqual("Collapsed", button.Visibility)
@@ -273,19 +272,19 @@ class SearchBarTests(unittest.TestCase):
         self.assertEqual("door", bar.Text)
 
     def test_clear_all_filters_needs_an_action(self):
-        bar = SearchBar(None, self.changes)
+        bar = self.kit.SearchBar(None, self.changes)
         bar.show_clear_filters(True)
         self.assertEqual("Collapsed", self.parts(bar)["ClearFilters"].Visibility)
-        bar = SearchBar(None, self.changes, clear_filters=lambda: None)
+        bar = self.kit.SearchBar(None, self.changes, clear_filters=lambda: None)
         bar.show_clear_filters(True)
         self.assertEqual("Visible", self.parts(bar)["ClearFilters"].Visibility)
 
     def test_part_texts_follow_language(self):
-        bar = SearchBar(None, self.changes, regex=True)
+        bar = self.kit.SearchBar(None, self.changes, regex=True)
         self.assertEqual("Clear all filters", self.parts(bar)["ClearFilters"].Content)
         self.assertTrue(self.parts(bar)["ClearSearch"].ToolTip)
         with patch.dict(sys.modules, polish()):
-            bar = SearchBar(None, self.changes, regex=True)
+            bar = self.kit.SearchBar(None, self.changes, regex=True)
             bar.IsRegex = True
             bar.Text = "(x"
         self.assertEqual("Wyczyść wszystkie filtry", self.parts(bar)["ClearFilters"].Content)
@@ -295,43 +294,40 @@ class SearchBarTests(unittest.TestCase):
 
 # ---------------------------------------------------------------- column filters
 
-FILTER_MODEL = load("rx_column_filter_model_under_test", "rx_column_filter_model.py")
-
-
 def frow(kind, name="", element_id=""):
     return types.SimpleNamespace(Kind=kind, Name=name, ElementId=element_id)
 
 
-class ColumnFilterModelTests(unittest.TestCase):
+class ColumnFilterModelCases(object):
     def test_exact_filters_combine_and_one_column_can_be_excluded(self):
         item = frow("Sheets", "A")
         filters = {"Kind": {"Sheets"}, "Name": {"B"}}
-        self.assertFalse(FILTER_MODEL.row_matches_filters(item, filters))
-        self.assertTrue(FILTER_MODEL.row_matches_filters(item, filters, exclude="Name"))
-        self.assertTrue(FILTER_MODEL.row_matches_filters(item, {"Kind": None}))
+        self.assertFalse(self.kit.FILTER_MODEL.row_matches_filters(item, filters))
+        self.assertTrue(self.kit.FILTER_MODEL.row_matches_filters(item, filters, exclude="Name"))
+        self.assertTrue(self.kit.FILTER_MODEL.row_matches_filters(item, {"Kind": None}))
 
     def test_cascading_counts_apply_every_other_filter_and_base_rule(self):
         rows = [frow("Sheets", "A"), frow("Sheets", "B"), frow("Sections", "A"),
                 frow("Sheets", "C")]
-        counts = FILTER_MODEL.cascading_counts(
+        counts = self.kit.FILTER_MODEL.cascading_counts(
             rows, "Kind", {"Name": {"A", "C"}, "Kind": set()},
             base_visible=lambda item: item.Name != "C")
         self.assertEqual({"Sheets": 1, "Sections": 1}, counts)
 
     def test_rebuild_preserves_survivors_and_excludes_new_values(self):
         rows = [frow("Sheets"), frow("Sections")]
-        result = FILTER_MODEL.reconcile_filters(rows, {"Kind": {"Sheets", "Gone"}, "Name": None})
+        result = self.kit.FILTER_MODEL.reconcile_filters(rows, {"Kind": {"Sheets", "Gone"}, "Name": None})
         self.assertEqual({"Sheets"}, result["Kind"])
         self.assertIsNone(result["Name"])
 
     def test_blank_label_follows_language(self):
-        self.assertEqual("(Blanks)", FILTER_MODEL.blank_label())
+        self.assertEqual("(Blanks)", self.kit.FILTER_MODEL.blank_label())
         with patch.dict(sys.modules, polish()):
-            self.assertEqual("(Puste)", FILTER_MODEL.blank_label())
+            self.assertEqual("(Puste)", self.kit.FILTER_MODEL.blank_label())
 
     def test_order_is_yes_no_numbers_then_text(self):
         values = ["b", 10, "No", 2, "A", "Yes"]
-        ordered = sorted(values, key=lambda value: FILTER_MODEL.value_sort_key(value, str(value)))
+        ordered = sorted(values, key=lambda value: self.kit.FILTER_MODEL.value_sort_key(value, str(value)))
         self.assertEqual(["Yes", "No", 2, 10, "A", "b"], ordered)
 
 
@@ -402,7 +398,7 @@ def any_module(name, **values):
     return module
 
 
-POPUP = load("rx_column_filter_ui_under_test", "rx_column_filter_ui.py", {
+POPUP_STUBS = {
     "System": any_module("System", Windows=Fake()),
     "System.Windows": any_module("System.Windows"),
     "System.Windows.Controls": any_module("System.Windows.Controls"),
@@ -411,7 +407,30 @@ POPUP = load("rx_column_filter_ui_under_test", "rx_column_filter_ui.py", {
                                        Key=types.SimpleNamespace(Escape="Escape")),
     "System.Windows.Media": any_module("System.Windows.Media"),
     "rx_search_bar": stub_module("rx_search_bar", SearchBar=FakePopupSearchBar),
-})
+}
+
+
+class Kit(object):
+    """The modules under test, loaded from one folder: the bundle, or lib/ (test_shared_ui.py).
+
+    `pin` makes the folder's own rx_i18n / rx_column_filter_model win over same-named bundle
+    modules that are on sys.path, so a lib/ run cannot silently test the bundle copies.
+    """
+
+    def __init__(self, folder, pin=False):
+        self.folder = folder
+        pinned = {}
+        if pin:
+            pinned["rx_i18n"] = load("rx_i18n", "rx_i18n.py", folder=folder)
+        stubs = dict(SEARCH_BAR_STUBS, **pinned)
+        self.SEARCH = load("rx_search_bar_under_test", "rx_search_bar.py", stubs, folder)
+        self.SearchBar = self.SEARCH.SearchBar
+        self.FILTER_MODEL = load("rx_column_filter_model_under_test", "rx_column_filter_model.py",
+                                 pinned, folder)
+        if pin:
+            pinned["rx_column_filter_model"] = self.FILTER_MODEL
+        self.POPUP = load("rx_column_filter_ui_under_test", "rx_column_filter_ui.py",
+                          dict(POPUP_STUBS, **pinned), folder)
 
 
 def popup_values(controller):
@@ -423,11 +442,11 @@ def labels(boxes):
     return [box.Content.Text for box in boxes]
 
 
-class ColumnFilterPopupTests(unittest.TestCase):
+class ColumnFilterPopupCases(object):
     def test_values_with_counts_and_clicks_filter_and_refresh(self):
         rows = [frow("Sheets"), frow("Sections"), frow("Sheets")]
         refreshed = []
-        controller = POPUP.ColumnFilterController(lambda: rows, lambda: refreshed.append(1))
+        controller = self.kit.POPUP.ColumnFilterController(lambda: rows, lambda: refreshed.append(1))
         controller.open(Fake(), "Kind")
         viewer, boxes = popup_values(controller)
         self.assertEqual(["Sections (1)", "Sheets (2)"], labels(boxes))
@@ -444,7 +463,7 @@ class ColumnFilterPopupTests(unittest.TestCase):
 
     def test_base_visible_limits_the_counts(self):
         rows = [frow("Sheets", "A"), frow("Sections", "B")]
-        controller = POPUP.ColumnFilterController(
+        controller = self.kit.POPUP.ColumnFilterController(
             lambda: rows, lambda: None, base_visible=lambda row: row.Name == "A")
         controller.open(Fake(), "Kind")
         unused_viewer, boxes = popup_values(controller)
@@ -453,7 +472,7 @@ class ColumnFilterPopupTests(unittest.TestCase):
     def test_clear_all_resets_and_notifies(self):
         rows = [frow("Sheets")]
         seen = []
-        controller = POPUP.ColumnFilterController(lambda: rows, lambda: None)
+        controller = self.kit.POPUP.ColumnFilterController(lambda: rows, lambda: None)
         controller.Filters["Kind"] = set()
         controller.on_active_changed(seen.append)
         controller.clear_all()
@@ -461,40 +480,40 @@ class ColumnFilterPopupTests(unittest.TestCase):
         self.assertIsNone(controller.Filters["Kind"])
 
     def test_header_uses_theme_keys_only(self):
-        source = (BUNDLE / "rx_column_filter_ui.py").read_text(encoding="utf-8")
+        source = (self.kit.folder / "rx_column_filter_ui.py").read_text(encoding="utf-8")
         self.assertNotIn('"Fs', source)
         self.assertIn('"RxAccent"', source)
 
 
 # ---------------------------------------------------------------- theme and XAML
 
-def theme_keys():
-    root = ET.parse(str(BUNDLE / "rx_theme.xaml")).getroot()
+def theme_keys(folder):
+    root = ET.parse(str(folder / "rx_theme.xaml")).getroot()
     return {element.get(XKEY) for element in root.iter() if element.get(XKEY)}
 
 
-class ThemeTests(unittest.TestCase):
+class ThemeCases(object):
     def test_theme_is_renamed_and_complete(self):
-        keys = theme_keys()
+        keys = theme_keys(self.kit.folder)
         self.assertFalse([key for key in keys if key.startswith("Fs")])
         for key in ("RxWindow", "RxPrimaryButton", "RxCard", "RxAccent", "RxCardBackground",
                     "RxBorder", "RxError", "RxMuted", "RxWindowTitle"):
             self.assertIn(key, keys)
-        self.assertNotRegex((BUNDLE / "rx_theme.xaml").read_text(encoding="utf-8"), r"\bFs[A-Z]")
+        self.assertNotRegex((self.kit.folder / "rx_theme.xaml").read_text(encoding="utf-8"), r"\bFs[A-Z]")
 
     def test_every_theme_key_the_code_uses_exists(self):
-        keys = theme_keys()
+        keys = theme_keys(self.kit.folder)
         used = set()
-        for name in ("ui.xaml",):
+        for name in self.theme_xaml_files:
             used |= set(re.findall(r"\{DynamicResource (Rx\w+)\}",
-                                   (BUNDLE / name).read_text(encoding="utf-8")))
-        for name in ("rx_column_filter_ui.py", "extractor_ui.py"):
-            used |= set(re.findall(r'"(Rx[A-Z]\w+)"', (BUNDLE / name).read_text(encoding="utf-8")))
+                                   (self.kit.folder / name).read_text(encoding="utf-8")))
+        for name in self.theme_code_files:
+            used |= set(re.findall(r'"(Rx[A-Z]\w+)"', (self.kit.folder / name).read_text(encoding="utf-8")))
         self.assertTrue(used)
         self.assertEqual(set(), used - keys)
 
     def test_search_bar_template_has_no_text_or_window_resources(self):
-        text = (BUNDLE / "rx_search_bar.xaml").read_text(encoding="utf-8")
+        text = (self.kit.folder / "rx_search_bar.xaml").read_text(encoding="utf-8")
         self.assertNotIn("DynamicResource", text)
         attributes = re.findall(r'\b(Text|Content|Header|ToolTip)="([^"]*)"', text)
         literals = {value for name, value in attributes if value and not value.startswith("{")}
@@ -505,6 +524,34 @@ class ThemeTests(unittest.TestCase):
         # Search box first, then Regex, then "Clear all filters".
         columns = dict((element.get(XNAME), element.get("Grid.Column")) for element in root.iter())
         self.assertEqual(("1", "2"), (columns["SearchRegex"], columns["ClearFilters"]))
+
+
+# ---------------------------------------------------------------- bundle runs
+
+BUNDLE_KIT = Kit(BUNDLE)
+FILTER_MODEL = BUNDLE_KIT.FILTER_MODEL
+
+
+class TextMatchTests(TextMatchCases, unittest.TestCase):
+    kit = BUNDLE_KIT
+
+
+class SearchBarTests(SearchBarCases, unittest.TestCase):
+    kit = BUNDLE_KIT
+
+
+class ColumnFilterModelTests(ColumnFilterModelCases, unittest.TestCase):
+    kit = BUNDLE_KIT
+
+
+class ColumnFilterPopupTests(ColumnFilterPopupCases, unittest.TestCase):
+    kit = BUNDLE_KIT
+
+
+class ThemeTests(ThemeCases, unittest.TestCase):
+    kit = BUNDLE_KIT
+    theme_xaml_files = ("ui.xaml",)
+    theme_code_files = ("rx_column_filter_ui.py", "extractor_ui.py")
 
 
 # ---------------------------------------------------------------- window

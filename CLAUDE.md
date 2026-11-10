@@ -51,6 +51,9 @@ npm test             # all tests; the server tests need the private Snowdon expo
 
 # pyRevit (run from the repo root)
 python -B -m unittest discover -s .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests -v
+# WPF load check for every XAML under pyRevit/Extractor.extension/lib (theme merged first).
+# Verified 2026-11-10: 2 PASS. Pass -Root <folder> to check another folder.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_xaml.ps1
 # Native-parser check for the 2022-2025 button. Auto-picks the first Revit 2022-2025
 # Extractor and handles both parser shapes. Verified 2026-11-09 on Revit 2023 (9/9 pass).
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_native_legacy.ps1

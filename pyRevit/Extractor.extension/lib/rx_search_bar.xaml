@@ -1,0 +1,52 @@
+<!-- Search bar built by rx_search_bar.py (ported from the MGo Family Manager search bar).
+     Order: [search box + clear button] [Regex] [Clear all filters]; optional parts stay
+     collapsed. No outer margin: the caller keeps 8 px below the bar. Colours are literal so
+     the bar also looks right inside a column filter popup. All text is set from Python in
+     English or Polish. -->
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid.Resources>
+        <!-- RxLinkButton (rx_theme.xaml) with the muted text colour inlined. -->
+        <Style x:Key="SearchClearButton" TargetType="Button">
+            <Setter Property="Foreground" Value="#FF6E6E73"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="4,2"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <TextBlock x:Name="Txt" Text="{TemplateBinding Content}"
+                                       Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Txt" Property="TextDecorations" Value="Underline"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Txt" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Grid.Resources>
+    <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" MinWidth="160"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
+    </Grid.ColumnDefinitions>
+    <Grid Grid.Column="0">
+        <!-- Padding = the theme's TextBox padding (6,3) plus room for the clear button. -->
+        <TextBox x:Name="SearchText" Padding="6,3,24,3" VerticalContentAlignment="Center" MinHeight="26"/>
+        <Button x:Name="ClearSearch" Content="&#x2715;" Style="{StaticResource SearchClearButton}"
+                HorizontalAlignment="Right" Margin="0,0,2,0" Focusable="False" Visibility="Collapsed"/>
+    </Grid>
+    <CheckBox x:Name="SearchRegex" Grid.Column="1" VerticalAlignment="Center" Margin="8,0,0,0"
+              Visibility="Collapsed"/>
+    <Button x:Name="ClearFilters" Grid.Column="2" Margin="8,0,0,0" Padding="10,3"
+            Visibility="Collapsed"/>
+</Grid>

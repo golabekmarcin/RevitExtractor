@@ -1,0 +1,378 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- RevitExtractor theme: copied from the MGo Family Manager theme
+         (family_standards_resources.xaml) with every Fs* key renamed Rx*.
+         Merged from Python after each window loads, so windows reference
+         these keys with DynamicResource only. Light cards, hairlines, one
+         blue accent. -->
+
+    <!-- ================= Palette ================= -->
+    <SolidColorBrush x:Key="RxWindowBackground" Color="#FFF5F5F7"/>
+    <SolidColorBrush x:Key="RxCardBackground" Color="#FFFFFFFF"/>
+    <SolidColorBrush x:Key="RxSubtleBackground" Color="#FFF7F7F8"/>
+    <SolidColorBrush x:Key="RxBorder" Color="#FFE3E3E6"/>
+    <SolidColorBrush x:Key="RxControlBorder" Color="#FFD2D2D7"/>
+    <SolidColorBrush x:Key="RxText" Color="#FF1D1D1F"/>
+    <SolidColorBrush x:Key="RxMutedText" Color="#FF6E6E73"/>
+    <SolidColorBrush x:Key="RxPlaceholderText" Color="#FFA1A1A6"/>
+    <SolidColorBrush x:Key="RxAccent" Color="#FF0A64D8"/>
+    <SolidColorBrush x:Key="RxAccentTint" Color="#FFE6EFFC"/>
+    <SolidColorBrush x:Key="RxHoverTint" Color="#FFF7F9FC"/>
+    <SolidColorBrush x:Key="RxErrorText" Color="#FFB3261E"/>
+    <!-- Status tints: amber = changed / needs a look, red = cannot be used. -->
+    <SolidColorBrush x:Key="RxErrorTint" Color="#FFFDE7E5"/>
+    <SolidColorBrush x:Key="RxChangedTint" Color="#FFFFF1D6"/>
+    <SolidColorBrush x:Key="RxChangedText" Color="#FF9A5B00"/>
+
+    <!-- ================= Window ================= -->
+    <Style x:Key="RxWindow" TargetType="Window">
+        <Setter Property="Background" Value="{DynamicResource RxWindowBackground}"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+        <Setter Property="FontFamily" Value="Segoe UI"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    </Style>
+
+    <!-- ================= Buttons ================= -->
+    <!-- Secondary (default) button. Hover/press darken through an overlay
+         instead of replacing Background, so colour-swatch buttons built in
+         Python keep their colour. -->
+    <Style TargetType="Button">
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxControlBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="12,4"/>
+        <Setter Property="MinHeight" Value="26"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid SnapsToDevicePixels="True">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"/>
+                        <Border x:Name="Overlay" Background="Transparent" CornerRadius="6"/>
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          RecognizesAccessKey="True"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Overlay" Property="Background" Value="#0D000000"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Overlay" Property="Background" Value="#1F000000"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- The one main action of a window (Confirm, Apply, Save). -->
+    <Style x:Key="RxPrimaryButton" TargetType="Button">
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="Background" Value="{DynamicResource RxAccent}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Padding" Value="16,5"/>
+        <Setter Property="MinHeight" Value="28"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                            CornerRadius="6" SnapsToDevicePixels="True">
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          RecognizesAccessKey="True"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#FF0857BD"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#FF064A9F"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bd" Property="Background" Value="#FFE5E5EA"/>
+                            <Setter Property="Foreground" Value="#FF9A9AA0"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Secondary button in the accent tint with accent text, quieter than
+         the main action. Template copied from the secondary button above. -->
+    <Style x:Key="RxTintButton" TargetType="Button">
+        <Setter Property="Foreground" Value="{DynamicResource RxAccent}"/>
+        <Setter Property="Background" Value="{DynamicResource RxAccentTint}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxAccentTint}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="12,4"/>
+        <Setter Property="MinHeight" Value="26"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid SnapsToDevicePixels="True">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"/>
+                        <Border x:Name="Overlay" Background="Transparent" CornerRadius="6"/>
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          RecognizesAccessKey="True"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Overlay" Property="Background" Value="#0D000000"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Overlay" Property="Background" Value="#1F000000"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================= Inputs ================= -->
+    <Style TargetType="TextBox">
+        <Setter Property="Padding" Value="6,3"/>
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxControlBorder}"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="MinHeight" Value="26"/>
+    </Style>
+    <Style TargetType="ComboBox">
+        <Setter Property="Padding" Value="6,3"/>
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxControlBorder}"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="MinHeight" Value="25"/>
+    </Style>
+    <Style TargetType="CheckBox">
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+    </Style>
+
+    <!-- ================= Tabs and expanders ================= -->
+    <Style TargetType="TabItem">
+        <Setter Property="Padding" Value="12,5"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+    </Style>
+    <!-- No HeaderTemplate here: a code-built expander with a StackPanel
+         header would render as its type name. -->
+    <Style TargetType="Expander">
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+        <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+
+    <!-- GroupBox as a titled card: semibold title above a white hairline
+         card (settings template elements and resource collections). -->
+    <Style TargetType="GroupBox">
+        <Setter Property="Background" Value="{DynamicResource RxCardBackground}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="4"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="GroupBox">
+                    <Grid SnapsToDevicePixels="True">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <ContentPresenter Grid.Row="0" ContentSource="Header"
+                                          RecognizesAccessKey="True"
+                                          Margin="2,0,0,6"
+                                          TextElement.FontWeight="SemiBold"/>
+                        <Border Grid.Row="1"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Quiet text action (per-row Reset): accent text, underline on hover. -->
+    <Style x:Key="RxLinkButton" TargetType="Button">
+        <Setter Property="Foreground" Value="{DynamicResource RxAccent}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Padding" Value="4,2"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="HorizontalAlignment" Value="Left"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                        <TextBlock x:Name="Txt" Text="{TemplateBinding Content}"
+                                   Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Txt" Property="TextDecorations" Value="Underline"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Txt" Property="Opacity" Value="0.6"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Txt" Property="Foreground" Value="#FFA1A1A6"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================= Grids ================= -->
+    <!-- Highlighted rows: the system selection brushes are redefined inside
+         every grid, list and tree (light accent tint, normal text), so muted
+         text stays readable. Not window-wide: TextBox text selection uses the
+         same brush. -->
+    <Style TargetType="DataGrid">
+        <Style.Resources>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#FFE6EFFC"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FF1D1D1F"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#FFEDEDF0"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#FF1D1D1F"/>
+        </Style.Resources>
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+        <Setter Property="HorizontalGridLinesBrush" Value="#FFF0F0F2"/>
+        <Setter Property="RowBackground" Value="White"/>
+        <Setter Property="AlternatingRowBackground" Value="White"/>
+        <Setter Property="MinRowHeight" Value="26"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+    </Style>
+    <Style TargetType="ListBox">
+        <Style.Resources>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#FFE6EFFC"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FF1D1D1F"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#FFEDEDF0"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#FF1D1D1F"/>
+        </Style.Resources>
+    </Style>
+    <Style TargetType="ListView">
+        <Style.Resources>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#FFE6EFFC"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FF1D1D1F"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#FFEDEDF0"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#FF1D1D1F"/>
+        </Style.Resources>
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxBorder}"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+    </Style>
+    <!-- RevitExtractor addition: ListView GridView headers look like the
+         DataGrid headers below. -->
+    <Style TargetType="GridViewColumnHeader">
+        <Setter Property="Background" Value="{DynamicResource RxSubtleBackground}"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxMutedText}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Padding" Value="8,5"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxBorder}"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    </Style>
+    <Style TargetType="TreeView">
+        <Style.Resources>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#FFE6EFFC"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FF1D1D1F"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#FFEDEDF0"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#FF1D1D1F"/>
+        </Style.Resources>
+    </Style>
+    <Style TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="{DynamicResource RxSubtleBackground}"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxMutedText}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxBorder}"/>
+        <Setter Property="BorderThickness" Value="0,0,1,1"/>
+    </Style>
+    <Style TargetType="DataGridRow">
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource RxHoverTint}"/>
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{DynamicResource RxAccentTint}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style TargetType="DataGridCell">
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="6,0"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Style.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ================= Surfaces and text ================= -->
+    <Style x:Key="RxCard" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource RxCardBackground}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RxBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="12"/>
+        <Setter Property="Margin" Value="0,0,0,8"/>
+    </Style>
+    <Style x:Key="RxWindowTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="20"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+    </Style>
+    <Style x:Key="RxSectionTitle" TargetType="TextBlock">
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+        <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+    <Style x:Key="RxMuted" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource RxMutedText}"/>
+    </Style>
+    <Style x:Key="RxError" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource RxErrorText}"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <!-- Hint shown over an empty search box (IsHitTestVisible off so clicks reach the box). -->
+    <Style x:Key="RxPlaceholder" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource RxPlaceholderText}"/>
+        <Setter Property="Margin" Value="9,0,0,0"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="IsHitTestVisible" Value="False"/>
+    </Style>
+</ResourceDictionary>
