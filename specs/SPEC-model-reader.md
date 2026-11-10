@@ -16,7 +16,7 @@ read_model(app, DB, path, caps, workshared=None)   # snapshot; raises ReadError
 ReadError                               # .kind: "busy" | "open_failed" | "close_failed"; bilingual message
 ```
 
-- Snapshot: `{"title", "path", "views_2d", "views_3d", "ifc_setups"}`. `path` is the requested path and `title` the file name: a detached document has an empty `PathName`.
+- Snapshot: `{"title", "path", "views_2d", "views_3d", "ifc_setups", "ifc_error"}`. `path` is the requested path, and `title` is the file name with its extension, because a detached document has an empty `PathName`. `ifc_error` is `""` when the IFC setups were read. If the read fails, `ifc_setups` is `[]` and the bilingual message goes in `ifc_error`, so the view list survives (added while building, 2026-11-10).
 - Rows are today's: `id` (numeric text, through `rx_capabilities.element_id_value`), `uid`, `name`, `kind`, `search`.
 - `ifc_setups` is filled only when `caps.ifc_setups` (Q22): names of existing IFC setups, each with `ready` = it has the map the Extractor reads. Read-only port of `ExportSetup/extractor_ifc_storage._records`.
 - `read_model` must be called inside the button's command (a modal window). The modeless status window must never call it.
