@@ -18,7 +18,14 @@ Last updated: 2026-11-10, end of session 3 (Claude Code, with the repo owner Mar
    - the agent writes and builds the module specs, with decisions batched below;
    - one Revit test at the end of v1, using `specs/v1-revit-test.md`;
    - a local commit per module, and one push before that test.
-4. Specs and plans for `index-builder`, `model-catalog`, `model-reader` and `export-runner` are written; building started in session 4.
+4. **Built and committed locally in session 4**, not pushed:
+   - `index-builder` (`46e140a`), `model-catalog` (`b418fec`), `model-reader` (`49d2fca`) and `export-runner` (the commit after `49d2fca`);
+   - **340 unit tests OK**; native parser 35 PASS, 2 SKIP;
+   - a real Extractor run from `rx_runner`: normal PASS, cancel PASS. Parallel FAIL: the pipe `Main_Process_to_Client_0_Pipe` is fixed, so with build 2024.0.x exports must run one at a time (Q28 default 1 confirmed). Facts are in §5.
+5. **Next:** write the `status-window` and `export-button` specs under the same working mode, then build them.
+   - `status-window` parses `[[extractor-metrics]]` → `rvt-TaskName` / `rvt-Status` for progress. `progress_line` returns raw, sometimes very long, lines.
+   - `read_model` is called only from the button's modal command.
+   - Then push once and send the owner `specs/v1-revit-test.md`.
 
 **Owner decisions, batched (building uses the defaults until the owner says otherwise):**
 
@@ -194,6 +201,18 @@ Goal: run the whole workflow from Revit through **one pyRevit button**, with no 
   - It copies the source RVT and may change the Print Spooler start mode.
   - It runs headless (`RevitExtractor_Client.exe` with RevitNET) and does not start `Revit.exe`.
   - Success = exit 0, `Success Jobs: N, Failed Jobs: 0` in `console.log`, plus `output\bubble.json` and `output\Resource\`.
+- **First real run from code, 2026-11-10** (Revit 2023 Extractor, build 2024.0.2022.0415, Dynamo sample, `run_extractor_integration.ps1`):
+  - exit 0, 85 s, 64 output files;
+  - log line format: `- <yyyy-MM-dd HH:mm:ss,fff> build_commit:<sha> <LEVEL> <message>`, with timestamps about one hour behind local time, so probably UTC;
+  - the last two lines are `INFO Success Jobs: 13, Failed Jobs: 0` and `INFO RevitExtractor exit with code OK(0).`;
+  - progress comes as `[[progress]]:{...}` and `[[extractor-metrics]]:{"rvt-TaskData":{"rvt-TaskName":…,"rvt-Status":"completed"}}` lines;
+  - `console.log` is ASCII, no BOM;
+  - a failed run can still print `Failed Jobs: 0`, so the exit code check must come first;
+  - `WARN Failed to enable Error Recovery.` and `WARN Kill …RevitExtractor_Client.exe` appear on successful runs;
+  - temp root `%TEMP%\RevitExtractor\` is shared between runs;
+  - Print Spooler unchanged (Automatic/Running).
+  - **Parallel runs fail with this build:** the second run gets `IOException: All pipe instances are busy`.
+  - Process tree: `cmd.exe` → `RevitExtractor.exe` → `RevitExtractor_Client.exe`, plus conhosts. `taskkill /T /F` on the cmd pid ends all of them.
 - **Links:** `ResolveLinkfileTask` finds link files **by file name**, searching folders depth-first.
 - **Parser shapes** (`pyRevit/…/VERIFICATION-2023.md`):
   - build 2024.0.x: `new IndexJson(path)`, `view_ids` Int32, DB key `3dviewing.db_export` (default on);

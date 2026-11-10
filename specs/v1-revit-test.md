@@ -36,7 +36,9 @@ Before pulling on either machine: `git fetch origin; git reset --keep origin/mgo
 - [ ] Export a workshared central straight from a share: the central is untouched.
 - [ ] A model path with spaces, Polish letters and `&` or `%` in a folder name.
 - [ ] Print Spooler start type before and after.
-- [ ] `run_extractor_integration.ps1 -Parallel 2` with two small non-client models (Revit's own samples). Only a pass here sets `PARALLEL_VERIFIED`.
+- [ ] `run_extractor_integration.ps1 -Parallel 2` with two small non-client models (Revit's own samples). Only a pass here sets `PARALLEL_VERIFIED`. It already **failed** with build 2024.0.x on the main machine (fixed IPC pipe), so expect a FAIL with 2025.3 too. Still run it, so we know.
+- [ ] An export started from the button (IronPython `DotNetStarter`) writes a complete `console.log` and reports `ok`. This proves `ProcessStartInfo.EnvironmentVariables` and `ExitCode` work under IronPython.
+- [ ] A model path with Polish letters: `console.log` shows the path readably (it might be in the OEM code page).
 
 ## status-window, export-button
 Added when those modules are specified.

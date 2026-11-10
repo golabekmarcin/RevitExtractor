@@ -54,6 +54,11 @@ python -B -m unittest discover -s .\pyRevit\Extractor.extension\RVTExtractor.tab
 # WPF load check for every XAML under pyRevit/Extractor.extension/lib (theme merged first).
 # Verified 2026-11-10: 2 PASS. Pass -Root <folder> to check another folder.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_xaml.ps1
+# Real Extractor run started from lib/rx_runner's launch spec. It writes only to %TEMP%,
+# picks any installed Revit with RevitExtractor, and uses a Dynamo sample by default.
+# Verified 2026-11-10 (Revit 2023 Extractor): normal PASS, -Cancel PASS, -Parallel 2 FAIL
+# (fixed IPC pipe, so runs must be one at a time).
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\run_extractor_integration.ps1
 # Native-parser check for the 2022-2025 button. Auto-picks the first Revit 2022-2025
 # Extractor and handles both parser shapes. Verified 2026-11-09 on Revit 2023 (9/9 pass).
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_native_legacy.ps1
