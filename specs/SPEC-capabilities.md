@@ -17,6 +17,7 @@ caps.formats                       # () or ("dwg", "ifc")
 caps.ifc_setups                    # bool: existing IFC export setups can be picked (Q22)
 caps.extended_properties           # bool
 caps.topology_metadata             # bool
+caps.db_export_key                 # bool: write 3dviewing.db_export: false when the DB is off (index-builder)
 caps.label                         # human text for the window, e.g. "Revit 2022 (verified)"
 
 element_id_value(element_id)       # int: ElementId.Value if present, else IntegerValue
@@ -35,7 +36,7 @@ UnsupportedRevit                   # raised for years below the floor or unreada
 | 2027+ | as the newest row | as the newest row | as the newest row | as the newest row | `verified = False`; the window shows that the version is untested |
 
 - The 2022–2025 row keeps today's legacy behaviour exactly, including "no IFC/DWG on purpose".
-- The property database switch is **not** a table entry. `index-builder` always writes a form that both parser shapes read (`properties_data.pdb`, plus `3dviewing.db_export: false` when the database is off), as today. The parser shape follows the Extractor build, not the Revit year (`CLAUDE.md`), so a year-keyed table couldn't decide it anyway.
+- The property database switch is the table field `db_export_key` (True for 2022–2025, False for 2026 and later). `index-builder` always writes `properties_data.pdb`; when `db_export_key` is True and the database is off with 3D on, it also writes `3dviewing.db_export: false`, so both parser shapes read it (the legacy button does this today). Today's 2026 button never writes that key, and the 2026 row keeps that. Old-shape Extractor builds (2024.0.x) ship only with Revit 2025 and earlier, so a row field is factually right even though the parser shape follows the Extractor build (`CLAUDE.md`). Amended 2026-11-10 (index-builder, Task 1).
 - `element_id_value` is a feature check, not a table entry: `ElementId.Value` is documented 2024–2026 and `IntegerValue` 2022–2025.3 (RevitRAG). This is the existing function, moved.
 
 ## Acceptance criteria

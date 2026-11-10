@@ -38,6 +38,7 @@ class ForRevitTable(unittest.TestCase):
             self.assertFalse(caps.ifc_setups)
             self.assertFalse(caps.extended_properties)
             self.assertFalse(caps.topology_metadata)
+            self.assertTrue(caps.db_export_key)
 
     def test_2026(self):
         caps = for_revit(2026)
@@ -48,6 +49,7 @@ class ForRevitTable(unittest.TestCase):
         self.assertTrue(caps.ifc_setups)
         self.assertTrue(caps.extended_properties)
         self.assertTrue(caps.topology_metadata)
+        self.assertFalse(caps.db_export_key)
 
     def test_newer_years_use_newest_row_unverified(self):
         for year in (2027, 2030):
@@ -58,6 +60,7 @@ class ForRevitTable(unittest.TestCase):
             self.assertEqual(caps.view_key, "view_unique_ids")
             self.assertEqual(caps.formats, ("dwg", "ifc"))
             self.assertTrue(caps.ifc_setups)
+            self.assertFalse(caps.db_export_key)
 
     def test_tested_only_2022(self):
         self.assertTrue(for_revit(2022).tested)

@@ -29,11 +29,13 @@ TESTED_YEARS = (2022,)
 # (first_year, values), sorted. A year uses the last row whose first_year <= year.
 # 2022 row: owner's Revit 2022 (9/9 parser, slice 1 test), Revit 2023 parser check.
 # 2026 row: the original author's 2026 button; not verified here (no Revit 2026 available).
+# db_export_key: the Extractor build of that row can still read 3dviewing.db_export (2024.0.x
+# ships only with Revit 2025 and earlier), so the index writes it when the database is off.
 _TABLE = [
     (2022, {"view_key": "view_ids", "formats": (), "ifc_setups": False,
-            "extended_properties": False, "topology_metadata": False}),
+            "extended_properties": False, "topology_metadata": False, "db_export_key": True}),
     (2026, {"view_key": "view_unique_ids", "formats": ("dwg", "ifc"), "ifc_setups": True,
-            "extended_properties": True, "topology_metadata": True}),
+            "extended_properties": True, "topology_metadata": True, "db_export_key": False}),
 ]
 
 
@@ -43,7 +45,8 @@ class UnsupportedRevit(ValueError):
 
 _Fields = namedtuple(
     str("Capabilities"),
-    str("year verified tested view_key formats ifc_setups extended_properties topology_metadata"))
+    str("year verified tested view_key formats ifc_setups extended_properties topology_metadata "
+    "db_export_key"))
 
 
 class Capabilities(_Fields):
@@ -93,7 +96,7 @@ def for_revit(version):
         year=year, verified=verified, tested=verified and year in TESTED_YEARS,
         view_key=values["view_key"], formats=values["formats"],
         ifc_setups=values["ifc_setups"], extended_properties=values["extended_properties"],
-        topology_metadata=values["topology_metadata"])
+        topology_metadata=values["topology_metadata"], db_export_key=values["db_export_key"])
 
 
 def element_id_value(element_id):
