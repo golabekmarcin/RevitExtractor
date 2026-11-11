@@ -39,6 +39,18 @@ Last updated: 2026-11-10, end of session 3 (Claude Code, with the repo owner Mar
 | D6 | Windows built-ins `cmd.exe` (redirects the log so it survives Revit closing) and `taskkill.exe` (Cancel kills the Extractor's child too) | use both |
 | D7 | IFC setup list for Revit 2026+ in v1 | include it read-only, labelled untested |
 
+| D8 | Getting back to the status window while a document is open (the button is greyed) | X minimises it while exports are queued or running; it comes back when they finish. Alternative: a separate, always-enabled "Export status" button |
+| D9 | Website that Open in Analyzer falls back to | `https://kopecp.github.io/RevitExtractor/` (the launcher's URL), kept as one constant |
+| D10 | Analyzer server window | a visible console window; closing it stops the server |
+| D11 | Shared `index.json` that contains view ids, with several models ticked | refuse with a message |
+| D12 | Keep "Save index.json…" in the view window | yes |
+| D13 | Another Extractor is already running on the machine | the queue waits, and the row says why |
+
+**Engine fact (pyRevit 6.5.5 source, read 2026-11-11, not run):**
+- all buttons of the extension share one cached IronPython engine;
+- `engine: clean: true` (both old buttons) and a pyRevit reload replace that engine and shut the old one down;
+- so the export queue is published in AppDomain data, as one `Func<String, String>`, and only JSON text crosses between engines (`SPEC-status-window.md`).
+
 Small build-time defaults (index-builder, accepted by the agent; change if needed):
 - on the newest row, empty UniqueIds (`""`, `None`) are dropped as today, and other non-text ids raise a bilingual `SetupError`;
 - `require_index_shape` returns its input;
