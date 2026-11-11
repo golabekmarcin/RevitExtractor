@@ -136,8 +136,7 @@ class StatusWindow(_WINDOW_BASE):
         self._shutting_down = False
         # Esc is the Close button (IsCancel); pyRevit's Esc hook would call Close().
         forms.WPFWindow.__init__(self, XAML_PATH, handle_esc=False)
-        for key, value in resources().items():
-            self.Resources[key] = value
+        self.apply_resources()
         self.merge_resource_dict(THEME_PATH)
         try:
             self.Style = self.FindResource("RxWindow")
@@ -158,6 +157,12 @@ class StatusWindow(_WINDOW_BASE):
             pass
         self.error_text.Text = ""
         self._update_buttons()
+
+    def apply_resources(self):
+        """(Re)load the localized texts; also on every show, so a pyRevit language change that
+        reloaded the script reaches the retained window."""
+        for key, value in resources().items():
+            self.Resources[key] = value
 
     # -- shown state
 
@@ -314,6 +319,10 @@ class Session(object):
         self.window.bring_up()
 
     def on_show(self):
+        try:
+            self.window.apply_resources()
+        except Exception as error:
+            self.window._report(error)
         self.refresh()
         self.window.bring_up()
 

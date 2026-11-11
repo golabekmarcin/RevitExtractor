@@ -117,7 +117,11 @@ def classify(info, running_year):
     if info.get("is_local") or info.get("is_created_local"):
         return "local_copy"
     year = _year_of(info)
-    if info.get("saved_in_later") or (year is not None and year > running_year):
+    # saved_in_later is relative to the Revit that inspected the file, and the cache is shared by
+    # every Revit year. A file whose format year is older than the running year cannot be newer,
+    # whatever an older-year inspection stored.
+    later = bool(info.get("saved_in_later")) and (year is None or year >= running_year)
+    if later or (year is not None and year > running_year):
         return "newer"
     if year is None:
         return "unknown"

@@ -985,6 +985,12 @@ class WindowTest(unittest.TestCase):
                                        self.starter, shell=self.shell, plan_analyzer=self.plan)
         self.window = self.session.window
 
+    def test_on_show_reapplies_localized_resources(self):
+        self.assertNotEqual(self.window.Resources.get("probe"), "changed")
+        with patch.object(self.ui, "resources", lambda: {"probe": "changed"}):
+            self.session.on_show()
+        self.assertEqual(self.window.Resources.get("probe"), "changed")
+
     def plan(self, output):
         self.plans.append(output)
         return self.plan_answer

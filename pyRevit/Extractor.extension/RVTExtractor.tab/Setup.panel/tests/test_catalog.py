@@ -206,6 +206,14 @@ class Classify(unittest.TestCase):
         self.assertEqual(classify(info("2022", local=True), 2022), "local_copy")
         self.assertEqual(classify(info("2022", created_local=True), 2022), "local_copy")
 
+    def test_cached_later_flag_from_older_revit_does_not_disable_in_newer_revit(self):
+        # Inspected under Revit 2022 (flag True), reused from the shared cache under Revit 2023.
+        cached = info("2022", later=True)
+        self.assertEqual(classify(cached, 2022), "newer")
+        self.assertEqual(classify(cached, 2023), "older")
+        self.assertEqual(classify(info("2023", later=True), 2024), "older")
+        self.assertEqual(classify(info("2023", later=True), 2023), "newer")
+
     def test_error_wins_over_everything(self):
         self.assertEqual(classify({"error": "X", "format": "2022", "is_local": True}, 2022),
                          "unknown")
