@@ -873,5 +873,186 @@ class DotNetStarterTest(TempDirTest):
         self.assertNotIn("System.Diagnostics", sys.modules)
 
 
+# --- status-window amendments (specs/SPEC-status-window.md, criterion 12) ------------------
+
+class Hold(object):
+    """hold() stand-in: answers from `value`, counts calls, can raise."""
+
+    def __init__(self, value=False):
+        self.value = value
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        if isinstance(self.value, Exception):
+            raise self.value
+        return self.value
+
+
+class QueueHoldTest(TempDirTest):
+    # QueueTest's fixtures and helpers without re-running its tests.
+    def setUp(self):
+        super(QueueHoldTest, self).setUp()
+        self.revit = os.path.join(self.tmp, "Revit")
+        os.makedirs(os.path.join(self.revit, "RevitExtractor"))
+        open(os.path.join(self.revit, "RevitExtractor", "RevitExtractor.exe"), "w").close()
+        self.out = os.path.join(self.tmp, "out")
+        self.starter = FakeStarter()
+        self.tokens = iter("%08x" % n for n in range(1, 1000))
+
+    queue = QueueTest.queue
+    model = QueueTest.model
+    add = QueueTest.add
+    job = QueueTest.job
+
+    def held_queue(self, hold, max_parallel=1):
+        return Queue(self.starter, FakeClock(), max_parallel=max_parallel,
+                     system_root=SYSTEM_ROOT, token=lambda: next(self.tokens), hold=hold)
+
+    def test_held_queue_starts_nothing_and_can_still_cancel(self):
+        hold = Hold(True)
+        queue = self.held_queue(hold)
+        a, b = self.add(queue, "a"), self.add(queue, "b")
+        self.assertIs(queue.held, False, "not held before the first poll")
+        queue.poll()
+        self.assertEqual(self.starter.started, [])
+        self.assertIs(queue.held, True)
+        self.assertEqual([j.state for j in queue.jobs()], ["queued", "queued"])
+        self.assertFalse(os.path.exists(self.out), "no run folder while held")
+        self.assertTrue(queue.cancel(b))
+        self.assertEqual(self.job(queue, b).state, "cancelled")
+        hold.value = False
+        queue.poll()
+        self.assertIs(queue.held, False)
+        self.assertEqual(self.starter.started_models(), [self.model("a")])
+
+    def test_hold_is_not_asked_while_a_job_of_this_queue_runs(self):
+        hold = Hold(False)
+        queue = self.held_queue(hold, max_parallel=2)
+        self.add(queue, "a")
+        queue.poll()
+        calls = hold.calls
+        hold.value = True  # our own RevitExtractor.exe is running now
+        self.add(queue, "b")
+        queue.poll()
+        self.assertEqual(hold.calls, calls)
+        self.assertIs(queue.held, False)
+        self.assertEqual(self.starter.started_models(), [self.model("a"), self.model("b")])
+
+    def test_failing_hold_counts_as_false(self):
+        queue = self.held_queue(Hold(OSError("no process list")))
+        self.add(queue, "a")
+        queue.poll()
+        self.assertIs(queue.held, False)
+        self.assertEqual(len(self.starter.started), 1)
+
+    def test_hold_is_not_asked_without_queued_jobs(self):
+        hold = Hold(True)
+        queue = self.held_queue(hold)
+        queue.poll()
+        a = self.add(queue, "a")
+        queue.cancel(a)
+        queue.poll()
+        self.assertEqual(hold.calls, 0)
+        self.assertIs(queue.held, False)
+
+    def test_no_hold_behaves_as_before(self):
+        queue = self.queue()
+        self.add(queue, "a")
+        queue.poll()
+        self.assertIs(queue.held, False)
+        self.assertEqual(len(self.starter.started), 1)
+
+    def test_tail_is_the_console_text_read_only(self):
+        queue = self.queue()
+        a = self.add(queue, "a")
+        self.assertEqual(queue.tail(a), "", "queued: no run folder yet")
+        queue.poll()
+        self.assertEqual(queue.tail(a), "", "no console.log yet")
+        console = self.job(queue, a).paths.console
+        with open(console, "wb") as handle:
+            handle.write(b"first\r\n[[progress]]:{\"x\": \"40\"}\r\nmesh number larger than 64k\r\n")
+        root = self.job(queue, a).paths.root
+        before = snapshot(root)
+        text = queue.tail(a)
+        self.assertIn('[[progress]]:{"x": "40"}', text)
+        self.assertIn("mesh number", text, "raw text, no filtering")
+        self.assertEqual(snapshot(root), before)
+        self.assertEqual(queue.tail("unknown"), "")
+
+    def test_tail_is_limited_to_the_end_of_a_long_log(self):
+        queue = self.queue()
+        a = self.add(queue, "a")
+        queue.poll()
+        with open(self.job(queue, a).paths.console, "wb") as handle:
+            handle.write(b"x" * (rx_runner._PROGRESS_TAIL_BYTES * 2) + b"\nlast line\n")
+        text = queue.tail(a)
+        self.assertTrue(text.endswith("last line\n"))
+        self.assertLessEqual(len(text), rx_runner._PROGRESS_TAIL_BYTES)
+
+
+class CleanPathIsPublic(unittest.TestCase):
+    def test_clean_path(self):
+        self.assertTrue(callable(rx_runner.clean_path))
+        self.assertEqual(rx_runner.clean_path(SYSTEM_ROOT + os.sep), SYSTEM_ROOT)
+        for bad in ("", None, "relative", SYSTEM_ROOT + '"'):
+            with self.assertRaises(RunnerError, msg=repr(bad)):
+                rx_runner.clean_path(bad)
+
+
+class FakeListedProcess(object):
+    def __init__(self):
+        self.disposed = False
+
+    def Dispose(self):
+        self.disposed = True
+
+
+class FakeProcessWithList(FakeProcess):
+    listed = []
+    names = []
+
+    @staticmethod
+    def GetProcessesByName(name):
+        FakeProcessWithList.names.append(name)
+        return list(FakeProcessWithList.listed)
+
+
+class DotNetStarterAmendments(TempDirTest):
+    def setUp(self):
+        super(DotNetStarterAmendments, self).setUp()
+        FakeProcess.started = []
+        FakeProcess.return_none = False
+        FakeProcessWithList.listed = []
+        FakeProcessWithList.names = []
+
+    def spec(self):
+        exe, revit, model, paths = spec_inputs(self.tmp)
+        return launch_spec(exe, revit, model, paths, SYSTEM_ROOT)
+
+    def test_show_window_turns_create_no_window_off(self):
+        with patch.dict(sys.modules, stub_system()):
+            rx_runner.DotNetStarter().start(self.spec(), show_window=True)
+            rx_runner.DotNetStarter().start(self.spec())
+        self.assertIs(FakeProcess.started[0].info.CreateNoWindow, False)
+        self.assertIs(FakeProcess.started[0].info.UseShellExecute, False)
+        self.assertIs(FakeProcess.started[1].info.CreateNoWindow, True)
+
+    def stubs(self):
+        stubs = stub_system()
+        stubs["System.Diagnostics"].Process = FakeProcessWithList
+        return stubs
+
+    def test_extractor_running(self):
+        with patch.dict(sys.modules, self.stubs()):
+            self.assertIs(rx_runner.DotNetStarter().extractor_running(), False)
+            FakeProcessWithList.listed = [FakeListedProcess(), FakeListedProcess()]
+            self.assertIs(rx_runner.DotNetStarter().extractor_running(), True)
+        self.assertEqual(FakeProcessWithList.names, ["RevitExtractor", "RevitExtractor"])
+        self.assertTrue(all(p.disposed for p in FakeProcessWithList.listed),
+                        "every listed process object is disposed")
+        self.assertEqual(FakeProcess.started, [], "the check starts nothing")
+
+
 if __name__ == "__main__":
     unittest.main()

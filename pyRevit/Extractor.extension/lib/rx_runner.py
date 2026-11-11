@@ -83,7 +83,7 @@ def _is_absolute(value):
     return os.path.isabs(value)
 
 
-def _clean_path(value):
+def clean_path(value):
     """The path as it may reach the Extractor command line, or RunnerError (fail closed)."""
     if not isinstance(value, _TEXT_TYPES) or not value.strip():
         raise RunnerError(tr("A required path is missing.", "Brakuje wymaganej ścieżki."))
@@ -122,7 +122,7 @@ def new_token():
 
 def plan_run(output_parent, now, token):
     """Paths of a new run folder; touches nothing on disk."""
-    parent = _clean_path(output_parent)
+    parent = clean_path(output_parent)
     if not isinstance(token, _TEXT_TYPES) or not _TOKEN_RE.match(token):
         raise RunnerError(tr("Invalid run folder id: {0}",
                              "Nieprawidłowy identyfikator folderu eksportu: {0}")
@@ -175,7 +175,7 @@ def prepare_run(paths, index):
 
 def extractor_exe(revit_dir, exists=os.path.isfile):
     """<revit_dir>\\RevitExtractor\\RevitExtractor.exe, or RunnerError when it is missing."""
-    exe = os.path.join(_clean_path(revit_dir), "RevitExtractor", "RevitExtractor.exe")
+    exe = os.path.join(clean_path(revit_dir), "RevitExtractor", "RevitExtractor.exe")
     if not exists(exe):
         raise RunnerError(tr("RevitExtractor.exe was not found: {0}",
                              "Nie znaleziono RevitExtractor.exe: {0}").format(exe))
@@ -205,8 +205,8 @@ def launch_spec(exe, revit_dir, model_path, paths, system_root):
                         ("RX_REVIT", revit_dir), ("RX_LOGS", paths.logs),
                         ("RX_JOURNALS", paths.journals), ("RX_CONSOLE", paths.console),
                         ("RX_STDERR", paths.stderr)):
-        env[name] = _clean_path(value)
-    root = _clean_path(system_root)
+        env[name] = clean_path(value)
+    root = clean_path(system_root)
     return LaunchSpec(file=os.path.join(root, "System32", "cmd.exe"), arguments=_CMD_ARGUMENTS,
                       working_dir=env["RX_REVIT"], env=env)
 
@@ -217,7 +217,7 @@ def kill_spec(pid, system_root):
         raise RunnerError(tr("Invalid process id: {0}",
                              "Nieprawidłowy identyfikator procesu: {0}")
                           .format(_shown("%s" % (pid,))))
-    root = _clean_path(system_root)
+    root = clean_path(system_root)
     system32 = os.path.join(root, "System32")
     return LaunchSpec(file=os.path.join(system32, "taskkill.exe"),
                       arguments="/PID %d /T /F" % int(pid), working_dir=system32, env={})
@@ -342,9 +342,14 @@ class Queue(object):
     """FIFO export queue owned by its caller. `starter` has start(spec) -> handle with pid,
     has_exited(), exit_code(), close(); and run(spec) -> exit code. `clock()` returns a datetime.
     Pass effective_parallel(setting) as max_parallel.
+
+    `hold()` (optional): while no job of this queue runs and it returns true, queued jobs wait
+    and `held` is True. A hold that raises counts as false. The status window passes
+    DotNetStarter.extractor_running, so a RevitExtractor.exe this queue did not start (another
+    session, the .ps1 launcher, a second Revit) keeps the fixed pipe free.
     """
 
-    def __init__(self, starter, clock, max_parallel=1, system_root=None, token=None):
+    def __init__(self, starter, clock, max_parallel=1, system_root=None, token=None, hold=None):
         if (isinstance(max_parallel, bool) or not isinstance(max_parallel, _INTEGER_TYPES)
                 or max_parallel < 1):
             raise RunnerError(tr("Invalid number of parallel exports: {0}",
@@ -355,6 +360,8 @@ class Queue(object):
         self._max = int(max_parallel)
         self._system_root = system_root
         self._token = token or new_token
+        self._hold = hold
+        self.held = False
         self._jobs = []
         self._handles = {}
         self._counter = 0
@@ -370,7 +377,7 @@ class Queue(object):
             raise RunnerError(tr("This export is already in the queue.",
                                  "Ten eksport jest już w kolejce."))
         for value in (job.model_path, job.revit_dir, job.output_parent):
-            _clean_path(value)
+            clean_path(value)
         try:
             require_index_shape(job.index)
         except SetupError as error:
@@ -400,6 +407,9 @@ class Queue(object):
         for job in self._jobs:
             if job.state == RUNNING and self._finish_if_exited(job):
                 changed.append(job.id)
+        self.held = self._is_held()
+        if self.held:
+            return changed
         for job in self._jobs:
             if self._running_count() >= self._max:
                 break
@@ -408,6 +418,17 @@ class Queue(object):
             self._start(job)
             changed.append(job.id)
         return changed
+
+    def _is_held(self):
+        """Asked only when a job waits and none of ours runs (our own Extractor would count)."""
+        if self._hold is None or self._running_count():
+            return False
+        if not any(job.state == QUEUED for job in self._jobs):
+            return False
+        try:
+            return bool(self._hold())
+        except Exception:  # fail open: a broken check must not stall the queue for ever
+            return False
 
     def _running_count(self):
         return len([job for job in self._jobs if job.state == RUNNING])
@@ -489,12 +510,16 @@ class Queue(object):
         job.cancel_requested = True
         return True
 
-    def progress(self, job_id):
-        """Last meaningful console line of a started job (read-only), or ""."""
+    def tail(self, job_id):
+        """The end of a started job's console.log as text (read-only), or ""."""
         job = self._find(job_id)
         if job is None or job.paths is None:
             return ""
-        return progress_line(_read_text(job.paths.console, _PROGRESS_TAIL_BYTES))
+        return _read_text(job.paths.console, _PROGRESS_TAIL_BYTES)
+
+    def progress(self, job_id):
+        """Last meaningful console line of a started job (read-only), or ""."""
+        return progress_line(self.tail(job_id))
 
 
 # --- .NET -----------------------------------------------------------------------------------
@@ -522,14 +547,15 @@ class _DotNetHandle(object):
 class DotNetStarter(object):
     """Starts a LaunchSpec with System.Diagnostics.Process. No redirection, no events."""
 
-    def start(self, spec):
+    def start(self, spec, show_window=False):
+        """show_window=True gives a console program its own visible window (the Analyzer)."""
         from System.Diagnostics import Process, ProcessStartInfo
         info = ProcessStartInfo()
         info.FileName = spec.file
         info.Arguments = spec.arguments
         info.WorkingDirectory = spec.working_dir
         info.UseShellExecute = False
-        info.CreateNoWindow = True
+        info.CreateNoWindow = not show_window
         info.RedirectStandardInput = False
         info.RedirectStandardOutput = False
         info.RedirectStandardError = False
@@ -553,3 +579,16 @@ class DotNetStarter(object):
             return handle.exit_code()
         finally:
             handle.close()
+
+    def extractor_running(self):
+        """True while any RevitExtractor.exe runs on this computer. Only lists; never ends one."""
+        from System.Diagnostics import Process
+        processes = Process.GetProcessesByName("RevitExtractor")
+        running = False
+        for process in processes:
+            running = True
+            try:
+                process.Dispose()
+            except Exception:
+                pass
+        return running

@@ -19,11 +19,20 @@ kill_spec(pid, system_root)                 # taskkill /PID <pid> /T /F
 check_result(exit_code, console_text, has_bubble, has_resource)   # Result(state, success_jobs, failed_jobs, message)
 progress_line(console_tail)                 # last meaningful line
 effective_parallel(setting)                 # 1 while PARALLEL_VERIFIED is False
-Queue(starter, clock, max_parallel=1)       # add(job), cancel(job_id), poll(), jobs()
+clean_path(value)                           # the path as it may reach a command line, or RunnerError
+Queue(starter, clock, max_parallel=1, hold=None)
+                                            # add(job), cancel(job_id), poll(), jobs(), tail(job_id), held
 RunnerError                                 # bilingual message
 # thin .NET wrapper, the only code that imports System.Diagnostics (inside its methods)
-DotNetStarter                               # start(spec) -> handle(pid, has_exited(), exit_code()); run(spec)
+DotNetStarter                               # start(spec, show_window=False) -> handle(pid, has_exited(), exit_code());
+                                            # run(spec); extractor_running()
 ```
+
+Amendments for `status-window` (2026-11-11, `SPEC-status-window.md`):
+- `hold()`: while no job of this queue runs and `hold()` is true, queued jobs wait and `Queue.held` is True. A failing `hold()` counts as false. It is asked only when a job is queued.
+- `Queue.tail(job_id)`: the end of `console.log` (64 KiB) as text, read-only; `""` before the job starts.
+- `clean_path` is public (was `_clean_path`).
+- `DotNetStarter.start(spec, show_window=True)` sets `CreateNoWindow = False` (used for the Analyzer console). `extractor_running()` lists `RevitExtractor` processes with `Process.GetProcessesByName`; it never ends one.
 
 Job states: `queued` → `running` → `ok` | `failed` | `cancelled`. Jobs are plain records (id, model path, index, paths, pid, times, result).
 

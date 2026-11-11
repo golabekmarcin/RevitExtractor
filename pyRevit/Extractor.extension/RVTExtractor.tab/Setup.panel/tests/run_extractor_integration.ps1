@@ -8,6 +8,11 @@ Real Extractor run, started from rx_runner's launch spec (specs/SPEC-export-runn
                   no process of the tree is left and the run folder still exists
     -Parallel 2   Q28: two models alone (baseline), then both at once; compares results, output
                   file counts, Success Jobs and cross-model names in console.log / journals
+    -Analyzer     after the normal run: rx_status.analyzer_plan for its output folder; a "local"
+                  plan is started (as the status window starts it, minus --open so no browser
+                  tab opens), GET /api/session must list exactly this one export, then the
+                  script ends the Node process it started. SKIP (not FAIL) when Node.js 24+ or
+                  the Analyzer packages are missing; npm is never run.
     -RevitDirectory, -ModelPath, -ModelPath2, -OutputParent   override the defaults
 
 The process is started with System.Diagnostics.Process from exactly the spec's file, arguments,
@@ -22,6 +27,7 @@ param(
     [string]$ModelPath2,
     [string]$OutputParent,
     [switch]$Cancel,
+    [switch]$Analyzer,
     [ValidateSet(0, 2)]
     [int]$Parallel = 0,
     [ValidateRange(1, 240)]
@@ -32,6 +38,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($Cancel -and $Parallel) { throw 'Use -Cancel or -Parallel, not both.' }
+if ($Analyzer -and ($Cancel -or $Parallel)) { throw '-Analyzer goes with the normal run only.' }
 
 $testsDir = $PSScriptRoot
 $cli = Join-Path $testsDir 'runner_cli.py'
@@ -142,14 +149,14 @@ function Get-Tree([int]$RootPid) {
     return $tree
 }
 
-function Start-Spec($Spec) {
-    # The same fields as rx_runner.DotNetStarter.start.
+function Start-Spec($Spec, [switch]$ShowWindow) {
+    # The same fields as rx_runner.DotNetStarter.start(spec, show_window).
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = [string]$Spec.file
     $info.Arguments = [string]$Spec.arguments
     $info.WorkingDirectory = [string]$Spec.working_dir
     $info.UseShellExecute = $false
-    $info.CreateNoWindow = $true
+    $info.CreateNoWindow = -not $ShowWindow
     $info.RedirectStandardInput = $false
     $info.RedirectStandardOutput = $false
     $info.RedirectStandardError = $false
@@ -254,6 +261,62 @@ function Get-LeftOver {
     return @(Get-Process -Name 'RevitExtractor*' -ErrorAction SilentlyContinue)
 }
 
+function Test-AnalyzerPlan($Run) {
+    # status-window criterion 13. Returns $true for PASS or SKIP; failures go to Add-Failure.
+    $output = [string]$Run.Plan.paths.output
+    $plan = Invoke-Cli @('analyzer-plan', '--output', $output)
+    $found = $plan.found
+    Write-Host "Node.js: $(if ($found.node) { "$($found.node) (major $($found.node_major))" } else { 'not found' })"
+    Write-Host "Analyzer: $($found.analyzer); server.mjs $($found.server); packages installed $($found.packages)"
+    if ($plan.kind -ne 'local') {
+        $missing = (!$found.node) -or ($null -eq $found.node_major) -or ([int]$found.node_major -lt 24) -or (!$found.server) -or (!$found.packages)
+        if ($missing) {
+            Write-Host "SKIP Analyzer: $($plan.reason)" -ForegroundColor Yellow
+            Write-Host '     (npm is never run here; install Node.js 24+ / run npm ci in Analyzer, then rerun -Analyzer)'
+            return $true
+        }
+        Add-Failure "analyzer_plan is web although Node.js and the Analyzer are present: $($plan.reason)"
+        return $false
+    }
+    Write-Host "Plan: $($plan.spec.file) $($plan.spec.arguments)"
+    Write-Host "      working dir $($plan.spec.working_dir); url $($plan.url)"
+    if (!([string]$plan.spec.arguments).EndsWith(' --open')) { Add-Failure 'the local plan does not end with --open' }
+    if (!([string]$plan.spec.arguments).Contains('--output "' + $output + '"')) { Add-Failure 'the local plan does not pass the output folder' }
+    $spec = [pscustomobject]@{ file = $plan.spec.file; working_dir = $plan.spec.working_dir; env = $plan.spec.env
+                               arguments = ([string]$plan.spec.arguments).Substring(0, ([string]$plan.spec.arguments).Length - ' --open'.Length) }
+    Write-Host "Started without --open (no browser tab during the test): $($spec.file) $($spec.arguments)"
+    $node = Start-Spec $spec -ShowWindow
+    Write-Host "Node pid $($node.Id)"
+    try {
+        $session = $null
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ([DateTime]::UtcNow -lt $deadline -and !$node.HasExited) {
+            try { $session = Invoke-RestMethod -Uri ($plan.url + 'api/session') -UseBasicParsing -TimeoutSec 5; break }
+            catch { [void]$node.WaitForExit(500) }
+        }
+        if ($null -eq $session) {
+            Add-Failure "GET $($plan.url)api/session gave no answer (node exited: $($node.HasExited))"
+            return $false
+        }
+        $exports = @($session.exports)
+        Write-Host "/api/session: $($exports.Count) export(s)"
+        foreach ($item in $exports) {
+            Write-Host "    $($item.name) | root $($item.root) | files $($item.fileCount) | views $(@($item.views).Count) | sqlite $($item.hasSqlite)"
+        }
+        if ($exports.Count -ne 1) { Add-Failure "/api/session lists $($exports.Count) exports, expected 1"; return $false }
+        if ([string]$exports[0].root -ne $output) { Add-Failure "/api/session root is $($exports[0].root), expected $output"; return $false }
+        Write-Host 'PASS Analyzer: the local plan started and lists exactly this export' -ForegroundColor Green
+        return $true
+    }
+    finally {
+        # End only the Node process this script started; it has no children without --open.
+        if (!$node.HasExited) { $node.Kill(); [void]$node.WaitForExit(10000) }
+        Write-Host "Node pid $($node.Id) ended by the script: $($node.HasExited)"
+        if (!$node.HasExited) { Add-Failure "Node pid $($node.Id) still running" }
+        $node.Dispose()
+    }
+}
+
 # ------------------------------------------------------------------------------------------------
 $revit = Find-Revit
 $exe = Join-Path $revit.Directory 'RevitExtractor\RevitExtractor.exe'
@@ -274,7 +337,7 @@ foreach ($path in @($sample, $ModelPath2) | Where-Object { $_ }) {
     }
 }
 
-$mode = if ($Cancel) { 'cancel' } elseif ($Parallel) { "parallel $Parallel" } else { 'normal' }
+$mode = if ($Cancel) { 'cancel' } elseif ($Parallel) { "parallel $Parallel" } elseif ($Analyzer) { 'normal + Analyzer' } else { 'normal' }
 Write-Step "export-runner integration ($mode)"
 Write-Host "Revit:            $($revit.Year) - $($revit.Directory)"
 Write-Host "Extractor:        $exe"
@@ -307,6 +370,11 @@ try {
         $run.Progress | Select-Object -First 8 | ForEach-Object { Write-Host "    $_" }
         if ($run.Progress.Count -gt 8) { Write-Host '    ...'; Write-Host "    $($run.Progress[$run.Progress.Count - 1])" }
         Write-Host "stderr.log bytes: $((Get-Item -LiteralPath $run.Plan.paths.stderr -ErrorAction SilentlyContinue).Length)"
+        if ($Analyzer) {
+            Write-Step 'Analyzer (status-window, Open in Analyzer)'
+            if ($result.State -eq 'ok') { [void](Test-AnalyzerPlan $run) }
+            else { Add-Failure 'Analyzer check needs a successful run' }
+        }
     }
 
     if ($Cancel) {
