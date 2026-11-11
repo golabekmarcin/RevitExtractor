@@ -1,0 +1,157 @@
+<!-- Export button, view window: slice 1's layout (ExportSetupLegacy/ui.xaml) with the footer Back,
+     Save index.json and Export, and the DWG/IFC and metadata controls that rx_export_ui.py shows only
+     when the capabilities row has them. Every label is a DynamicResource reference; the English/Polish
+     text lives in rx_export_text.py (UI_TEXT). Rx* keys come from lib/rx_theme.xaml, merged after load. -->
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{DynamicResource window_title}" Width="1040" Height="780"
+        MinWidth="860" MinHeight="600" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Window.Resources>
+        <DataTemplate x:Key="CheckTemplate">
+            <CheckBox IsChecked="{Binding Checked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                      Margin="6,2" ToolTip="{DynamicResource check_tooltip}"/>
+        </DataTemplate>
+    </Window.Resources>
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="{DynamicResource header}" Style="{DynamicResource RxWindowTitle}"/>
+            <TextBlock x:Name="model_title" FontWeight="SemiBold" Margin="0,4,0,0"/>
+            <TextBlock x:Name="model_path" Style="{DynamicResource RxMuted}" TextTrimming="CharacterEllipsis"/>
+            <TextBlock x:Name="model_note" Style="{DynamicResource RxMuted}" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+        <Border Grid.Row="1" Style="{DynamicResource RxCard}" Padding="12,6">
+            <WrapPanel>
+                <CheckBox x:Name="enable2d_cb" Content="{DynamicResource views_2d}" FontWeight="SemiBold" Margin="0,2,28,2"/>
+                <CheckBox x:Name="enable3d_cb" Content="{DynamicResource views_3d}" FontWeight="SemiBold" Margin="0,2,28,2"/>
+                <CheckBox x:Name="pdb_cb" Content="{DynamicResource sqlite}" FontWeight="SemiBold" Margin="0,2,0,2"/>
+            </WrapPanel>
+        </Border>
+        <TabControl Grid.Row="2" x:Name="tabs" Background="{DynamicResource RxCardBackground}" BorderBrush="{DynamicResource RxBorder}">
+            <TabItem x:Name="tab2d" Header="{DynamicResource views_2d}">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <WrapPanel ToolTip="{DynamicResource hint_2d}" Margin="0,0,0,6">
+                        <RadioButton x:Name="default2d_rb" Content="{DynamicResource scope_default}" GroupName="scope2d" Margin="0,2,22,2"/>
+                        <RadioButton x:Name="selected2d_rb" Content="{DynamicResource scope_selected}" GroupName="scope2d" Margin="0,2,22,2"/>
+                    </WrapPanel>
+                    <Grid Grid.Row="1" x:Name="choose2d_panel">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <ContentControl x:Name="search2d_host" Focusable="False" Margin="0,0,0,8"/>
+                        <DockPanel Grid.Row="1" Margin="0,0,0,8">
+                            <Button x:Name="all2d_btn" Tag="2d:all" Content="{DynamicResource check_visible}" Margin="0,0,8,0"/>
+                            <Button x:Name="none2d_btn" Tag="2d:none" Content="{DynamicResource uncheck_visible}" Margin="0,0,12,0"/>
+                            <TextBlock Text="{DynamicResource selection_hint}" Style="{DynamicResource RxMuted}" FontSize="11" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                        </DockPanel>
+                        <ListView Grid.Row="2" x:Name="views2d_lv" SelectionMode="Extended"
+                                  ScrollViewer.CanContentScroll="True" VirtualizingStackPanel.IsVirtualizing="True"
+                                  VirtualizingStackPanel.VirtualizationMode="Recycling">
+                            <ListView.View><GridView>
+                                <GridViewColumn Header="✓" Width="44" CellTemplate="{StaticResource CheckTemplate}"/>
+                                <GridViewColumn Header="{DynamicResource col_name_2d}" Width="500" DisplayMemberBinding="{Binding Name}"/>
+                                <!-- Index 2: rx_export_ui.py puts the Type filter on this header. -->
+                                <GridViewColumn Header="{DynamicResource col_type}" Width="210" DisplayMemberBinding="{Binding Kind}"/>
+                                <GridViewColumn Header="ElementId" Width="110" DisplayMemberBinding="{Binding ElementId}"/>
+                            </GridView></ListView.View>
+                        </ListView>
+                        <TextBlock Grid.Row="3" x:Name="count2d_text" Margin="0,6,0,0" Style="{DynamicResource RxMuted}"/>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem x:Name="tab3d" Header="{DynamicResource views_3d}">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <WrapPanel ToolTip="{DynamicResource hint_3d}" Margin="0,0,0,6">
+                        <RadioButton x:Name="default3d_rb" Content="{DynamicResource scope_default}" GroupName="scope3d" Margin="0,2,22,2"/>
+                        <RadioButton x:Name="selected3d_rb" Content="{DynamicResource scope_selected}" GroupName="scope3d" Margin="0,2,22,2"/>
+                    </WrapPanel>
+                    <Grid Grid.Row="1" x:Name="choose3d_panel">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <ContentControl x:Name="search3d_host" Focusable="False" Margin="0,0,0,8"/>
+                        <DockPanel Grid.Row="1" Margin="0,0,0,8">
+                            <Button x:Name="all3d_btn" Tag="3d:all" Content="{DynamicResource check_visible}" Margin="0,0,8,0"/>
+                            <Button x:Name="none3d_btn" Tag="3d:none" Content="{DynamicResource uncheck_visible}" Margin="0,0,12,0"/>
+                            <TextBlock Text="{DynamicResource selection_hint}" Style="{DynamicResource RxMuted}" FontSize="11" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                        </DockPanel>
+                        <ListView Grid.Row="2" x:Name="views3d_lv" SelectionMode="Extended"
+                                  ScrollViewer.CanContentScroll="True" VirtualizingStackPanel.IsVirtualizing="True"
+                                  VirtualizingStackPanel.VirtualizationMode="Recycling">
+                            <ListView.View><GridView>
+                                <GridViewColumn Header="✓" Width="44" CellTemplate="{StaticResource CheckTemplate}"/>
+                                <GridViewColumn Header="{DynamicResource col_name_3d}" Width="710" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="ElementId" Width="110" DisplayMemberBinding="{Binding ElementId}"/>
+                            </GridView></ListView.View>
+                        </ListView>
+                        <TextBlock Grid.Row="3" x:Name="count3d_text" Margin="0,6,0,0" Style="{DynamicResource RxMuted}"/>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem Header="{DynamicResource advanced}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12">
+                        <TextBlock Text="{DynamicResource advanced_hint}" TextWrapping="Wrap" Style="{DynamicResource RxMuted}" Margin="0,0,0,12"/>
+                        <StackPanel x:Name="advanced3d_panel">
+                            <TextBlock Text="{DynamicResource section_3d}" Style="{DynamicResource RxSectionTitle}"/>
+                            <CheckBox x:Name="aec_cb" Content="{DynamicResource aec}" Margin="0,3"/>
+                            <CheckBox x:Name="description_cb" Content="{DynamicResource description}" Margin="0,3"/>
+                            <CheckBox x:Name="master_cb" Content="{DynamicResource master}" Margin="0,3"/>
+                            <CheckBox x:Name="topology_cb" Content="{DynamicResource topology}" Margin="0,3"/>
+                        </StackPanel>
+                        <StackPanel x:Name="database_panel">
+                            <Separator Margin="0,10"/>
+                            <TextBlock Text="{DynamicResource section_database}" Style="{DynamicResource RxSectionTitle}"/>
+                            <CheckBox x:Name="extended_cb" Content="{DynamicResource extended_properties}" Margin="0,3"/>
+                        </StackPanel>
+                        <Separator Margin="0,10"/>
+                        <TextBlock Text="{DynamicResource section_2d}" Style="{DynamicResource RxSectionTitle}"/>
+                        <CheckBox x:Name="f2d_cb" Content="{DynamicResource f2d}" Margin="0,3"/>
+                        <Separator Margin="0,10"/>
+                        <TextBlock Text="{DynamicResource section_formats}" Style="{DynamicResource RxSectionTitle}"/>
+                        <TextBlock x:Name="formats_note_text" Text="{DynamicResource formats_note}" TextWrapping="Wrap" Style="{DynamicResource RxMuted}"/>
+                        <StackPanel x:Name="formats_panel">
+                            <TextBlock Text="{DynamicResource formats_untested}" TextWrapping="Wrap" Style="{DynamicResource RxMuted}" Margin="0,0,0,6"/>
+                            <CheckBox x:Name="dwg_cb" Content="{DynamicResource format_dwg}" Margin="0,3"/>
+                            <CheckBox x:Name="ifc_cb" Content="{DynamicResource format_ifc}" Margin="0,3"/>
+                            <DockPanel Margin="20,4,0,0" ToolTip="{DynamicResource ifc_setup_tip}">
+                                <TextBlock Text="{DynamicResource ifc_setup}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="ifc_setup_cb" MinWidth="260" HorizontalAlignment="Left"/>
+                            </DockPanel>
+                            <TextBlock x:Name="ifc_error_text" Style="{DynamicResource RxError}" TextWrapping="Wrap" Margin="20,4,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem x:Name="preview_tab" Header="{DynamicResource preview_tab}">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Text="{DynamicResource preview_hint}" Margin="0,0,0,8" Style="{DynamicResource RxMuted}"/>
+                    <TextBox Grid.Row="1" x:Name="json_tb" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                             AcceptsReturn="True" TextWrapping="NoWrap" VerticalContentAlignment="Top"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+        <TextBlock Grid.Row="3" x:Name="error_text" Style="{DynamicResource RxError}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        <Grid Grid.Row="4" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Button x:Name="reset_btn" Content="{DynamicResource reset}" VerticalAlignment="Center"/>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0">
+                <TextBlock x:Name="summary_text" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock x:Name="status_text" Margin="0,2,0,0" Style="{DynamicResource RxMuted}" TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="back_btn" IsCancel="True" Content="{DynamicResource back}" ToolTip="{DynamicResource back_tip}" Margin="0,0,8,0"/>
+                <Button x:Name="save_btn" Content="{DynamicResource save}" ToolTip="{DynamicResource save_tip}"
+                        ToolTipService.ShowOnDisabled="True" Margin="0,0,8,0"/>
+                <Button x:Name="export_btn" IsDefault="True" Content="{DynamicResource views_export}" Style="{DynamicResource RxPrimaryButton}"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

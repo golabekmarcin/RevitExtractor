@@ -12,6 +12,9 @@
             what was found (node, its major version, server.mjs, packages). Starts nothing.
   status-sample --lang en|pl            the status window's text table and sample rows
             (job_view of made-up jobs), for preview_windows.ps1
+  export-sample --lang en|pl            the Export button's model and view windows, driven by
+            their real code with the WPF fakes of test_export_button.py (made-up models and
+            views): text table, rows and each named control's text/check/enabled/visible state
 
 Output is ASCII JSON (non-ASCII escaped), so Windows PowerShell 5.1 reads it intact.
 Errors: exit code 2 and {"error": "..."}.
@@ -199,6 +202,99 @@ def command_status_sample(args):
         sys.modules.update(saved)
 
 
+def _control_state(window, names):
+    """Text, IsChecked, IsEnabled and Visibility of the fake window's named controls."""
+    state = {}
+    for name in names:
+        control = getattr(window, name)
+        entry = {"enabled": bool(control.IsEnabled),
+                 "visible": getattr(control, "Visibility", "Visible") != "Collapsed"}
+        if isinstance(control.Text, str) and control.Text:
+            entry["text"] = control.Text
+        if name.endswith(("_cb", "_rb")):
+            entry["checked"] = bool(control.IsChecked)
+        state[name] = entry
+    return state
+
+
+def command_export_sample(args):
+    """The Export button's windows driven by their real code (rx_export_ui.py) with the WPF
+    fakes of test_export_button.py: made-up models and views, no client data."""
+    saved = dict(sys.modules)
+    try:
+        if args.lang == "pl":
+            sys.modules.update(polish_modules())
+        import test_export_button as kit
+        import rx_catalog
+        caps = for_revit(2022)
+        base = os.path.join("C:\\", "Projects", "Sample")
+        server = os.path.join("\\\\fileserver", "bim", "Housing")
+        facts = [
+            (base, "Office tower - architecture.rvt", {"format": "2022", "is_workshared": True}),
+            (base, "Office tower - structure.rvt", {"format": "2022"}),
+            (base, "Office tower - MEP.rvt", {"format": "2021"}),
+            (base, "Office tower - MEP_user.rvt", {"format": "2022", "is_local": True}),
+            (server, "Housing block A.rvt", {"format": "2024"}),
+            (server, "Housing block B.rvt", {"error": "IOException"}),
+            (server, "Site plan.rvt", {"format": "2022"}),
+        ]
+        rows = [rx_catalog._make_row(os.path.join(folder, name), info, caps.year)
+                for folder, name, info in facts]
+        kit.reset_fakes()
+        settings = {"roots": [base, server],
+                    "output_parent": os.path.join("C:\\", "Users", "user", "Documents",
+                                                  "RevitExtractor"),
+                    "max_parallel": 1, "shared_index_path": ""}
+        models = kit.EXPORT_UI.ModelWindow(
+            caps, settings, None, object(), None, lambda values: None,
+            extractor_build="2025.3.0.12", scan=kit.FakeScan(rows), clock=kit.StepClock(0.0))
+        models.show_dialog()
+        kit.TIMERS[-1].Tick.fire(kit.TIMERS[-1], None)
+        for row in models._rows:
+            if row.Name in ("Office tower - architecture.rvt", "Office tower - MEP.rvt"):
+                row.set_quietly(True)
+        models._refresh_state()
+        model_rows = [{"Checked": row.Checked, "Name": row.Name, "Folder": row.Folder,
+                       "Version": row.Version, "Note": row.Note, "Enabled": row.Enabled,
+                       "Tip": row.Tip} for row in models._rows]
+
+        def record(element_id, name, kind):
+            return {"id": str(element_id), "uid": "uid-%d" % element_id, "name": name,
+                    "kind": kind, "search": " ".join((name, kind, str(element_id))).lower()}
+        kinds = rx_status.tr("Floor plans", "Rzuty kondygnacji"), \
+            rx_status.tr("Sheets", "Arkusze"), rx_status.tr("3D views", "Widoki 3D")
+        snapshot = {
+            "title": "Office tower - MEP.rvt", "path": os.path.join(base, "Office tower - MEP.rvt"),
+            "views_2d": [record(312, "Level 1", kinds[0]), record(313, "Level 2", kinds[0]),
+                         record(401, "M-101 - Ventilation, level 1", kinds[1]),
+                         record(402, "M-102 - Ventilation, level 2", kinds[1])],
+            "views_3d": [record(20, "{3D}", kinds[2]), record(21, "Coordination", kinds[2])],
+            "ifc_setups": [], "ifc_error": ""}
+        note = [row.Note for row in models._rows if row.Name == "Office tower - MEP.rvt"][0]
+        views = kit.EXPORT_UI.ViewWindow(snapshot, caps, note=note, save_dir=base)
+        views.default2d_rb.IsChecked = False
+        views.selected2d_rb.IsChecked = True
+        for row in views._rows["2d"]:
+            if row.Kind == kinds[1]:
+                row.set_quietly(True)
+        views._on_settings_changed(None, None)
+        view_rows = {dimension: [{"Checked": row.Checked, "Name": row.Name, "Kind": row.Kind,
+                                  "ElementId": row.ElementId} for row in views._rows[dimension]]
+                     for dimension in ("2d", "3d")}
+        return {
+            "resources": kit.load_text_module().resources(),
+            "models": {"rows": model_rows, "roots": list(models.roots_lb.ItemsSource),
+                       "controls": _control_state(models, kit.xaml_names(kit.MODELS_XAML))},
+            "views": {"rows": view_rows,
+                      "controls": _control_state(views, kit.xaml_names(kit.VIEWS_XAML))},
+        }
+    finally:
+        for key in list(sys.modules):
+            if key not in saved:
+                del sys.modules[key]
+        sys.modules.update(saved)
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog="runner_cli.py")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -220,10 +316,12 @@ def main(argv):
     analyzer.add_argument("--output", required=True)
     sample = commands.add_parser("status-sample")
     sample.add_argument("--lang", choices=("en", "pl"), default="en")
+    export_sample = commands.add_parser("export-sample")
+    export_sample.add_argument("--lang", choices=("en", "pl"), default="en")
     args = parser.parse_args(argv)
     handlers = {"plan": command_plan, "check": command_check, "progress": command_progress,
                 "kill-spec": command_kill_spec, "analyzer-plan": command_analyzer_plan,
-                "status-sample": command_status_sample}
+                "status-sample": command_status_sample, "export-sample": command_export_sample}
     try:
         data = handlers[args.command](args)
     except (rx_runner.RunnerError, ValueError) as error:

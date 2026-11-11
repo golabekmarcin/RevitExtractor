@@ -493,12 +493,15 @@ class Source(object):
         self.DataContext = row
 
 
-class WindowTests(unittest.TestCase):
+class WindowCases(object):
+    """Slice 1 window cases. Run here against ExportSetupWindow and, in test_export_button.py,
+    against the Export button's ViewWindow. A subclass gives make_window(snapshot)."""
+
     def setUp(self):
         SharedEventReactive.PropertyChanged = Event()
         SharedEventReactive.raised = []
         FakeSearchBar.instances = []
-        self.window = UI.ExportSetupWindow(snapshot())
+        self.window = self.make_window(snapshot())
         self.search2d, self.search3d = FakeSearchBar.instances
 
     def rows(self, dimension):
@@ -636,6 +639,11 @@ class WindowTests(unittest.TestCase):
         self.assertIsNone(self.search2d.bound.Filters["Kind"])
         self.assertEqual(4, len(list(self.window.views2d_lv.ItemsSource)))
         self.assertTrue(self.window.default2d_rb.IsChecked)
+
+
+class WindowTests(WindowCases, unittest.TestCase):
+    def make_window(self, data):
+        return UI.ExportSetupWindow(data)
 
     def test_footer_keys(self):
         xaml = (BUNDLE / "ui.xaml").read_text(encoding="utf-8")

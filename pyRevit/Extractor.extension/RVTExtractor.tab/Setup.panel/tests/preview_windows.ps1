@@ -3,10 +3,11 @@
 .SYNOPSIS
   Renders the new windows with sample rows to PNG files, in English and Polish.
 .DESCRIPTION
-  For each window (today: lib\rx_status.xaml), loads the XAML in real WPF with rx_theme.xaml
-  merged, fills the {DynamicResource} text and sample rows from runner_cli.py status-sample
-  (rx_status.resources() and job_view() of made-up jobs), shows it off-screen without focus,
-  renders it, and writes <OutputDir>\<window>-<lang>.png. Default OutputDir:
+  For each window (lib\rx_status.xaml, and the Export button's rx_export_models.xaml and
+  rx_export_views.xaml), loads the XAML in real WPF with rx_theme.xaml merged, fills the
+  {DynamicResource} text and sample rows from runner_cli.py status-sample / export-sample
+  (made-up jobs, models and views), shows it off-screen without focus, renders it, and writes
+  <OutputDir>\<window>-<lang>.png. Default OutputDir:
   %TEMP%\rx-window-preview. Nothing is written into the repo.
   Needs CPython 3 on PATH (or -Python). Proves layout and text only: no IronPython, no pyRevit,
   no Revit.
@@ -102,6 +103,87 @@ foreach ($lang in @('en', 'pl')) {
         Write-Host ("PASS status-window {0}: {1} ({2}x{3})" -f $lang, $path, [int]$window.ActualWidth, [int]$window.ActualHeight)
     }
     finally { $window.Close() }
+}
+
+# --- Export button: model window and view window ------------------------------------------------
+# runner_cli.py export-sample drives the real rx_export_ui.py with the WPF fakes, so the texts,
+# ticks, enabled and visible states below are what the code sets at runtime.
+$button = (Resolve-Path -LiteralPath (Join-Path $testsDir '..\Export.pushbutton')).Path
+
+function Get-ExportSample([string]$Lang) {
+    $text = (& $Python -B (Join-Path $testsDir 'runner_cli.py') export-sample --lang $Lang | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw "runner_cli.py export-sample failed: $text" }
+    return $text | ConvertFrom-Json
+}
+
+function Set-Controls($Window, $Controls) {
+    foreach ($property in $Controls.PSObject.Properties) {
+        $element = $Window.FindName([string]$property.Name)
+        if ($null -eq $element) { throw "x:Name not found in the XAML: $($property.Name)" }
+        $state = $property.Value
+        if ($null -ne $state.text -and $null -ne $element.GetType().GetProperty('Text')) {
+            $element.Text = [string]$state.text
+        }
+        if ($null -ne $state.checked -and $element -is [System.Windows.Controls.Primitives.ToggleButton]) {
+            $element.IsChecked = [bool]$state.checked
+        }
+        $element.IsEnabled = [bool]$state.enabled
+        $element.Visibility = if ([bool]$state.visible) { 'Visible' } else { 'Collapsed' }
+    }
+}
+
+function Show-AndSave($Window, [string]$Name) {
+    $Window.WindowStartupLocation = [System.Windows.WindowStartupLocation]::Manual
+    $Window.Left = -20000
+    $Window.Top = -20000
+    $Window.ShowActivated = $false
+    $Window.ShowInTaskbar = $false
+    $Window.Show()
+    try {
+        Invoke-Idle
+        $path = Join-Path $OutputDir "$Name.png"
+        Save-Png $Window $path
+        $script:written += $path
+        Write-Host ("PASS {0}: {1} ({2}x{3})" -f $Name, $path, [int]$Window.ActualWidth, [int]$Window.ActualHeight)
+    }
+    finally { $Window.Close() }
+}
+
+function New-ThemedWindow([string]$File, $Resources) {
+    $window = [System.Windows.Markup.XamlReader]::Parse((Read-Xaml (Join-Path $button $File)))
+    foreach ($property in $Resources.PSObject.Properties) {
+        $window.Resources[[string]$property.Name] = [string]$property.Value
+    }
+    $window.Resources.MergedDictionaries.Add($theme)
+    try { $window.Style = $window.FindResource('RxWindow') } catch { }
+    return $window
+}
+
+function ConvertTo-Rows($Items) {
+    $rows = New-Object System.Collections.ObjectModel.ObservableCollection[object]
+    foreach ($item in $Items) { $rows.Add($item) }
+    return , $rows
+}
+
+foreach ($lang in @('en', 'pl')) {
+    $sample = Get-ExportSample $lang
+
+    $window = New-ThemedWindow 'rx_export_models.xaml' $sample.resources
+    Set-Controls $window $sample.models.controls
+    $window.FindName('roots_lb').ItemsSource = @($sample.models.roots | ForEach-Object { [string]$_ })
+    $window.FindName('models_lv').ItemsSource = ConvertTo-Rows @($sample.models.rows | ForEach-Object {
+        [pscustomobject]@{ Checked = [bool]$_.Checked; Name = [string]$_.Name; Folder = [string]$_.Folder
+            Version = [string]$_.Version; Note = [string]$_.Note; Enabled = [bool]$_.Enabled; Tip = [string]$_.Tip } })
+    Show-AndSave $window "export-models-$lang"
+
+    $window = New-ThemedWindow 'rx_export_views.xaml' $sample.resources
+    Set-Controls $window $sample.views.controls
+    foreach ($dimension in @('2d', '3d')) {
+        $window.FindName("views${dimension}_lv").ItemsSource = ConvertTo-Rows @($sample.views.rows.$dimension | ForEach-Object {
+            [pscustomobject]@{ Checked = [bool]$_.Checked; Name = [string]$_.Name; Kind = [string]$_.Kind
+                ElementId = [string]$_.ElementId } })
+    }
+    Show-AndSave $window "export-views-$lang"
 }
 
 Write-Host "Written: $($written.Count) PNG file(s) under $OutputDir"

@@ -1,0 +1,20 @@
+title:
+  en_us: "Export"
+  pl: "Eksport"
+tooltip:
+  en_us: >-
+    Export Revit models with Autodesk Revit Extractor, with no model open.
+    Pick models from your folders, optionally pick the views of one model,
+    and start the export. Revit stays free while it runs; the status window
+    shows progress and opens the result. Revit 2022 and later.
+  pl: >-
+    Eksport modeli Revita przez Autodesk Revit Extractor, bez otwartego modelu.
+    Wybierz modele z folderów, opcjonalnie widoki jednego modelu, i uruchom
+    eksport. Revit pozostaje dostępny w trakcie; okno statusu pokazuje postęp
+    i otwiera wynik. Revit 2022 i nowsze.
+author: RevitExtractor
+min_revit_version: 2022
+context:
+  rule: "(zero-doc)&!(doc-project|doc-family)"
+engine:
+  persistent: true
