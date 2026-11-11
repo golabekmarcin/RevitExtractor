@@ -72,10 +72,10 @@ Tasks 1–3 can run in parallel. Tasks 4 and 5 can run in parallel after them.
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | A Python 3 habit breaks import under IronPython, and the single test fails at the first click | High | Syntax guard on every file; review Task 8; the checklist starts with the click, so a failure costs minutes, not the session |
-| `BasicFileInfo.Extract` from a timer tick inside the modal window is refused by Revit | Med | Owner's item A5; the fallback is one blocking scan with a wait line |
+| `BasicFileInfo.Extract` from a timer tick inside the modal window is refused by Revit | Med | Owner's item B7; the fallback is one blocking scan with a wait line |
 | The background open shows dialogs or takes minutes | Med | Wait line before the call; times recorded; the reserved event members of `SPEC-model-reader.md` |
 | The context rule does not grey the button | Low | The run-time guard is independent of it |
-| A workshared central goes straight to the Extractor | Med | Owner's item C5; if the central changes, export a copy (new decision) |
+| A workshared central goes straight to the Extractor | Med | Owner's item D5; if the central changes, export a copy (new decision) |
 | An old button's click between two exports confuses the user (two "Export" entries on the ribbon) | Low | Tooltips say which is which; Q12 removes the old ones |
 
 ## Open questions

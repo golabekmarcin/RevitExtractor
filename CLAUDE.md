@@ -4,13 +4,14 @@
 > **The one-button redesign is specified in `specs/`** (`SPEC.md` = capability map + shared rules; `SPEC-<module>.md`, `plan-<module>.md`). Keep every spec and plan file there.
 
 Tooling around Autodesk's native **Revit Extractor** (`RevitExtractor.exe`, shipped with Revit).
-Three independent parts:
+Four parts:
 
 | Part | Path | Runtime |
 | --- | --- | --- |
 | Analyzer: browser viewer for export output (SVF 3D, PDF, properties, SQLite) | `Analyzer/` | Node.js 24+ (ESM, `"type": "module"`), browser JS without a bundler |
 | Export launcher (interactive PowerShell, picks Revit version → index → RVT → output folder) | `Analyzer/public/downloads/Start-RevitExport.ps1` | Windows PowerShell 5.1 |
 | pyRevit "Eksport setup" buttons that generate `index.json` | `pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel/` | **IronPython 2.7** inside Revit |
+| pyRevit **Export** button (one-button redesign, v1): model list, view picking, queue, status window. Uses the extension-level `lib/` (`rx_*` modules). Spec: `specs/`. **Built and unit-tested here, not yet run in Revit** | `pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel/Export.pushbutton/` and `pyRevit/Extractor.extension/lib/` | **IronPython 2.7** inside Revit |
 
 `extractorScript_v1.ps1` at the root is only a legacy shim that forwards to `Start-RevitExport.ps1`. Put launcher logic in `Start-RevitExport.ps1`.
 
@@ -20,6 +21,7 @@ Three independent parts:
 Current coverage:
 - launcher: any year (no fixed list)
 - pyRevit `ExportSetupLegacy`: 2022–2025 (closed range)
+- pyRevit `Export`: 2022 and later, no maximum. The capability table has rows for 2022–2026 only; the rest is unverified against docs. Not yet run in Revit (owner's session: `specs/v1-revit-test.md`). 2026+ IFC/DWG options are marked untested.
 - pyRevit `ExportSetup`: 2026+, with no `max_revit_version`, so it also opens on 2027+. All 58 Revit API members it uses have exact matches in the 2026 docs (checked 2026-11-09). There are no docs for later versions. It is still Polish-only and has no scripted native-parser check, unlike `ExportSetupLegacy`. Its `build_index` still iterates a string selection per character (`"abc"` → `['a','b','c']`) and raises `TypeError` for an unknown scope. `ExportSetupLegacy` fixed both (2026-11-09).
 
 **Cloud (ACC) models: design open** (decided 2026-11-09: probe first, then the pyRevit button will prepare the files).
@@ -51,8 +53,8 @@ npm test             # all tests; the server tests need the private Snowdon expo
 
 # pyRevit (run from the repo root)
 python -B -m unittest discover -s .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests -v
-# WPF load check for every XAML under pyRevit/Extractor.extension/lib (theme merged first).
-# Verified 2026-11-10: 2 PASS. Pass -Root <folder> to check another folder.
+# WPF load check for every XAML under pyRevit/Extractor.extension/lib and Export.pushbutton (theme merged first).
+# Verified 2026-11-11: 5 PASS. Pass -Root <folder> to check another folder.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_xaml.ps1
 # Real Extractor run started from lib/rx_runner's launch spec. It writes only to %TEMP%,
 # picks any installed Revit with RevitExtractor, and uses a Dynamo sample by default.
@@ -62,6 +64,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.exte
 # Native-parser check for the 2022-2025 button. Auto-picks the first Revit 2022-2025
 # Extractor and handles both parser shapes. Verified 2026-11-09 on Revit 2023 (9/9 pass).
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_native_legacy.ps1
+# Owner's Revit session kit (Windows PowerShell 5.1; prints no path or model name).
+# -Setup builds a test folder of copies from two sample RVTs (-Root, default C:\RX-test);
+# -Check [<run or output folder>] prints Print Spooler, leftover processes and per-run results;
+# -Stamp <file> prints size and time. Verified 2026-11-11 against a real run (Revit 2023 Extractor).
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1 -Setup -Root "$env:TEMP\RX-test"
 # Launcher dry run (no Revit started, no folders created). Needs a local Revit install
 # with RevitExtractor; -ModelPath and -OutputParent are mandatory.
 # Verified 2026-11-09 against Revit 2023 with a Dynamo sample RVT from C:\ProgramData\Autodesk\RVT 2023\.

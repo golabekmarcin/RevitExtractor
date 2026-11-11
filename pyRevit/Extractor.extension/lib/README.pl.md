@@ -14,6 +14,7 @@ Wspólne moduły dla wszystkich przycisków tego rozszerzenia. pyRevit dodaje te
 | `rx_index.py` | index-builder | jedno `build_index` dla każdej wersji Revita, z takim samym wynikiem jak stare przyciski |
 | `rx_catalog.py` | model-catalog | lista plików `.rvt` w zapamiętanych folderach, z regułami pomijania, wersjami nowsza/starsza/nieznana i pamięcią podręczną w `%APPDATA%\RevitExtractor\catalog-cache.json`. Ta pamięć zawiera ścieżki modeli: nigdy jej nie commituj ani nie udostępniaj |
 | `rx_reader.py` | model-reader | otwarcie w tle (odłączone, workset-y zamknięte), lista widoków, dokładnie jedno `Close(False)`; nigdy nie zapisuje |
+| `rx_status.py`, `rx_status_ui.py`, `rx_status.xaml` | status-window | niemodalne okno statusu kolejki eksportów: postęp z `console.log`, Otwórz folder wyników, Otwórz w Analyzerze, Anuluj eksport. Kolejka jest publikowana w danych AppDomain, a między silnikami skryptów przechodzi tylko tekst JSON |
 | `rx_runner.py` | export-runner | folder eksportu, proces Extractora przez `cmd.exe`, kolejka (po jednym), anulowanie przez `taskkill /T /F`, sprawdzenie wyniku |
 
 Zasady:
@@ -37,4 +38,6 @@ Również 2026-11-10, ten sam komputer:
   - `-Parallel 2` **FAIL**: drugie uruchomienie zatrzymało się z błędem `All pipe instances are busy` (stała nazwa potoku `Main_Process_to_Client_0_Pipe`). Z tą wersją eksporty muszą iść po jednym, więc `PARALLEL_VERIFIED` pozostaje False.
 - `rx_reader`: testy na ścisłych atrapach (stubach), a 13 z 13 celowo zepsutych kopii zostało wykrytych (bez zapisu, dokładnie jedno `Close(False)`).
 
-**Niezweryfikowane:** IronPython 2.7 i nic wewnątrz Revit. Dotyczy to `BasicFileInfo.Extract`, prawdziwego otwarcia w tle, `DotNetStarter` (`ProcessStartInfo` w IronPythonie), zamknięcia Revita w trakcie eksportu i parsera w wersji 2025.3. Wszystko to jest w `specs/v1-revit-test.md`, na test właściciela po zakończeniu v1. Żaden przycisk nie używa jeszcze tych modułów.
+**Niezweryfikowane:** IronPython 2.7 i nic wewnątrz Revit. Dotyczy to `BasicFileInfo.Extract`, prawdziwego otwarcia w tle, `DotNetStarter` (`ProcessStartInfo` w IronPythonie), okna statusu i jego przekazania między silnikami skryptów, zamknięcia Revita w trakcie eksportu i parsera w wersji 2025.3. Wszystko to jest w `specs/v1-revit-test.md`, na test właściciela po zakończeniu v1.
+
+2026-11-11, ten sam komputer: wszystkie testy jednostkowe 554 OK; `validate_xaml.ps1` ładuje każdy XAML z `lib/` i `Export.pushbutton/`. `Export.pushbutton` to pierwszy przycisk używający tych modułów (`../RVTExtractor.tab/Setup.panel/Export.pushbutton/README.pl.md`).

@@ -14,6 +14,7 @@ Shared modules for every button of this extension. pyRevit puts this folder on `
 | `rx_index.py` | index-builder | one `build_index` for every Revit version, the same output as the old buttons |
 | `rx_catalog.py` | model-catalog | `.rvt` list under remembered roots, with skip rules, newer/older/unknown and a cache in `%APPDATA%\RevitExtractor\catalog-cache.json`. The cache holds model paths: never commit or share it |
 | `rx_reader.py` | model-reader | background open (detached, worksets closed), view list, exactly one `Close(False)`; it never saves |
+| `rx_status.py`, `rx_status_ui.py`, `rx_status.xaml` | status-window | the export queue's modeless status window: progress from `console.log`, Open output folder, Open in Analyzer, Cancel export. The queue is published in AppDomain data and only JSON text crosses between script engines |
 | `rx_runner.py` | export-runner | run folder, Extractor process through `cmd.exe`, queue (one at a time), cancel with `taskkill /T /F`, success check |
 
 Rules:
@@ -37,4 +38,6 @@ Also 2026-11-10, same machine:
   - `-Parallel 2` **FAIL**: the second run stopped with `All pipe instances are busy` (fixed pipe `Main_Process_to_Client_0_Pipe`). With this build, exports must run one at a time, so `PARALLEL_VERIFIED` stays False.
 - `rx_reader`: strict-stub tests, and 13 of 13 deliberately broken copies were caught (no save, exactly one `Close(False)`).
 
-**Not verified:** IronPython 2.7 and anything inside Revit. That includes `BasicFileInfo.Extract`, a real background open, `DotNetStarter` (`ProcessStartInfo` under IronPython), closing Revit during an export, and the 2025.3 parser shape. These are all in `specs/v1-revit-test.md` for the owner's test at the end of v1. No button uses these modules yet.
+**Not verified:** IronPython 2.7 and anything inside Revit. That includes `BasicFileInfo.Extract`, a real background open, `DotNetStarter` (`ProcessStartInfo` under IronPython), the status window and its hand-over between script engines, closing Revit during an export, and the 2025.3 parser shape. These are all in `specs/v1-revit-test.md` for the owner's test at the end of v1.
+
+2026-11-11, same machine: all unit tests 554 OK; `validate_xaml.ps1` loads every XAML in `lib/` and `Export.pushbutton/`. `Export.pushbutton` is the first button that uses these modules (`../RVTExtractor.tab/Setup.panel/Export.pushbutton/README.md`).
