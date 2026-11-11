@@ -12,7 +12,7 @@ Produce the local model list (Q4/Q7, Q17, Q19): `.rvt` files under remembered ro
 iter_model_files(roots, walk=os.walk)     # generator of paths; skip rules applied; sorted, deterministic
 classify(info, running_year)              # "ok" | "older" | "newer" | "unknown" | "local_copy"
 scan(roots, running_year, read_info, cache, stat=os.stat)   # generator of Row, one file per step
-Row                                       # path, folder, name, version, state, enabled, note
+Row                                       # path, folder, name, version, state, enabled, note, workshared (True/False from BasicFileInfo.IsWorkshared; None when unknown; the cache format is unchanged)
 Cache(file_path)                          # load(), lookup(path, size, mtime), store(...), prune(...), save()
 normalize_roots(values)                   # trimmed, de-duplicated, nested roots collapsed
 read_basic_info(path, BasicFileInfo)      # thin wrapper: dict of plain values, or {"error": <type name>}

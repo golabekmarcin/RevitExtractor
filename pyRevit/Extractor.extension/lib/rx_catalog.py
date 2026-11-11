@@ -26,7 +26,7 @@ _BACKUP_NAME = re.compile(r"^(?P<base>.+)\.\d{4}\.rvt$", re.IGNORECASE)
 _YEAR = re.compile(r"^\d{4}$")
 _MTIME_TOLERANCE = 0.001  # seconds; JSON round trip and filesystem timestamp precision
 
-Row = namedtuple(str("Row"), str("path folder name version state enabled note"))
+Row = namedtuple(str("Row"), str("path folder name version state enabled note workshared"))
 
 
 def _norm_path(path):
@@ -142,12 +142,21 @@ def _note(state, info, running_year):
     return ""
 
 
+def _workshared_of(info):
+    """True / False from the BasicFileInfo IsWorkshared fact; None when unknown or unreadable."""
+    if "error" in info:
+        return None
+    value = info.get("is_workshared")
+    return value if isinstance(value, bool) else None
+
+
 def _make_row(path, info, running_year):
     state = classify(info, running_year)
     year = _year_of(info)
     return Row(path=path, folder=os.path.dirname(path), name=os.path.basename(path),
                version="%d" % year if year is not None else "", state=state,
-               enabled=state in ("ok", "older"), note=_note(state, info, running_year))
+               enabled=state in ("ok", "older"), note=_note(state, info, running_year),
+               workshared=_workshared_of(info))
 
 
 class Cache(object):

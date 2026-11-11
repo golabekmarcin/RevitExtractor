@@ -289,6 +289,32 @@ class Rows(TempTree):
         row = self.scan_rows({"u.rvt": {"error": "E"}})[0]
         self.assertEqual(row.version, "")
 
+    def test_workshared_true_false_and_unknown(self):
+        for name in ("w", "n", "u", "e"):
+            self.touch(name + ".rvt")
+        rows = self.scan_rows({
+            "w.rvt": info("2022", is_workshared=True),
+            "n.rvt": info("2022", is_workshared=False),
+            "u.rvt": info("2022"),                       # fact missing
+            "e.rvt": {"error": "E"}})
+        self.assertEqual({r.name: r.workshared for r in rows},
+                         {"w.rvt": True, "n.rvt": False, "u.rvt": None, "e.rvt": None})
+
+    def test_workshared_comes_from_cache_and_cache_format_is_unchanged(self):
+        self.touch("models", "a.rvt")
+        root = os.path.join(self.tmp, "models")
+        path = os.path.join(self.tmp, "cache", "c.json")
+        list(scan([root], 2022, lambda p: info("2022", is_workshared=True), Cache(path)))
+        cache = Cache(path)
+        cache.load()
+        rows = list(scan([root], 2022, lambda p: 1 / 0, cache))
+        self.assertIs(rows[0].workshared, True)
+        with io.open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["version"], 1)
+        entry = list(data["entries"].values())[0]
+        self.assertEqual(sorted(entry), ["info", "mtime", "size"])
+
     def test_flag_only_newer_note(self):
         self.touch("f.rvt")
         row = self.scan_rows({"f.rvt": info("", later=True)})[0]
