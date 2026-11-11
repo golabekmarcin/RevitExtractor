@@ -27,7 +27,22 @@ Last updated: 2026-11-10, end of session 3 (Claude Code, with the repo owner Mar
    - `read_model` is called only from the button's modal command.
    - Then push once and send the owner `specs/v1-revit-test.md`.
 
-**Owner decisions, batched (building uses the defaults until the owner says otherwise):**
+**Owner decisions D1–D13: all confirmed by the owner on 2026-11-11, in a grilling round.**
+- **D8:** option A for v1. Option B, an always-enabled "Export status" button, is wanted later.
+- **D9:** the upstream site for now.
+- **D13:** wait for now. The owner wants parallel Extractors later, like several Revit sessions.
+- **Build-time defaults:** all kept.
+- **Push:** the one push of `mgo-changes` when v1 is ready is pre-approved, and the checklist goes out right after. Never push to `online` or upstream.
+- **Revit 2025 machine:** it has pyRevit and the clone, so Part E of the test stays.
+
+**Nice to have after v1 (owner, 2026-11-11):**
+1. Autodesk Revit Server (`RSN://`) models. The owner doesn't use Revit Server today.
+2. An always-enabled "Export status" button (D8 option B).
+3. Parallel exports. Test item 02 runs the parallel check on the 2025.3 Extractor build.
+   - If it passes: set `PARALLEL_VERIFIED` and expose `max_parallel`.
+   - If it fails: research per-run isolation (temp root, account) around the fixed pipe `Main_Process_to_Client_0_Pipe`.
+
+**Owner decisions, batched (the defaults below are the decisions):**
 
 | # | Question | Default |
 | --- | --- | --- |
