@@ -11,6 +11,7 @@ One session, about 90 minutes, on the Revit 2022 + pyRevit machine. Part F (10 m
 3. Build the sample folder with the test kit, from the repo root:
 
 ```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force   # this window only; lets `& $kit` run below
 $kit = '.\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $kit -Setup
 ```
@@ -62,15 +63,15 @@ Start Revit with no model open.
   - click the old "Export setup" button and close it: the status window still updates.
 - [ ] **C7** Still during C6: close the model, run pyRevit **Reload**, then click Export. The **same** status window with the same rows is shown, not a second one. Add one more export: it waits behind the others.
 - [ ] **C8** Cancel export on a waiting row: it never starts and no folder is created for it.
-- [ ] **C9** Cancel export on the running row. Then `$kit -Check $out`: no `RevitExtractor` process is left, and the cancelled run is listed as INCOMPLETE (its folder still exists).
+- [ ] **C9** Cancel export on the running row. Then `& $kit -Check $out`: no `RevitExtractor` process is left, and the cancelled run is listed as INCOMPLETE (its folder still exists).
 - [ ] **C10** Batch with a shared index: choose the file saved in C5 with two models ticked. If you ticked views in C5 it must be refused with a clear message; with one model ticked it must run.
 - [ ] **C11** While an export runs, open **the model that is being exported** in Revit. Note anything unusual.
-- [ ] **C12** Start two exports, then **close Revit** while the first runs. Revit exits fully (no `Revit.exe` left in Task Manager). Wait, then run `$kit -Check $out`: the first run is OK, and the second is NOT STARTED.
-- [ ] **C13** `$kit -Check $out` once more: the Print Spooler start type equals the value of S1. Send the whole output; it also holds the `Success Jobs` lines.
+- [ ] **C12** Start two exports, then **close Revit** while the first runs. Revit exits fully (no `Revit.exe` left in Task Manager). Wait, then run `& $kit -Check $out`: the first run is OK, and the second is NOT STARTED.
+- [ ] **C13** `& $kit -Check $out` once more: the Print Spooler start type equals the value of S1. Send the whole output; it also holds the `Success Jobs` lines.
 
 ## Part D: real models (20 minutes; results are private)
 
-Start Revit again with no model open. For D3 and D5, run `$kit -Stamp '<model path>'` before and after.
+Start Revit again with no model open. For D3 and D5, run `& $kit -Stamp '<model path>'` before and after.
 
 - [ ] **D1** Add a real root on a share. Note the file count and the time until the list is complete (cold). Rescan and note the time again (warm). The window stays responsive.
 - [ ] **D2** No backup files, no `Backup` folders, and no local copies of centrals are listed.
@@ -103,7 +104,7 @@ Both scripts are in `pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\te
 ## What to send back, privately
 
 1. This list with PASS, FAIL or a note per item, and the times of D1, D3, D4 and D6.
-2. The outputs: G1, G2, F1, and `$kit -Check` from S1, C9, C12 and C13.
+2. The outputs: G1, G2, F1, and `& $kit -Check` from S1, C9, C12 and C13.
 3. For any failure: the text of pyRevit's output window, and `console.log` and `stderr.log` of that run folder. These can name models and paths, so never commit them.
 
 ## What the agent does with the results

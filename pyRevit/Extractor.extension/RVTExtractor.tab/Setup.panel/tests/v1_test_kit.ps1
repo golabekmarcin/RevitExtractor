@@ -110,6 +110,10 @@ function Invoke-Setup {
     if (Test-Path -LiteralPath $Root) {
         $marker = Join-Path $Root $markerName
         if ($Force -and (Test-Path -LiteralPath $marker -PathType Leaf)) {
+            foreach ($item in @($SampleA, $SampleB, $Newer, $Older) | Where-Object { $_ }) {
+                $full = [IO.Path]::GetFullPath($item.Trim('"'))
+                if ($full.StartsWith($Root + '', [StringComparison]::OrdinalIgnoreCase)) { throw 'A sample model is inside the test folder that -Force would delete. / Model znajduje sie w folderze testowym, ktory -Force by usunal.' }
+            }
             Remove-Item -LiteralPath $Root -Recurse -Force
         } else {
             throw 'The test folder already exists. Delete it yourself, or pass -Force (only works on a folder this kit made). / Folder testowy juz istnieje. Usun go lub uzyj -Force (dziala tylko na folderze utworzonym przez ten skrypt).'
@@ -174,7 +178,7 @@ function Get-RunFacts([IO.DirectoryInfo]$Dir) {
     $bubble = Test-Path -LiteralPath (Join-Path $output 'bubble.json') -PathType Leaf
     $resource = Test-Path -LiteralPath (Join-Path $output 'Resource') -PathType Container
     $r.OutputFiles = $files.Count
-    $r.OutputMB = [math]::Round((($files | Measure-Object Length -Sum).Sum) / 1MB, 1)
+    $r.OutputMB = [math]::Round(([double]$(if ($files.Count) { ($files | Measure-Object Length -Sum).Sum } else { 0 })) / 1MB, 1)
     $r.Bubble = $bubble
     $r.Resource = $resource
     $exit = $null; $summary = '(none)'; $failedJobs = $null; $errors = 0; $warns = 0
