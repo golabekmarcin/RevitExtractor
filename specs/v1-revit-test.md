@@ -11,7 +11,7 @@ One session, about 90 minutes, on the Revit 2022 + pyRevit machine. Part F (10 m
 1. Git, on each machine (never `git pull`; `HANDOVER.md` §1):
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone; change it on the other machine
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone; change it on the other machine
 Set-Location $repo
 git fetch origin
 git reset --keep origin/mgo-changes
@@ -22,7 +22,7 @@ git log --oneline -1   # note this line: it says which version you are testing
 2. Optional, for the local Analyzer (item C3). It needs Node.js 24 or later, installed by you or from the Company Portal; restart Revit after installing it. Without it, C3 tests the website fallback; say which one you tested. Check Node and install the packages once:
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 node --version        # must print v24 or higher
 Set-Location (Join-Path $repo 'Analyzer')
 .\Start-Analyzer.cmd  # first run installs the packages (Internet needed), then starts the server; close its window to stop it
@@ -32,9 +32,8 @@ Set-Location (Join-Path $repo 'Analyzer')
 3. Build the sample folder with the test kit:
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
-Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force        # this window only
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
+Set-Location $repo        # this window only
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
 & $kit -Setup
 # With a newer and an older model for items B6 and D6, use this line instead:
@@ -52,9 +51,8 @@ $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel
 4. **S1** The "before" check. Note the Print Spooler start type and that no `RevitExtractor` process is running:
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 & $kit -Check *>&1 | Tee-Object (Join-Path $res 'S1.txt')
@@ -101,24 +99,39 @@ Start Revit with no model open.
 - [works] **C9** Cancel export on the running row. Then run the check: no `RevitExtractor` process is left, and the cancelled run is listed as INCOMPLETE, or as NOT STARTED when it was cancelled before the Extractor created its folders (its run folder still exists).
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
 $out = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
+Test-Path $kit
 & $kit -Check $out *>&1 | Tee-Object (Join-Path $res 'C9.txt')
 ```
+>OUTPUT
+  == Machine / Komputer
+  Print Spooler: StartType=Automatic, Status=Running
+  RevitExtractor processes left / procesy RevitExtractor: 0
+  Revit.exe processes / procesy Revit.exe: 1
+  Revit 2022: Extractor 2025.3.0.12
+
+  == Runs / Eksporty: 1
+  run 1: NOT STARTED
+    exit code: (none); (none)
+    output: 0 files, 0 MB; bubble.json no; Resource no
+    folders (1 = present): index=1 output=0 logs=0 journals=0 console=0
+    console.log: 0 ERROR line(s), 0 WARN line(s); stderr.log -1 bytes (-1 = missing); about 0 s
+
 > Result (owner): works. `-Check` showed 0 leftover RevitExtractor processes and 1 run, NOT STARTED: only `index.json` existed (output=0 logs=0 journals=0 console=0), because the export was cancelled before the Extractor created its folders. `Revit.exe` count 2 = Revit was open.
+
 - [works] **C10** Batch with a shared index: choose the file saved in C5 with two models ticked. If you ticked views in C5 it must be refused with a clear message; with one model ticked it must run.
 > Result (owner): works. Message shown: "This index.json selects views, and view ids belong to one model. Select one model or use an index.json without views."
 - [no unusal behavior, I checked on detached by default model (e-trasmitted), and the central model and I opened local copy while exporting] **C11** While an export runs, open **the model that is being exported** in Revit. Note anything unusual.
+
 - [Detail below] **C12** Start two exports, then **close Revit** while the first runs. Revit exits fully (no `Revit.exe` left in Task Manager). The Extractor processes of the export that was running keep going on their own until it ends (by design); `RevitAccelerator.exe` belongs to Revit and may stay a while. A new Revit session shows "Waiting: another Extractor is running" until they end. Wait a minute or two (the first export finishes on its own), then run the check: the first run is OK, and the second is NOT STARTED.
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
 $out = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
@@ -126,17 +139,46 @@ Get-Process Revit -ErrorAction SilentlyContinue   # prints nothing when Revit ha
 & $kit -Check $out *>&1 | Tee-Object (Join-Path $res 'C12.txt')
 ```
 > Result (owner, partial): Revit exited fully. Afterwards these stayed running: RevitAccelerator.exe, RevitExtractor.exe, RevitExtractor Client.exe, RevitWorker.exe (x2). A new Revit session then said another Extractor was still running. Still needed: did they end by themselves and after how long, and the `-Check` result after they ended (first run OK, second NOT STARTED).
+
+>OUTPUT
+== Machine / Komputer
+Print Spooler: StartType=Automatic, Status=Running
+RevitExtractor processes left / procesy RevitExtractor: 2
+Revit.exe processes / procesy Revit.exe: 0
+Revit 2022: Extractor 2025.3.0.12
+
+== Runs / Eksporty: 1
+run 1: NOT STARTED
+  exit code: (none); (none)
+  output: 0 files, 0 MB; bubble.json no; Resource no
+  folders (1 = present): index=1 output=0 logs=0 journals=0 console=0
+  console.log: 0 ERROR line(s), 0 WARN line(s); stderr.log -1 bytes (-1 = missing); about 0 s
+
 - [ ] **C13** The same check once more: the Print Spooler start type equals the value of S1. Send the whole output; it also holds the `Success Jobs` lines.
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
 $out = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 & $kit -Check $out *>&1 | Tee-Object (Join-Path $res 'C13.txt')
 ```
+
+> OUTPUT
+== Machine / Komputer
+Print Spooler: StartType=Automatic, Status=Running
+RevitExtractor processes left / procesy RevitExtractor: 0
+Revit.exe processes / procesy Revit.exe: 1
+Revit 2022: Extractor 2025.3.0.12
+
+== Runs / Eksporty: 1
+run 1: NOT STARTED
+  exit code: (none); (none)
+  output: 0 files, 0 MB; bubble.json no; Resource no
+  folders (1 = present): index=1 output=0 logs=0 journals=0 console=0
+  console.log: 0 ERROR line(s), 0 WARN line(s); stderr.log -1 bytes (-1 = missing); about 0 s
+
 
 - [ ] **C14** The Node.js notice. Rename `Analyzer\node_modules` for a moment (or test on a machine without Node): `Rename-Item (Join-Path $repo 'Analyzer\node_modules') node_modules.off` (with `$repo` set as in the blocks above; undo it with `Rename-Item (Join-Path $repo 'Analyzer\node_modules.off') node_modules`). Then click Open in Analyzer on a finished row: the notice appears with the reason, the output folder and the website open, and the error line shows. Tick "Don't show this again" and OK; click again: no notice, same fallback. Restore the folder name. Check the text reads well in English, and in Polish after E1. Then run `Analyzer\Start-Analyzer.cmd` once with `node_modules` removed (`Remove-Item -Recurse -Force (Join-Path $repo 'Analyzer\node_modules')`, then `& (Join-Path $repo 'Analyzer\Start-Analyzer.cmd')`): it installs the packages (also behind a company proxy, with no extra setup) and starts the server.
 - [ ] **C15** The row context menu. With two or more rows (one queued or not yet started, one running or finished), right-click a row that is not highlighted: it becomes highlighted, then the menu shows "Show model in File Explorer" and "Show export folder in File Explorer" (Polish after E1). Right-click empty space below the rows: no menu. "Show model" opens Explorer with the model file selected, also for a model whose folder path has Polish letters, spaces, `&` or `%`; rename the model file for a moment: the item opens its folder instead; rename the folder too: the error line says the file and folder were not found. "Show export folder" opens the same folder as Open output folder (the output folder for a finished row, the run folder otherwise, Polish folder path included); on a queued row, or one cancelled before it started, the item is greyed out. Restore any names you changed.
@@ -147,9 +189,8 @@ $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 Start Revit again with no model open. For D3 and D5, run this before and after, with the real path of that model (the output holds a size and a time, no path; send it):
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
 & $kit -Stamp '\\server\share\Project\Central.rvt'    # <- the model's path
 ```
@@ -178,7 +219,7 @@ notepad (Join-Path $run.FullName 'console.log')
 - [ ] **F1** `validate_native_legacy.ps1`: send the output. It needs Python 3 (`python --version`) and finds the Revit 2022-2025 Extractor by itself; if it finds none or the wrong one, add `-ExtractorDirectory 'C:\Program Files\Autodesk\Revit 2025\RevitExtractor'`.
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 Set-Location $repo
 $tests = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
@@ -194,7 +235,7 @@ Nobody can test the 2026 row: its IFC and DWG options stay marked untested.
 - [ ] **G1** `validate_native_legacy.ps1`: all lines PASS (2025.3 parser shape). Send the output. Needs Python 3 (`python --version`).
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 Set-Location $repo
 $tests = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
@@ -203,7 +244,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tests 'valid
 - [ ] **G2** The parallel run with the two sample models from `C:\RX-test\Samples`. A FAIL is expected (fixed pipe); we need to know for this build. Send the output. It names your Windows user folder: private.
 
 ```powershell
-$repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
+$repo = 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor'   # your clone
 Set-Location $repo
 $tests = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
