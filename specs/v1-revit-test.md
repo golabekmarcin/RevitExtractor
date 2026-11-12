@@ -36,37 +36,73 @@ The output folder is by default `Documents\RevitExtractor`. In this list `$out` 
 
 Start Revit with no model open.
 
-- [ ] **A1** The **Export** button is on the ribbon (RevitExtractor tab, Setup panel) and enabled. Open any model: it is greyed. Close the model: enabled again.
-- [ ] **A2** Click Export. The window opens, and pyRevit's output window shows no error. **If it does not open, send the text of the output window and stop here.** (An import error under IronPython would show up exactly here.)
-- [ ] **A3** The old "Export setup" button still opens and searches as before. Close it.
+- [Works] **A1** The **Export** button is on the ribbon (RevitExtractor tab, Setup panel) and enabled. Open any model: it is greyed. Close the model: enabled again.
+- [Works] **A2** Click Export. The window opens, and pyRevit's output window shows no error. **If it does not open, send the text of the output window and stop here.** (An import error under IronPython would show up exactly here.)
+- [Works] **A3** The old "Export setup" button still opens and searches as before. Close it.
 
 ## Part B: model window, no export yet (10 minutes)
 
-- [ ] **B1** Add folder… `C:\RX-test`. Rows appear. Not listed: the file in `Backup` and the `.0001.rvt` file. Listed: `Tower.2024`, and the model in the folder with Polish letters, `&` and `%`.
-- [ ] **B2** While rows appear, the window stays responsive (it can be moved, and the search box takes text).
-- [ ] **B3** `Not a model.rvt` is greyed as unreadable, cannot be ticked, and has a tooltip.
-- [ ] **B4** Search, the ▾ filters, Select all shown and Space behave as in the old window. Select all shown does not tick greyed rows.
-- [ ] **B5** Close and reopen: the folder and the output folder are remembered, and the list fills faster (the cache file `catalog-cache.json` exists in `%APPDATA%\RevitExtractor`).
-- [ ] **B6** Only if you built `Newer\` and `Older\`: the newer model is greyed, cannot be ticked, and has a tooltip (note whether it shows a year or "could not be read"). The older model can be ticked and shows the upgrade note.
-- [ ] **B7** Note whether the model list scan caused any dialog, or Revit refusing the read (`BasicFileInfo.Extract` runs from the window's timer).
+- [Works] **B1** Add folder… `C:\RX-test`. Rows appear. Not listed: the file in `Backup` and the `.0001.rvt` file. Listed: `Tower.2024`, and the model in the folder with Polish letters, `&` and `%`.
+- [Works] **B2** While rows appear, the window stays responsive (it can be moved, and the search box takes text).
+- [Works] **B3** `Not a model.rvt` is greyed as unreadable, cannot be ticked, and has a tooltip.
+- [Works] **B4** Search, the ▾ filters, Select all shown and Space behave as in the old window. Select all shown does not tick greyed rows.
+- [Works] **B5** Close and reopen: the folder and the output folder are remembered, and the list fills faster (the cache file `catalog-cache.json` exists in `%APPDATA%\RevitExtractor`).
+- [Works] **B6** Only if you built `Newer\` and `Older\`: the newer model is greyed, cannot be ticked, and has a tooltip (note whether it shows a year or "could not be read"). The older model can be ticked and shows the upgrade note.
+- [No, it doesn not] **B7** Note whether the model list scan caused any dialog, or Revit refusing the read (`BasicFileInfo.Extract` runs from the window's timer).
 
 ## Part C: exports with the sample models (25 minutes)
 
-- [ ] **C1** Tick sample A, default scope, Export. Control returns at once and the status window shows the row, the time running and the finished steps.
-- [ ] **C2** Result is Done. Open output folder opens `…\export-<date>-<id>\output`. The run folder has `index.json`, `output\`, `logs\`, `journals\`, `console.log`.
-- [ ] **C3** Open in Analyzer: the model shows in the browser (local Analyzer), or the folder and the website open (fallback). Say which. With the local Analyzer: a console window appeared, and closing it stops the server.
-- [ ] **C4** Tick sample A, Choose views…: views are listed. Tick two 2D views and one 3D view, Export. Only those three are in the result.
-- [ ] **C5** In the view window, Save index.json… writes a file. Back returns to the model list with its ticks.
-- [ ] **C6** Tick three models (include the one in the folder with Polish letters, `&` and `%`), Export. They run one after another. **While they run:**
+- [Works] **C1** Tick sample A, default scope, Export. Control returns at once and the status window shows the row, the time running and the finished steps.
+- [Works] **C2** Result is Done. Open output folder opens `…\export-<date>-<id>\output`. The run folder has `index.json`, `output\`, `logs\`, `journals\`, `console.log`.
+- [Works, I got problem with npm ci so it returned the error with instruction how to do it manually. After resolving it opened local server] **C3** Open in Analyzer: the model shows in the browser (local Analyzer), or the folder and the website open (fallback). Say which. With the local Analyzer: a console window appeared, and closing it stops the server.
+- [Works] **C4** Tick sample A, Choose views…: views are listed. Tick two 2D views and one 3D view, Export. Only those three are in the result.
+- [Works] **C5** In the view window, Save index.json… writes a file. Back returns to the model list with its ticks.
+- [Works] **C6** Tick three models (include the one in the folder with Polish letters, `&` and `%`), Export. They run one after another. **While they run:**
   - open a model in Revit: the Export button is greyed, the status window still updates;
   - click X on the status window: it minimises and can be restored from the taskbar;
   - click the old "Export setup" button and close it: the status window still updates.
-- [ ] **C7** Still during C6: close the model, run pyRevit **Reload**, then click Export. The **same** status window with the same rows is shown, not a second one. Add one more export: it waits behind the others.
-- [ ] **C8** Cancel export on a waiting row: it never starts and no folder is created for it.
-- [ ] **C9** Cancel export on the running row. Then `& $kit -Check $out`: no `RevitExtractor` process is left, and the cancelled run is listed as INCOMPLETE (its folder still exists).
-- [ ] **C10** Batch with a shared index: choose the file saved in C5 with two models ticked. If you ticked views in C5 it must be refused with a clear message; with one model ticked it must run.
-- [ ] **C11** While an export runs, open **the model that is being exported** in Revit. Note anything unusual.
-- [ ] **C12** Start two exports, then **close Revit** while the first runs. Revit exits fully (no `Revit.exe` left in Task Manager). Wait, then run `& $kit -Check $out`: the first run is OK, and the second is NOT STARTED.
+- [works] **C7** Still during C6: close the model, run pyRevit **Reload**, then click Export. The **same** status window with the same rows is shown, not a second one. Add one more export: it waits behind the others.
+- [works] **C8** Cancel export on a waiting row: it never starts and no folder is created for it.
+- [works] **C9** Cancel export on the running row. Then `& $kit -Check $out`: no `RevitExtractor` process is left, and the cancelled run is listed as INCOMPLETE (its folder still exists).
+    == Machine / Komputer
+  Print Spooler: StartType=Automatic, Status=Running
+  RevitExtractor processes left / procesy RevitExtractor: 0
+  Revit.exe processes / procesy Revit.exe: 2
+  Revit 2022: Extractor 2025.3.0.12
+
+  == Runs / Eksporty: 1
+  run 1: NOT STARTED
+    exit code: (none); (none)
+    output: 0 files, 0 MB; bubble.json no; Resource no
+    folders (1 = present): index=1 output=0 logs=0 journals=0 console=0
+    console.log: 0 ERROR line(s), 0 WARN line(s); stderr.log -1 bytes (-1 = missing); about 0 s
+
+- [works] **C10** Batch with a shared index: choose the file saved in C5 with two models ticked. If you ticked views in C5 it must be refused with a clear message; with one model ticked it must run.
+This index.json selects views, and view ids belong to one model. Select one model or use an index.json without views.
+- [no unusal behavior, I checked on detached by default model (e-trasmitted), and the central model and I opened local copy while exporting] **C11** While an export runs, open **the model that is being exported** in Revit. Note anything unusual.
+- [Detail below] **C12** Start two exports, then **close Revit** while the first runs. Revit exits fully (no `Revit.exe` left in Task Manager). Wait, then run `& $kit -Check $out`: the first run is OK, and the second is NOT STARTED.
+After closing Revit while exporter was started these are listed (background processes)
+Name
+RevitAccelerator.exe
+RevitExtractor.exe
+RevitExtractor Client.exe
+RevitWorker.exe
+RevitWorker.exe
+PID
+14960
+32280
+38116
+10228
+39200
+Status
+Running
+Running
+Running
+Running
+Running
+
+After I open new revit.exe session and try to run next export I am prompted that another extractor is still running
+
 - [ ] **C13** `& $kit -Check $out` once more: the Print Spooler start type equals the value of S1. Send the whole output; it also holds the `Success Jobs` lines.
 
 - [ ] **C14** The Node.js notice. Rename `Analyzer\node_modules` for a moment (or test on a machine without Node), then click Open in Analyzer on a finished row: the notice appears with the reason, the output folder and the website open, and the error line shows. Tick "Don't show this again" and OK; click again: no notice, same fallback. Restore the folder name. Check the text reads well in English, and in Polish after E1. Then run `Analyzer\Start-Analyzer.cmd` once with `node_modules` removed: it installs the packages (also behind a company proxy, with no extra setup) and starts the server.
