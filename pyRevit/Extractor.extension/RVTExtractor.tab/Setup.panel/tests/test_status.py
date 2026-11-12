@@ -754,6 +754,24 @@ class Helpers(unittest.TestCase):
                     self.ui.shell_open(target)
         self.assertEqual(ShellProcess.started, [])
 
+    def test_explorer_select_starts_explorer_without_the_shell(self):
+        here = os.path.abspath(__file__)
+        with patch.dict(sys.modules, helper_stubs()):
+            self.ui.explorer_select(here)
+        process = ShellProcess.started[0]
+        self.assertEqual(process.info.FileName, "explorer.exe")
+        self.assertEqual(process.info.Arguments, '/select,"%s"' % os.path.normpath(here))
+        self.assertIs(process.info.UseShellExecute, False)
+        self.assertTrue(process.disposed)
+
+    def test_explorer_select_refuses_unsafe_or_missing_files(self):
+        for target in (os.path.join(self.tmp, "missing.rvt"), 'C:\\a"b.rvt', "a.rvt",
+                       "C:\\a\nb.rvt", self.tmp + '" /root,"C:\\Windows', None):
+            with patch.dict(sys.modules, helper_stubs()):
+                with self.assertRaises(ValueError, msg=repr(target)):
+                    self.ui.explorer_select(target)
+        self.assertEqual(ShellProcess.started, [])
+
     def test_free_port_binds_loopback_and_releases(self):
         with patch.dict(sys.modules, helper_stubs()):
             self.assertEqual(self.ui.free_port(), 50123)
@@ -979,6 +997,60 @@ class Shell(object):
         self.opened.append(target)
 
 
+class Explorer(object):
+    def __init__(self):
+        self.selected = []
+
+    def __call__(self, path):
+        self.selected.append(path)
+
+
+class ExplorerLogic(unittest.TestCase):
+    def test_arguments_quote_the_path_and_keep_special_characters(self):
+        for path in ("C:\\Models\\a.rvt", "C:\\Moje modele\\Żółć & Co\\100% (v2).rvt",
+                     "C:\\a,b;c\\x.rvt", "\\\\server\\share\\Zażółć\\m.rvt"):
+            with self.subTest(path=path):
+                self.assertEqual(rx_status.explorer_arguments(path), '/select,"%s"' % path)
+
+    def test_arguments_normalise_slashes(self):
+        self.assertEqual(rx_status.explorer_arguments("C:/Models/a.rvt"),
+                         '/select,"C:\\Models\\a.rvt"')
+
+    def test_arguments_refuse_unsafe_paths(self):
+        for path in ('C:\\a"b.rvt', "C:\\a\nb.rvt", "C:\\a\rb.rvt", "a.rvt", "..\\a.rvt", "",
+                     None, 'C:\\x" /root,"C:\\Windows\\System32\\calc.exe'):
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    rx_status.explorer_arguments(path)
+
+    def test_target_selects_an_existing_file(self):
+        path = "C:\\Modele\\Zażółć & 100%\\a.rvt"
+        got = rx_status.model_target(path, isfile=lambda p: True, isdir=lambda p: False)
+        self.assertEqual(got, ("select", path))
+
+    def test_target_falls_back_to_the_parent_folder(self):
+        got = rx_status.model_target("C:\\Models\\gone.rvt", isfile=lambda p: False,
+                                     isdir=lambda p: p == "C:\\Models")
+        self.assertEqual(got, ("folder", "C:\\Models"))
+
+    def test_target_is_none_when_nothing_exists_or_the_path_is_refused(self):
+        never = lambda p: False  # noqa: E731
+        self.assertIsNone(rx_status.model_target("C:\\Gone\\a.rvt", never, never))
+        self.assertIsNone(rx_status.model_target("C:\\", never, never), "a root has no parent")
+        for path in ('C:\\a"b.rvt', "C:\\a\nb.rvt", "a.rvt", "", None):
+            with self.subTest(path=path):
+                self.assertIsNone(rx_status.model_target(path, lambda p: True, lambda p: True))
+
+    def test_menu_texts_exist_in_both_languages(self):
+        self.assertEqual(rx_status.resources()["status_menu_model"],
+                         "Show model in File Explorer")
+        self.assertEqual(rx_status.resources()["status_menu_folder"],
+                         "Show export folder in File Explorer")
+        polish_texts = under_polish(rx_status.resources)
+        self.assertIn("Eksploratorze", polish_texts["status_menu_model"])
+        self.assertIn("Eksploratorze", polish_texts["status_menu_folder"])
+
+
 class WindowTest(unittest.TestCase):
     def setUp(self):
         import shutil
@@ -1001,6 +1073,7 @@ class WindowTest(unittest.TestCase):
         self.clock = Clock()
         self.timer = FakeTimer()
         self.shell = Shell()
+        self.explorer = Explorer()
         self.plans = []
         self.plan_answer = None
         self.queue = rx_runner.Queue(self.starter, self.clock, system_root=self.tmp)
@@ -1015,7 +1088,8 @@ class WindowTest(unittest.TestCase):
         self.prefs = os.path.join(self.tmp, "appdata", "RevitExtractor", "preferences.json")
         self.session = self.ui.Session(self.queue, self.timer, self.clock, self.ui.StatusWindow,
                                        self.starter, shell=self.shell, plan_analyzer=self.plan,
-                                       notice=self.notice, preferences=self.prefs)
+                                       notice=self.notice, preferences=self.prefs,
+                                       explorer=self.explorer)
         self.window = self.session.window
 
     def test_on_show_reapplies_localized_resources(self):
@@ -1150,6 +1224,93 @@ class WindowTest(unittest.TestCase):
         self.assertEqual(len(self.starter.killed), 1)
         self.assertEqual(self.buttons()[0], False, "a cancel is asked only once")
 
+    def clear_enabled(self):
+        return self.window.clear_finished_btn.IsEnabled
+
+    def test_clear_finished_button_follows_the_finished_rows(self):
+        self.assertFalse(self.clear_enabled(), "empty list")
+        self.submit("a", "b")
+        self.assertFalse(self.clear_enabled(), "running and waiting only")
+        self.finish(0)
+        self.tick()
+        self.assertTrue(self.clear_enabled())
+        self.select(1)
+        self.assertTrue(self.clear_enabled(), "independent of the highlighted row")
+        self.click("clear_finished_btn")
+        self.assertFalse(self.clear_enabled(), "nothing finished left")
+
+    def test_clear_finished_removes_only_finished_rows_and_files_stay(self):
+        self.submit("a", "b", "c")
+        self.finish(0)
+        self.tick()  # a done, b running, c queued
+        job_a = self.queue.jobs()[0]
+        output = job_a.paths.output
+        analyzer = self.session._analyzers
+        self.select(1)
+        before = [row.view["id"] for row in self.rows()]
+        self.assertEqual(before, ["job-1", "job-2", "job-3"])
+        kills = len(self.starter.killed)
+        self.click("clear_finished_btn")
+        self.assertEqual([row.view["id"] for row in self.rows()], ["job-2", "job-3"])
+        self.assertEqual([j.id for j in self.queue.jobs()], ["job-2", "job-3"])
+        self.assertEqual(sorted(self.window._by_id), ["job-2", "job-3"])
+        self.assertIs(self.window.jobs_lv.SelectedItem, self.rows()[0], "selection kept")
+        self.assertTrue(os.path.isdir(output), "run folder is not deleted")
+        self.assertEqual(len(self.starter.killed), kills, "nothing cancelled")
+        self.assertEqual(self.shell.opened, [], "nothing opened")
+        self.assertIs(self.session._analyzers, analyzer)
+        self.assertEqual(self.window.error_text.Text, "")
+        self.assertIn("1", self.window.summary_text.Text)
+
+    def test_clear_finished_with_the_highlighted_row_removed_and_window_keeps_updating(self):
+        self.submit("a", "b")
+        self.finish(0)
+        self.tick()
+        self.select(0)
+        self.click("clear_finished_btn")
+        self.assertEqual(len(self.rows()), 1)
+        self.assertEqual(self.buttons()[2], False)
+        job = self.queue.jobs()[0]
+        open(os.path.join(job.paths.output, "bubble.json"), "w").close()
+        os.makedirs(os.path.join(job.paths.output, "Resource"))
+        with open(job.paths.console, "w") as handle:
+            handle.write("Success Jobs: 3, Failed Jobs: 0\n")
+        running = self.starter.extractor_handles()[1]
+        running.exited = True
+        running.code = 0
+        self.tick()
+        self.assertEqual(self.rows()[0].view["state"], "ok", "later updates still arrive")
+        self.assertTrue(self.clear_enabled())
+        self.submit("c")
+        self.assertEqual([r.view["id"] for r in self.rows()], ["job-2", "job-3"],
+                         "ids are not reused")
+
+    def test_clear_finished_nothing_to_do_changes_nothing(self):
+        self.submit("a")
+        self.session.clear_finished()
+        self.assertEqual(len(self.rows()), 1)
+        self.assertEqual(self.queue.jobs()[0].state, "running")
+
+    def test_clear_finished_failure_goes_to_the_error_line(self):
+        self.submit("a", "b")
+        self.finish(0)
+        self.tick()
+
+        def boom():
+            raise RuntimeError("boom")
+        self.queue.clear_finished = boom
+        self.click("clear_finished_btn")
+        self.assertIn("boom", self.window.error_text.Text)
+
+    def test_clear_finished_text_in_both_languages(self):
+        english = rx_status.resources()
+        self.assertEqual(english["status_clear_finished"], "Clear finished")
+        self.assertIn("no files are deleted", english["status_clear_finished_tip"])
+        polish_texts = under_polish(rx_status.resources)
+        self.assertEqual(polish_texts["status_clear_finished"], "Wyczyść zakończone")
+        self.assertNotEqual(polish_texts["status_clear_finished_tip"],
+                            english["status_clear_finished_tip"])
+
     def test_open_output_folder_targets(self):
         self.submit("a", "b")
         job_a, job_b = self.queue.jobs()
@@ -1165,6 +1326,122 @@ class WindowTest(unittest.TestCase):
         self.click("open_folder_btn")
         self.assertEqual(self.shell.opened, [job_a.paths.root, job_a.paths.output,
                                              job_b.paths.root])
+
+    # -- right-click menu on a row
+
+    def right_click(self, index):
+        """Right-click a row (index) or empty space (None); returns the opening event args."""
+        lv = self.window.jobs_lv
+        row = self.rows()[index] if index is not None else None
+        item = types.SimpleNamespace(DataContext=row) if row is not None else None
+        with patch.object(self.ui, "list_item_from", lambda source: item):
+            lv.PreviewMouseRightButtonDown.fire(lv, types.SimpleNamespace(OriginalSource=object()))
+        args = types.SimpleNamespace(Handled=False)
+        lv.ContextMenuOpening.fire(lv, args)
+        return args
+
+    def pick(self, name):
+        item = getattr(self.window, name)
+        item.Click.fire(item, None)
+
+    def make_model(self, name):
+        path = os.path.join(self.tmp, "models", name + ".rvt")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "w").close()
+        return path
+
+    def test_menu_is_wired_once_on_the_list_and_localised(self):
+        lv = self.window.jobs_lv
+        self.assertEqual(len(lv.PreviewMouseRightButtonDown.handlers), 1)
+        self.assertEqual(len(lv.ContextMenuOpening.handlers), 1)
+        self.assertEqual(self.window.menu_show_model.Header, "Show model in File Explorer")
+        self.assertEqual(self.window.menu_show_folder.Header,
+                         "Show export folder in File Explorer")
+        under_polish(self.window.apply_resources)
+        self.assertIn("Eksploratorze", self.window.menu_show_model.Header)
+
+    def test_right_click_selects_the_clicked_row_first(self):
+        self.submit("a", "b")
+        self.assertIs(self.window.jobs_lv.SelectedItem, self.rows()[0])
+        args = self.right_click(1)
+        self.assertIs(self.window.jobs_lv.SelectedItem, self.rows()[1])
+        self.assertFalse(args.Handled)
+        self.assertEqual(self.buttons(), (True, False, False), "buttons follow the new row")
+
+    def test_right_click_on_empty_space_opens_no_menu_and_keeps_the_selection(self):
+        self.submit("a")
+        args = self.right_click(None)
+        self.assertTrue(args.Handled)
+        self.assertIs(self.window.jobs_lv.SelectedItem, self.rows()[0])
+
+    def test_menu_items_follow_the_row(self):
+        self.submit("a", "b")
+        self.right_click(0)
+        self.assertEqual((self.window.menu_show_model.IsEnabled,
+                          self.window.menu_show_folder.IsEnabled), (True, True))
+        self.right_click(1)  # queued: no run folder yet
+        self.assertEqual((self.window.menu_show_model.IsEnabled,
+                          self.window.menu_show_folder.IsEnabled), (True, False))
+
+    def test_show_model_selects_the_file(self):
+        path = self.make_model("a")
+        self.submit("a")
+        self.right_click(0)
+        self.pick("menu_show_model")
+        self.assertEqual(self.explorer.selected, [os.path.normpath(path)])
+        self.assertEqual(self.shell.opened, [])
+        self.assertEqual(self.window.error_text.Text, "")
+
+    def test_show_model_falls_back_to_the_parent_folder(self):
+        self.submit("a")  # the file does not exist, its folder does
+        os.makedirs(os.path.join(self.tmp, "models"))
+        self.right_click(0)
+        self.pick("menu_show_model")
+        self.assertEqual(self.explorer.selected, [])
+        self.assertEqual(self.shell.opened, [os.path.join(self.tmp, "models")])
+
+    def test_show_model_with_nothing_left_shows_the_error_line(self):
+        self.submit("a")
+        self.right_click(0)
+        self.pick("menu_show_model")
+        self.assertEqual((self.explorer.selected, self.shell.opened), ([], []))
+        self.assertIn("were not found", self.window.error_text.Text)
+        self.assertIn("a.rvt", self.window.error_text.Text)
+
+    def test_show_model_failure_is_shown_on_the_error_line(self):
+        self.make_model("a")
+        self.submit("a")
+        self.right_click(0)
+
+        def broken(path):
+            raise ValueError("explorer failed")
+        self.session._explorer = broken
+        self.pick("menu_show_model")
+        self.assertIn("explorer failed", self.window.error_text.Text)
+
+    def test_show_run_folder_uses_the_open_output_folder_target(self):
+        self.submit("a", "b")
+        job_a = self.queue.jobs()[0]
+        self.right_click(0)
+        self.pick("menu_show_folder")
+        self.finish(0)
+        self.tick()
+        self.right_click(0)
+        self.pick("menu_show_folder")
+        self.assertEqual(self.shell.opened, [job_a.paths.root, job_a.paths.output])
+
+    def test_show_run_folder_is_ignored_for_a_queued_row(self):
+        self.submit("a", "b")
+        self.right_click(1)
+        self.pick("menu_show_folder")
+        self.assertEqual(self.shell.opened, [])
+
+    def test_show_run_folder_missing_on_disk_is_reported(self):
+        self.submit("a")
+        self.right_click(0)
+        self.shell.fail = True
+        self.pick("menu_show_folder")
+        self.assertIn("cannot open", self.window.error_text.Text)
 
     def test_open_in_analyzer_starts_once_then_reuses_the_url(self):
         self.submit("a")

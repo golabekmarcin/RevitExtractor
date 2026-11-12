@@ -536,6 +536,67 @@ class QueueTest(TempDirTest):
         self.assertEqual(len(os.listdir(self.out)), 1, "only job a has a run folder")
         self.assertEqual(self.starter.killed, [])
 
+    def test_clear_finished_removes_only_finished_and_keeps_order_and_ids(self):
+        queue = self.queue()
+        a, b, c, d, e = [self.add(queue, name) for name in "abcde"]
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()  # a ok, b running
+        queue.cancel(c)  # c cancelled while queued
+        self.finish(queue, b, code=3)
+        queue.poll()  # b failed, d running
+        self.assertEqual([j.state for j in queue.jobs()],
+                         ["ok", "failed", "cancelled", "running", "queued"])
+        self.assertEqual(queue.clear_finished(), [a, b, c])
+        self.assertEqual([j.id for j in queue.jobs()], [d, e])
+        self.assertEqual([j.state for j in queue.jobs()], ["running", "queued"])
+        self.assertEqual(self.starter.killed, [], "never cancels anything")
+        self.assertEqual(len(os.listdir(self.out)), 3, "run folders of a, b, d stay on disk")
+
+    def test_clear_finished_edge_cases(self):
+        queue = self.queue()
+        self.assertEqual(queue.clear_finished(), [])
+        a, b = self.add(queue, "a"), self.add(queue, "b")
+        self.assertEqual(queue.clear_finished(), [], "only waiting")
+        queue.poll()
+        self.assertEqual(queue.clear_finished(), [], "running and waiting")
+        self.assertEqual([j.id for j in queue.jobs()], [a, b])
+        self.assertTrue(queue.busy())
+
+    def test_ids_keep_counting_after_clear_finished(self):
+        queue = self.queue()
+        a = self.add(queue, "a")
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()
+        self.assertEqual(queue.clear_finished(), [a])
+        self.assertEqual(queue.jobs(), [])
+        self.assertEqual(self.add(queue, "b"), "job-2")
+        queue.poll()
+        self.assertEqual(self.starter.started_models()[-1], self.model("b"))
+
+    def test_clear_finished_does_not_touch_the_hold_gate(self):
+        hold = Hold(False)
+        queue = self.held_queue_for_clear(hold)
+        a = self.add(queue, "a")
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()
+        self.assertEqual(queue.clear_finished(), [a])
+        b = self.add(queue, "b")
+        hold.value = True
+        queue.poll()
+        self.assertIs(queue.held, True)
+        self.assertEqual(self.job(queue, b).state, "queued")
+        hold.value = False
+        queue.poll()
+        self.assertIs(queue.held, False)
+        self.assertEqual(self.job(queue, b).state, "running")
+
+    def held_queue_for_clear(self, hold):
+        return Queue(self.starter, FakeClock(), max_parallel=1, system_root=SYSTEM_ROOT,
+                     token=lambda: next(self.tokens), hold=hold)
+
     def test_cancel_running_kills_once(self):
         queue = self.queue()
         a, b = self.add(queue, "a"), self.add(queue, "b")

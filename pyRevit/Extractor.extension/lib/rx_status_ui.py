@@ -19,10 +19,11 @@ import os
 import re
 
 from rx_i18n import tr
-from rx_runner import QUEUED, RUNNING, DotNetStarter, Queue, effective_parallel
-from rx_status import (WEBSITE_URL, SessionCore, analyzer_plan, find_session, hide_notice,
-                       job_view, notice_hidden, notice_resources, preferences_path,
-                       progress_info, publish_session, queue_hint, resources, summary)
+from rx_runner import CANCELLED, FAILED, OK, QUEUED, RUNNING, DotNetStarter, Queue, effective_parallel
+from rx_status import (WEBSITE_URL, SessionCore, analyzer_plan, explorer_arguments,
+                       find_session, hide_notice, job_view, model_target, notice_hidden,
+                       notice_resources, preferences_path, progress_info, publish_session,
+                       queue_hint, resources, summary)
 
 try:
     from pyrevit import forms
@@ -78,6 +79,42 @@ def shell_open(target):
         process.Dispose()
 
 
+def explorer_select(path):
+    """Open File Explorer with the file selected. UseShellExecute is False on purpose: the
+    arguments go to explorer.exe as they are, with no shell parsing of '&', '%' or spaces."""
+    arguments = explorer_arguments(path)  # ValueError for a refused path
+    if not os.path.isfile(os.path.normpath(path)):
+        raise ValueError(tr("Not shown in File Explorer (file not found): {0}",
+                            "Nie pokazano w Eksploratorze plików (nie znaleziono pliku): {0}")
+                         .format(path))
+    from System.Diagnostics import Process, ProcessStartInfo
+    info = ProcessStartInfo()
+    info.FileName = "explorer.exe"
+    info.Arguments = arguments
+    info.UseShellExecute = False
+    process = Process.Start(info)
+    if process is not None:
+        process.Dispose()
+
+
+def list_item_from(source):
+    """The ListViewItem that contains a mouse event's OriginalSource, or None."""
+    from System.Windows import DependencyObject
+    from System.Windows.Controls import ListViewItem
+    from System.Windows.Media import Visual, VisualTreeHelper
+    from System.Windows import LogicalTreeHelper
+    while source is not None:
+        if isinstance(source, ListViewItem):
+            return source
+        if isinstance(source, Visual):
+            source = VisualTreeHelper.GetParent(source)
+        elif isinstance(source, DependencyObject):
+            source = LogicalTreeHelper.GetParent(source)
+        else:
+            return None
+    return None
+
+
 def free_port():
     """A free TCP port on 127.0.0.1, released again before the Analyzer binds it."""
     from System.Net import IPAddress
@@ -130,7 +167,7 @@ class StatusRow(_ROW_BASE):
 class StatusWindow(_WINDOW_BASE):
     """Created once per session and never destroyed: Close minimises or hides it.
 
-    `actions` (the Session) has cancel(job_id), open_folder(view), open_analyzer(view) and
+    `actions` (the Session) has cancel(job_id), open_folder(view), open_analyzer(view), clear_finished() and
     close_window().
     """
 
@@ -150,11 +187,19 @@ class StatusWindow(_WINDOW_BASE):
             pass
         self._rows = ObservableCollection[object]()
         self._by_id = {}
+        self._has_finished = False
         self.jobs_lv.ItemsSource = self._rows
         self.jobs_lv.SelectionChanged += self._on_selection
+        # One handler on the list, not one per row: it selects the right-clicked row first.
+        self._menu_on_empty = False
+        self.jobs_lv.PreviewMouseRightButtonDown += self._on_right_click
+        self.jobs_lv.ContextMenuOpening += self._on_menu_opening
+        self.menu_show_model.Click += self._on_show_model
+        self.menu_show_folder.Click += self._on_show_folder
         self.cancel_btn.Click += self._on_cancel
         self.open_folder_btn.Click += self._on_open_folder
         self.open_analyzer_btn.Click += self._on_open_analyzer
+        self.clear_finished_btn.Click += self._on_clear_finished
         self.close_btn.Click += self._on_close_click
         self.Closing += self._on_closing
         try:
@@ -169,6 +214,13 @@ class StatusWindow(_WINDOW_BASE):
         reloaded the script reaches the retained window."""
         for key, value in resources().items():
             self.Resources[key] = value
+        # A ContextMenu is outside the window's visual tree, so its {DynamicResource} may not
+        # resolve (and does not follow a language change); set the headers here as well.
+        try:
+            self.menu_show_model.Header = self.Resources["status_menu_model"]
+            self.menu_show_folder.Header = self.Resources["status_menu_folder"]
+        except Exception:
+            pass
 
     # -- shown state
 
@@ -176,6 +228,16 @@ class StatusWindow(_WINDOW_BASE):
         """Add new rows, update the others, and refresh the list once if anything changed."""
         changed = False
         first_new = None
+        # Rows the queue no longer has (Clear finished) leave the list; WPF drops a removed
+        # selection by itself.
+        kept = set(view["id"] for view in views)
+        for gone in [key for key in self._by_id if key not in kept]:
+            self._rows.Remove(self._by_id.pop(gone))
+            changed = True
+        selected = self.jobs_lv.SelectedItem
+        if selected is not None and not any(selected is row for row in self._by_id.values()):
+            self.jobs_lv.SelectedItem = None
+        self._has_finished = any(view["state"] in (OK, FAILED, CANCELLED) for view in views)
         for view in views:
             row = self._by_id.get(view["id"])
             if row is None:
@@ -215,6 +277,7 @@ class StatusWindow(_WINDOW_BASE):
         self.cancel_btn.IsEnabled = bool(view.get("can_cancel"))
         self.open_folder_btn.IsEnabled = bool(view.get("can_open_folder"))
         self.open_analyzer_btn.IsEnabled = bool(view.get("can_open_analyzer"))
+        self.clear_finished_btn.IsEnabled = self._has_finished
 
     def bring_up(self):
         if not self.IsVisible:
@@ -253,6 +316,41 @@ class StatusWindow(_WINDOW_BASE):
         except Exception as error:
             self._report(error)
 
+    def _on_right_click(self, sender, args):
+        """Select the row under the pointer so the menu acts on it; remember a click on no row."""
+        try:
+            item = list_item_from(args.OriginalSource)
+            self._menu_on_empty = item is None
+            row = item.DataContext if item is not None else None
+            if isinstance(row, StatusRow):
+                self.jobs_lv.SelectedItem = row
+                self._update_buttons()
+        except Exception as error:
+            self._menu_on_empty = True
+            self._report(error)
+
+    def _on_menu_opening(self, sender, args):
+        try:
+            view = self.selected_view()
+            if self._menu_on_empty or view is None:
+                args.Handled = True  # no menu over empty space or without a row
+            else:
+                self.menu_show_model.IsEnabled = bool(view.get("model_path"))
+                self.menu_show_folder.IsEnabled = bool(view.get("can_open_folder"))
+            self._menu_on_empty = False
+        except Exception as error:
+            self._report(error)
+
+    def _on_show_model(self, sender, args):
+        view = self.selected_view()
+        if view:
+            self._guard(self._actions.show_model, view)
+
+    def _on_show_folder(self, sender, args):
+        view = self.selected_view()
+        if view and view.get("can_open_folder"):
+            self._guard(self._actions.show_run_folder, view)
+
     def _on_cancel(self, sender, args):
         view = self.selected_view()
         if view and view.get("can_cancel"):
@@ -262,6 +360,10 @@ class StatusWindow(_WINDOW_BASE):
         view = self.selected_view()
         if view and view.get("can_open_folder"):
             self._guard(self._actions.open_folder, view)
+
+    def _on_clear_finished(self, sender, args):
+        if self._has_finished:
+            self._guard(self._actions.clear_finished)
 
     def _on_open_analyzer(self, sender, args):
         view = self.selected_view()
@@ -325,12 +427,13 @@ class Session(object):
     """
 
     def __init__(self, queue, timer, clock, window_factory, starter, shell=None,
-                 plan_analyzer=None, notice=None, preferences=None):
+                 plan_analyzer=None, notice=None, preferences=None, explorer=None):
         self.queue = queue
         self._timer = timer
         self._clock = clock
         self._starter = starter
         self._shell = shell or shell_open
+        self._explorer = explorer or explorer_select  # explorer(path): select a file
         self._plan = plan_analyzer or _plan_analyzer
         self._notice = notice or show_notice  # notice(reason) -> True when "don't show again"
         self._preferences = preferences if preferences is not None else _preferences_path()
@@ -403,8 +506,35 @@ class Session(object):
                 "The export could not be cancelled. If it is still running, try again.",
                 "Nie udało się anulować eksportu. Jeśli nadal trwa, spróbuj ponownie."))
 
+    def clear_finished(self):
+        """Drop finished rows from the queue and the list. Files, folders and running or waiting
+        exports are untouched. _analyzers is left alone on purpose: a server this session
+        started keeps its console window, and job ids are never reused."""
+        self.queue.clear_finished()
+        self.refresh()
+
     def open_folder(self, view):
         self._shell(view["folder"])
+
+    def show_run_folder(self, view):
+        """Context menu: the same folder as Open output folder (output when done, else the run
+        folder). A folder that is not there yet is refused by the shell guard (error line)."""
+        folder = view.get("folder")
+        if not folder:
+            return
+        self._shell(folder)
+
+    def show_model(self, view):
+        """Context menu: select the model in Explorer; else open its folder; else say so."""
+        target = model_target(view.get("model_path"))
+        if target is None:
+            self.window.show_error(tr(
+                "The model file and its folder were not found: {0}",
+                "Nie znaleziono pliku modelu ani jego folderu: {0}").format(view.get("model_path")))
+        elif target[0] == "select":
+            self._explorer(target[1])
+        else:
+            self._shell(target[1])
 
     def open_analyzer(self, view):
         job_id = view["id"]

@@ -62,6 +62,16 @@ UI_TEXT = {
                                  "Uruchamia lokalny Analyzer z tym eksportem, jeśli jest "
                                  "zainstalowany Node.js; w innym przypadku otwiera folder i "
                                  "stronę internetową."),
+    "status_clear_finished": ("Clear finished", "Wyczyść zakończone"),
+    "status_clear_finished_tip": ("Removes finished, failed and cancelled exports from this "
+                                  "list. Running and waiting exports stay, and no files are "
+                                  "deleted.",
+                                  "Usuwa z listy zakończone, nieudane i anulowane eksporty. "
+                                  "Trwające i oczekujące eksporty zostają, a żadne pliki nie "
+                                  "są usuwane."),
+    "status_menu_model": ("Show model in File Explorer", "Pokaż model w Eksploratorze plików"),
+    "status_menu_folder": ("Show export folder in File Explorer",
+                           "Pokaż folder eksportu w Eksploratorze plików"),
     "status_close": ("Close", "Zamknij"),
     "status_close_tip": ("Exports keep running. While any is queued or running the window is "
                          "minimised, not closed.",
@@ -73,6 +83,43 @@ UI_TEXT = {
 def resources():
     """UI_TEXT in the current language, ready for Window.Resources."""
     return dict((key, tr(english, polish)) for key, (english, polish) in UI_TEXT.items())
+
+
+def _plain_absolute(path):
+    """The path as text when it is absolute and holds no quote or line break, else None."""
+    try:
+        text = "%s" % (path,) if path is not None else ""
+    except Exception:
+        return None
+    if not text or '"' in text or "\n" in text or "\r" in text or not os.path.isabs(text):
+        return None
+    return text
+
+
+def explorer_arguments(path):
+    """The explorer.exe argument that selects a file: /select,"<path>". ValueError for a path that
+    is not absolute or holds a quote or line break (it could break out of the quoting)."""
+    text = _plain_absolute(path)
+    if text is None:
+        raise ValueError(tr("Not shown in File Explorer (not an absolute path): {0}",
+                            "Nie pokazano w Eksploratorze plików (to nie jest pełna ścieżka): {0}")
+                         .format(path))
+    return '/select,"%s"' % (os.path.normpath(text),)
+
+
+def model_target(path, isfile=os.path.isfile, isdir=os.path.isdir):
+    """What "Show model in File Explorer" does: ("select", path) for an existing model file,
+    ("folder", parent) when only its folder exists, None when neither (or the path is refused)."""
+    text = _plain_absolute(path)
+    if text is None:
+        return None
+    text = os.path.normpath(text)
+    if isfile(text):
+        return ("select", text)
+    parent = os.path.dirname(text)
+    if parent and parent != text and _plain_absolute(parent) is not None and isdir(parent):
+        return ("folder", parent)
+    return None
 
 
 # The "Node.js is needed" notice (rx_notice.xaml). A separate table from UI_TEXT: each XAML file

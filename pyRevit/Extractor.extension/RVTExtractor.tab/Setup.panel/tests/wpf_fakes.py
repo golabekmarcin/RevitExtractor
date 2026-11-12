@@ -235,6 +235,12 @@ class Collection(list):
     def Add(self, item):
         self.append(item)
 
+    def Remove(self, item):
+        if item in self:
+            self.remove(item)
+            return True
+        return False
+
 
 class FakeView(object):
     """ListCollectionView: iterates and counts the rows its Filter accepts."""
@@ -263,7 +269,8 @@ class Items(object):
         self.refreshes += 1
 
 
-CONTROL_EVENTS = ("Click", "Checked", "Unchecked", "PreviewKeyDown", "SelectionChanged")
+CONTROL_EVENTS = ("Click", "Checked", "Unchecked", "PreviewKeyDown", "SelectionChanged",
+                  "PreviewMouseRightButtonDown", "ContextMenuOpening")
 
 
 class Control(object):

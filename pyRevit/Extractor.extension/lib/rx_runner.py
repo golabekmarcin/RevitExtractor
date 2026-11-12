@@ -392,6 +392,16 @@ class Queue(object):
     def jobs(self):
         return list(self._jobs)
 
+    def clear_finished(self):
+        """Forget every finished job (OK, FAILED, CANCELLED); queued and running jobs keep their
+        order and ids, and ids are never reused. Touches nothing on disk. Returns the removed
+        ids in queue order."""
+        done = (OK, FAILED, CANCELLED)
+        removed = [job.id for job in self._jobs if job.state in done]
+        if removed:
+            self._jobs = [job for job in self._jobs if job.state not in done]
+        return removed
+
     def busy(self):
         return any(job.state in (QUEUED, RUNNING) for job in self._jobs)
 
