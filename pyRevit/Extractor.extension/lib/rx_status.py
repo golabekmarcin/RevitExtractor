@@ -18,6 +18,7 @@ import os
 import re
 
 from rx_i18n import tr
+from rx_json import dumps_ascii
 from rx_runner import (CANCELLED, FAILED, OK, QUEUED, RUNNING, Job, LaunchSpec, RunnerError,
                        clean_path)
 
@@ -151,9 +152,7 @@ def hide_notice(path, read=_read_text, write=_write_text):
     try:
         data = read_preferences(path, read)
         data[HIDE_NOTICE_KEY] = True
-        text = json.dumps(data, indent=2, sort_keys=True)
-        if not isinstance(text, type("")):
-            text = text.decode("ascii")  # IronPython 2.7: dumps returns str
+        text = dumps_ascii(data, indent=2, sort_keys=True)
         write(path, text)
         return True
     except Exception:
@@ -527,7 +526,7 @@ class SessionCore(object):
         except Exception as error:
             answer = {"ok": False, "error": _error_text(error)}
         try:
-            return json.dumps(answer, ensure_ascii=True, sort_keys=True)
+            return dumps_ascii(answer, sort_keys=True)
         except Exception:
             return '{"error": "The answer could not be written as JSON.", "ok": false}'
 

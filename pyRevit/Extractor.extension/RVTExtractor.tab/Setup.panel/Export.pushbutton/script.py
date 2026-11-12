@@ -22,6 +22,7 @@ from rx_capabilities import for_revit
 from rx_export_logic import CONFIG_SECTION, load_settings, save_settings
 from rx_export_ui import ModelWindow
 from rx_i18n import tr
+from rx_json import dumps_ascii
 from rx_runner import extractor_exe
 from rx_status import find_session
 from rx_status_ui import open_session
@@ -81,15 +82,24 @@ def _hand_over(jobs, revit_dir, output_parent, max_parallel):
          "output_parent": output_parent} for job in jobs]}
     try:
         handler = open_session(max_parallel)
-        answer = json.loads(handler(json.dumps(request, ensure_ascii=True)))
+        answer = json.loads(handler(dumps_ascii(request)))
     except Exception as error:
         try:
             script.get_logger().exception("Could not hand the exports to the status window.")
         except Exception:
             pass
+        trace = ""
+        try:  # the first exception argument alone can be just "ascii": show where it came from
+            import traceback
+            trace = traceback.format_exc()
+            if not isinstance(trace, type("")):
+                trace = trace.decode("utf-8", "replace")
+            trace = "\n\n" + trace[-1500:]
+        except Exception:
+            pass
         _alert(tr("The exports could not be handed to the status window.\n\n{0}",
                   "Nie udało się przekazać eksportów do okna statusu.\n\n{0}")
-               .format(_error_text(error)))
+               .format(_error_text(error)) + trace)
         return
     if not isinstance(answer, dict) or answer.get("ok") is not True:
         reason = answer.get("error") if isinstance(answer, dict) else None

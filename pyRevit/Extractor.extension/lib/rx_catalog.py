@@ -17,6 +17,7 @@ import re
 from collections import namedtuple
 
 from rx_i18n import tr
+from rx_json import dumps_ascii
 
 CACHE_VERSION = 1
 
@@ -220,10 +221,8 @@ class Cache(object):
             folder = os.path.dirname(self.file_path)
             if folder and not os.path.isdir(folder):
                 os.makedirs(folder)
-            text = json.dumps({"version": CACHE_VERSION, "entries": self.entries},
-                              ensure_ascii=True, sort_keys=True)
-            if isinstance(text, bytes):
-                text = text.decode("ascii")
+            text = dumps_ascii({"version": CACHE_VERSION, "entries": self.entries},
+                               sort_keys=True)
             with io.open(temp_path, "w", encoding="utf-8") as handle:
                 handle.write(text)
             if os.path.exists(self.file_path):
