@@ -8,6 +8,8 @@ One session, about 90 minutes, on the Revit 2022 + pyRevit machine. Part F (10 m
 
 **Every command block below is complete.** Each one sets the variables it needs (`$repo`, `$kit`, `$out`, `$res`), so you can paste any block into a fresh PowerShell window. Only `$repo` may need a change: it is the folder of your clone. `$res` is `C:\RX-test\results`, where the blocks that must be sent back save their output as a text file (with `Tee-Object`), so you can attach the file instead of copying from the window. These files hold no model names or paths, except G2, which names your Windows user folder: private. Never commit them. (`-Setup -Force` would delete `C:\RX-test`, results included, so copy the results out first.)
 
+**Execution policy.** The blocks do not change it. If a script is refused with "not digitally signed" (a file marked as downloaded from the Internet), run `Get-ChildItem -Recurse "$repo\pyRevit" -Filter *.ps1 | Unblock-File` once. A machine policy such as RemoteSigned is fine: it runs local scripts, and `Set-ExecutionPolicy` would only fail against it.
+
 1. Git, on each machine (never `git pull`; `HANDOVER.md` §1):
 
 ```powershell
@@ -34,8 +36,8 @@ Set-Location (Join-Path $repo 'Analyzer')
 ```powershell
 $repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force        # this window only
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
+if (-not (Test-Path $kit)) { throw 'Wrong $repo: v1_test_kit.ps1 not found. Set $repo to the folder that holds pyRevit and specs.' }
 & $kit -Setup
 # With a newer and an older model for items B6 and D6, use this line instead:
 # & $kit -Setup -Newer 'D:\path\newer-model.rvt' -Older 'D:\path\older-model.rvt'
@@ -54,8 +56,8 @@ $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel
 ```powershell
 $repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
+if (-not (Test-Path $kit)) { throw 'Wrong $repo: v1_test_kit.ps1 not found. Set $repo to the folder that holds pyRevit and specs.' }
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 & $kit -Check *>&1 | Tee-Object (Join-Path $res 'S1.txt')
 ```
@@ -103,8 +105,8 @@ Start Revit with no model open.
 ```powershell
 $repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
+if (-not (Test-Path $kit)) { throw 'Wrong $repo: v1_test_kit.ps1 not found. Set $repo to the folder that holds pyRevit and specs.' }
 $out = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 & $kit -Check $out *>&1 | Tee-Object (Join-Path $res 'C9.txt')
@@ -118,8 +120,8 @@ $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 ```powershell
 $repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
+if (-not (Test-Path $kit)) { throw 'Wrong $repo: v1_test_kit.ps1 not found. Set $repo to the folder that holds pyRevit and specs.' }
 $out = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 Get-Process Revit -ErrorAction SilentlyContinue   # prints nothing when Revit has exited
@@ -131,8 +133,8 @@ Get-Process Revit -ErrorAction SilentlyContinue   # prints nothing when Revit ha
 ```powershell
 $repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
+if (-not (Test-Path $kit)) { throw 'Wrong $repo: v1_test_kit.ps1 not found. Set $repo to the folder that holds pyRevit and specs.' }
 $out = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor'
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 & $kit -Check $out *>&1 | Tee-Object (Join-Path $res 'C13.txt')
@@ -149,8 +151,8 @@ Start Revit again with no model open. For D3 and D5, run this before and after, 
 ```powershell
 $repo = 'C:\Users\golab\AppData\Local\RevitExtractor'   # your clone
 Set-Location $repo
-Set-ExecutionPolicy -Scope Process Bypass -Force
 $kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
+if (-not (Test-Path $kit)) { throw 'Wrong $repo: v1_test_kit.ps1 not found. Set $repo to the folder that holds pyRevit and specs.' }
 & $kit -Stamp '\\server\share\Project\Central.rvt'    # <- the model's path
 ```
 
