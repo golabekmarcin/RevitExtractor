@@ -23,7 +23,9 @@ Oba tryby współdzielą interpretację właściwości i modeli źródłowych.
 4. Aby otworzyć inny eksport, użyj **Otwórz folder**. Wybierz folder w oknie systemowym albo wklej jego pełną ścieżkę. Obsługiwane są folder `output`, jego katalog nadrzędny oraz `Resource`.
 5. Zatrzymaj serwer przez `Ctrl+C` w oknie terminala.
 
-Wymagany **Node.js 24 lub nowszy** oraz przeglądarka z WebGL (np. Chrome lub Edge). Python i venv nie są potrzebne. Zależności npm są tylko w lokalnym `node_modules`; launcher zainstaluje je, jeśli brakuje PDF.js. Nie ma instalacji globalnych ani kroku budowania frontendu.
+Wymagany **Node.js 24 lub nowszy** (zainstalowany samodzielnie lub z Company Portal) oraz przeglądarka z WebGL (np. Chrome lub Edge). Python i venv nie są potrzebne. Zależności npm są tylko w lokalnym `node_modules`; `Start-Analyzer.cmd` zainstaluje je, jeśli brakuje PDF.js, i zaufa magazynowi certyfikatów Windows (`NODE_USE_SYSTEM_CA=1`), więc firmowy proxy podpisujący HTTPS działa bez dodatkowej konfiguracji. Nie ma instalacji globalnych ani kroku budowania frontendu.
+
+English: needs **Node.js 24 or later** (install it yourself or from the Company Portal) and a WebGL browser (Chrome or Edge). No Python. `Start-Analyzer.cmd` installs the npm packages into the local `node_modules` when PDF.js is missing and trusts the Windows certificate store (`NODE_USE_SYSTEM_CA=1`), so a company proxy that re-signs HTTPS works without extra setup. If `npm ci` still reports a certificate error, run `npm config set cafile "<path to root.pem>"`; never disable `strict-ssl`.
 
 Uruchomienie z terminala:
 

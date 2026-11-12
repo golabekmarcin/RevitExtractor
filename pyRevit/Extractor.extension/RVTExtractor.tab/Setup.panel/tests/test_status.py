@@ -772,8 +772,8 @@ class Helpers(unittest.TestCase):
 
 # --- Criteria 6-9: window and session logic (WPF stubbed) ---------------------------------------
 
-def status_names():
-    root = ET.parse(str(LIB / "rx_status.xaml")).getroot()
+def status_names(path=None):
+    root = ET.parse(str(path or LIB / "rx_status.xaml")).getroot()
     return [element.get(XNAME) for element in root.iter() if element.get(XNAME)]
 
 
@@ -792,9 +792,11 @@ class FakeStatusWindowBase(object):
         self.WindowState = "Normal"
         self.IsVisible = False
         self.shows = self.hides = self.activations = self.closes = 0
-        for name in status_names():
+        self.dialogs = 0
+        for name in status_names(xaml_path):
             setattr(self, name, Control(name))
-        self.jobs_lv.SelectedItem = None
+        if hasattr(self, "jobs_lv"):
+            self.jobs_lv.SelectedItem = None
 
     def merge_resource_dict(self, path):
         self.merged.append(path)
@@ -809,6 +811,13 @@ class FakeStatusWindowBase(object):
     def Hide(self):
         self.IsVisible = False
         self.hides += 1
+
+    def ShowDialog(self):
+        self.dialogs += 1
+        hook = getattr(type(self), "dialog_hook", None)
+        if hook is not None:
+            hook(self)
+        return True
 
     def Activate(self):
         self.activations += 1
@@ -938,12 +947,33 @@ class Clock(object):
         return self.now
 
 
+class Notice(object):
+    """The injectable notice: records the reasons it was shown for."""
+
+    def __init__(self):
+        self.shown = []
+        self.answer = False
+        self.error = None
+        self.log = None
+
+    def __call__(self, reason):
+        self.shown.append(reason)
+        if self.log is not None:
+            self.log.append(("notice", reason))
+        if self.error is not None:
+            raise self.error
+        return self.answer
+
+
 class Shell(object):
     def __init__(self):
         self.opened = []
         self.fail = False
+        self.log = None
 
     def __call__(self, target):
+        if self.log is not None:
+            self.log.append(("shell", target))
         if self.fail:
             raise ValueError("cannot open " + target)
         self.opened.append(target)
@@ -981,8 +1011,11 @@ class WindowTest(unittest.TestCase):
             self.polls += 1
             return poll()
         self.queue.poll = counting_poll
+        self.notice = Notice()
+        self.prefs = os.path.join(self.tmp, "appdata", "RevitExtractor", "preferences.json")
         self.session = self.ui.Session(self.queue, self.timer, self.clock, self.ui.StatusWindow,
-                                       self.starter, shell=self.shell, plan_analyzer=self.plan)
+                                       self.starter, shell=self.shell, plan_analyzer=self.plan,
+                                       notice=self.notice, preferences=self.prefs)
         self.window = self.session.window
 
     def test_on_show_reapplies_localized_resources(self):
@@ -1162,6 +1195,63 @@ class WindowTest(unittest.TestCase):
         self.plan_answer = ("web", "Node.js was not found.")
         self.select(0)
         self.click("open_analyzer_btn")
+        self.assertEqual(self.shell.opened, [self.queue.jobs()[0].paths.output, WEBSITE_URL])
+        self.assertIn("Node.js was not found.", self.window.error_text.Text)
+
+    def fall_back(self):
+        self.submit("a")
+        self.finish(0)
+        self.tick()
+        self.plan_answer = ("web", "Node.js was not found.")
+        self.select(0)
+        self.click("open_analyzer_btn")
+
+    def test_fallback_shows_the_notice_with_the_reason_before_opening(self):
+        events = []
+        self.notice.log = events
+        self.shell.log = events
+        self.fall_back()
+        output = self.queue.jobs()[0].paths.output
+        self.assertEqual(events, [("notice", "Node.js was not found."), ("shell", output),
+                                  ("shell", WEBSITE_URL)])
+
+    def test_notice_not_shown_for_a_local_plan(self):
+        self.submit("a")
+        self.finish(0)
+        self.tick()
+        spec = rx_runner.LaunchSpec("node.exe", "server.mjs", self.tmp, {})
+        self.plan_answer = ("local", spec, "http://127.0.0.1:4555/")
+        self.select(0)
+        self.click("open_analyzer_btn")
+        self.assertEqual(self.notice.shown, [])
+
+    def test_ticking_dont_show_again_stores_the_flag_and_suppresses_the_next_notice(self):
+        self.notice.answer = True
+        self.fall_back()
+        self.assertEqual(len(self.notice.shown), 1)
+        with open(self.prefs, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), {"hide_node_notice": True})
+        self.click("open_analyzer_btn")
+        self.assertEqual(len(self.notice.shown), 1, "suppressed")
+        self.assertEqual(len(self.shell.opened), 4, "folder and website still opened")
+
+    def test_unticked_notice_is_shown_every_time_and_writes_nothing(self):
+        self.fall_back()
+        self.click("open_analyzer_btn")
+        self.assertEqual(len(self.notice.shown), 2)
+        self.assertFalse(os.path.exists(self.prefs))
+
+    def test_a_failing_notice_never_blocks_the_fallback(self):
+        self.notice.error = RuntimeError("no WPF")
+        self.fall_back()
+        self.assertEqual(self.shell.opened, [self.queue.jobs()[0].paths.output, WEBSITE_URL])
+        self.assertIn("Node.js was not found.", self.window.error_text.Text)
+
+    def test_a_failing_preference_write_never_blocks_the_fallback(self):
+        self.notice.answer = True
+        os.makedirs(os.path.dirname(self.prefs))
+        os.makedirs(self.prefs)  # a folder where the file should be: reading and writing fail
+        self.fall_back()
         self.assertEqual(self.shell.opened, [self.queue.jobs()[0].paths.output, WEBSITE_URL])
         self.assertIn("Node.js was not found.", self.window.error_text.Text)
 

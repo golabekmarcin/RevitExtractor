@@ -10,7 +10,13 @@ Przycisk pyRevit, który eksportuje modele Revita natywnym Autodesk Revit Extrac
 
 Sklonuj repozytorium i dodaj `<klon>\pyRevit` jako własny folder rozszerzeń w ustawieniach pyRevit, potem **Reload pyRevit**. Przycisk nazywa się `Eksport` (zakładka RevitExtractor, panel Setup). Przycisk potrzebuje `lib\` tego rozszerzenia, więc nie da się go skopiować osobno. Stare przyciski `ExportSetup` i `ExportSetupLegacy` nie są zmienione i nadal działają.
 
-Do „Otwórz w Analyzerze” z lokalnym Analyzerem: Node.js 24 lub nowszy oraz jednorazowo `npm ci --ignore-scripts --omit=optional` w `Analyzer\`. Bez nich przycisk otwiera folder wyników i stronę internetową.
+Eksport wymaga tylko Revita, pyRevit i Extractora dostarczanego z Revitem. **Node.js jest opcjonalny**: używa go wyłącznie „Otwórz w Analyzerze” z lokalnym Analyzerem.
+
+Do lokalnego Analyzera:
+1. Zainstaluj Node.js 24 lub nowszy samodzielnie albo z Company Portal. Potem uruchom Revit ponownie, aby zobaczył nowy `PATH`.
+2. Jednorazowo uruchom dwuklikiem `Analyzer\Start-Analyzer.cmd`. Zainstaluje pakiety npm (wymaga Internetu) i zaufa magazynowi certyfikatów Windows, więc firmowy proxy podpisujący HTTPS działa bez dodatkowej konfiguracji; sprawdzanie certyfikatów pozostaje włączone. Jeśli `npm ci` nadal zgłasza błąd certyfikatu, poproś dział IT o firmowy certyfikat główny i uruchom `npm config set cafile "<ścieżka do root.pem>"`. Nie wyłączaj `strict-ssl`.
+
+Bez Node.js i pakietów przycisk otwiera folder wyników i stronę internetową, po komunikacie, który można wyłączyć opcją „Nie pokazuj ponownie”.
 
 ## Użycie
 

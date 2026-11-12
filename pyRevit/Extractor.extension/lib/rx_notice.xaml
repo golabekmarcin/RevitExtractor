@@ -1,0 +1,31 @@
+<!-- "Local Analyzer not available" notice (specs/SPEC-status-window.md). Every label is a
+     DynamicResource reference; the English/Polish text lives in rx_status.py (NOTICE_TEXT). Rx* keys
+     come from rx_theme.xaml, merged by rx_status_ui.py after the window loads. The reason text is
+     set in code (reason_text). OK is both default and cancel button, so Enter, Esc and a click
+     all close the dialog; the check box is read after ShowDialog returns. -->
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{DynamicResource notice_title}" Width="480" SizeToContent="Height"
+        WindowStartupLocation="CenterScreen" ShowInTaskbar="False" ResizeMode="NoResize">
+    <StackPanel Margin="16">
+        <TextBlock Text="{DynamicResource notice_title}" Style="{DynamicResource RxWindowTitle}"
+                   TextWrapping="Wrap"/>
+        <TextBlock Text="{DynamicResource notice_intro}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+        <TextBlock Text="{DynamicResource notice_restart}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+        <TextBlock Text="{DynamicResource notice_packages}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+        <TextBlock Text="{DynamicResource notice_instead}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+        <TextBlock Text="{DynamicResource notice_reason_label}" Style="{DynamicResource RxMuted}"
+                   Margin="0,12,0,0"/>
+        <TextBlock x:Name="reason_text" Style="{DynamicResource RxMuted}" TextWrapping="Wrap"/>
+        <Grid Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <CheckBox Grid.Column="0" x:Name="dont_show_chk" Content="{DynamicResource notice_dont_show}"
+                      VerticalAlignment="Center"/>
+            <Button Grid.Column="1" x:Name="ok_btn" IsDefault="True" IsCancel="True" MinWidth="80"
+                    Content="{DynamicResource notice_ok}" Style="{DynamicResource RxPrimaryButton}"/>
+        </Grid>
+    </StackPanel>
+</Window>

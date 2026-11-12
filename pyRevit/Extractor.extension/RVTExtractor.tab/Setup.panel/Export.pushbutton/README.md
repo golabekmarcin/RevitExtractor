@@ -10,7 +10,13 @@ pyRevit button that exports Revit models with Autodesk's native Revit Extractor,
 
 Clone the repository and add `<clone>\pyRevit` as a custom extension folder in pyRevit's settings, then **Reload pyRevit**. The button is `Export` on the RevitExtractor tab, Setup panel. The button needs `lib\` of this extension, so it cannot be copied alone. The old `ExportSetup` and `ExportSetupLegacy` buttons are untouched and still work.
 
-For "Open in Analyzer" with the local Analyzer: Node.js 24 or later, and `npm ci --ignore-scripts --omit=optional` once in `Analyzer\`. Without them the button opens the output folder and the website instead.
+Exporting needs only Revit, pyRevit and the Extractor that ships with Revit. **Node.js is optional**: it is used only by "Open in Analyzer" with the local Analyzer.
+
+For the local Analyzer:
+1. Install Node.js 24 or later yourself, or from the Company Portal. Restart Revit afterwards so it sees the new `PATH`.
+2. Double-click `Analyzer\Start-Analyzer.cmd` once. It installs the npm packages (Internet needed) and trusts the Windows certificate store, so a company proxy that re-signs HTTPS works without extra setup; certificate checking stays on. If `npm ci` still reports a certificate error, ask IT for the company root certificate and run `npm config set cafile "<path to root.pem>"`. Do not turn off `strict-ssl`.
+
+Without Node.js and the packages the button opens the output folder and the website instead, after a notice you can switch off with "Don't show this again".
 
 ## Use
 

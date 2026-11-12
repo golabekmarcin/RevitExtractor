@@ -69,6 +69,8 @@ Start Revit with no model open.
 - [ ] **C12** Start two exports, then **close Revit** while the first runs. Revit exits fully (no `Revit.exe` left in Task Manager). Wait, then run `& $kit -Check $out`: the first run is OK, and the second is NOT STARTED.
 - [ ] **C13** `& $kit -Check $out` once more: the Print Spooler start type equals the value of S1. Send the whole output; it also holds the `Success Jobs` lines.
 
+- [ ] **C14** The Node.js notice. Rename `Analyzer\node_modules` for a moment (or test on a machine without Node), then click Open in Analyzer on a finished row: the notice appears with the reason, the output folder and the website open, and the error line shows. Tick "Don't show this again" and OK; click again: no notice, same fallback. Restore the folder name. Check the text reads well in English, and in Polish after E1. Then run `Analyzer\Start-Analyzer.cmd` once with `node_modules` removed: it installs the packages (also behind a company proxy, with no extra setup) and starts the server.
+
 ## Part D: real models (20 minutes; results are private)
 
 Start Revit again with no model open. For D3 and D5, run `& $kit -Stamp '<model path>'` before and after.

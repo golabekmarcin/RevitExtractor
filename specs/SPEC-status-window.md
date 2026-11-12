@@ -84,6 +84,8 @@ The window has no text input (modeless WPF keyboard input inside Revit is unreli
 | Start | `node.exe server.mjs --output "<output>" --port <free port> --open`, working folder `Analyzer`, in a visible console window; closing that window stops the server. The path goes through `clean_path`. The Analyzer is unchanged and binds `127.0.0.1`. |
 | Again | A second click on the same job while its server runs only opens the URL. |
 | Fallback | Open the output folder and `WEBSITE_URL`; the error line says what was missing. |
+| Notice | On the fallback, before the folder and website open, a small modal dialog (`lib/rx_notice.xaml`, `NoticeWindow` in `rx_status_ui.py`, texts in `NOTICE_TEXT`, English and Polish) explains: the local Analyzer needs Node.js 24 or later (own install or Company Portal); restart Revit after installing it so Revit sees the new `PATH`; the Analyzer's packages are installed once by double-clicking `Analyzer\Start-Analyzer.cmd`; until then the folder and website are opened instead. It also shows the concrete reason from `analyzer_plan`. Buttons: OK and a "Don't show this again" check box. Not shown for the `local` plan, nor when the flag is set. |
+| Notice flag | Ticking the box writes `"hide_node_notice": true` to `%APPDATA%\RevitExtractor\preferences.json` (the folder of the model cache), keeping any other keys. A missing, unreadable or corrupt file means the notice is shown. A failing notice or write is swallowed: the folder and website still open and the error line is still shown. `Session` takes injectable `notice` and `preferences` (path) for tests. |
 
 ## Acceptance criteria
 

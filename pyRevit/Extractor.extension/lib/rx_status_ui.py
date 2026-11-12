@@ -20,7 +20,8 @@ import re
 
 from rx_i18n import tr
 from rx_runner import QUEUED, RUNNING, DotNetStarter, Queue, effective_parallel
-from rx_status import (WEBSITE_URL, SessionCore, analyzer_plan, find_session, job_view,
+from rx_status import (WEBSITE_URL, SessionCore, analyzer_plan, find_session, hide_notice,
+                       job_view, notice_hidden, notice_resources, preferences_path,
                        progress_info, publish_session, queue_hint, resources, summary)
 
 try:
@@ -33,6 +34,7 @@ _ROW_BASE = forms.Reactive if forms is not None else object
 
 LIB_DIR = os.path.dirname(os.path.abspath(__file__))
 XAML_PATH = os.path.join(LIB_DIR, "rx_status.xaml")
+NOTICE_XAML_PATH = os.path.join(LIB_DIR, "rx_notice.xaml")
 THEME_PATH = os.path.join(LIB_DIR, "rx_theme.xaml")
 TICK_SECONDS = 1
 _LOOPBACK_URL = re.compile(r"^http://127\.0\.0\.1:\d{1,5}/\Z")
@@ -96,6 +98,10 @@ def node_major(path):
 
 def _plan_analyzer(output):
     return analyzer_plan(output, LIB_DIR, os.environ, os.path.isfile, node_major, free_port)
+
+
+def _preferences_path():
+    return preferences_path(os.environ.get("APPDATA"))
 
 
 # --- window ---------------------------------------------------------------------------------
@@ -278,6 +284,29 @@ class StatusWindow(_WINDOW_BASE):
         self._shutting_down = True
 
 
+class NoticeWindow(_WINDOW_BASE):
+    """Modal "Node.js is needed" notice. OK is the default and cancel button (rx_notice.xaml), so
+    the window needs no click handler; the caller reads the check box after ShowDialog."""
+
+    def __init__(self, reason):
+        forms.WPFWindow.__init__(self, NOTICE_XAML_PATH)
+        for key, value in notice_resources().items():
+            self.Resources[key] = value
+        self.merge_resource_dict(THEME_PATH)
+        try:
+            self.Style = self.FindResource("RxWindow")
+        except Exception:
+            pass
+        self.reason_text.Text = reason or ""
+
+
+def show_notice(reason):
+    """Show the notice modally; True when "Don't show this again" was ticked."""
+    window = NoticeWindow(reason)
+    window.ShowDialog()
+    return bool(window.dont_show_chk.IsChecked)
+
+
 # --- session --------------------------------------------------------------------------------
 
 def _has_exited(handle):
@@ -296,13 +325,15 @@ class Session(object):
     """
 
     def __init__(self, queue, timer, clock, window_factory, starter, shell=None,
-                 plan_analyzer=None):
+                 plan_analyzer=None, notice=None, preferences=None):
         self.queue = queue
         self._timer = timer
         self._clock = clock
         self._starter = starter
         self._shell = shell or shell_open
         self._plan = plan_analyzer or _plan_analyzer
+        self._notice = notice or show_notice  # notice(reason) -> True when "don't show again"
+        self._preferences = preferences if preferences is not None else _preferences_path()
         self._analyzers = {}  # job id -> (handle, url); servers this session started
         self._was_busy = False
         self.handler = None
@@ -390,6 +421,7 @@ class Session(object):
             # A visible console: closing it stops the server (D10). Node opens the browser.
             self._analyzers[job_id] = (self._starter.start(spec, show_window=True), url)
             return
+        self._explain_fallback(plan[1])
         problems = []
         for target in (view["output"], WEBSITE_URL):
             try:
@@ -401,6 +433,16 @@ class Session(object):
                      "Lokalny Analyzer jest niedostępny: {0} Zamiast niego otwarto folder output "
                      "i stronę internetową.").format(plan[1])
         self.window.show_error(" ".join([message] + problems))
+
+    def _explain_fallback(self, reason):
+        """The Node.js notice, unless the user hid it. Never raises: the fallback goes on."""
+        try:
+            if notice_hidden(self._preferences):
+                return
+            if self._notice(reason):
+                hide_notice(self._preferences)
+        except Exception:
+            pass
 
     def close_window(self):
         if self.queue.busy():

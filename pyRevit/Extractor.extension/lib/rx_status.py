@@ -12,6 +12,7 @@ text crosses (find_session / publish_session / SessionCore.handle).
 """
 from __future__ import unicode_literals
 
+import io
 import json
 import os
 import re
@@ -71,6 +72,92 @@ UI_TEXT = {
 def resources():
     """UI_TEXT in the current language, ready for Window.Resources."""
     return dict((key, tr(english, polish)) for key, (english, polish) in UI_TEXT.items())
+
+
+# The "Node.js is needed" notice (rx_notice.xaml). A separate table from UI_TEXT: each XAML file
+# is checked against its own table. The reason (analyzer_plan's text) is set in code.
+NOTICE_TEXT = {
+    "notice_title": ("Local Analyzer not available", "Lokalny Analyzer jest niedostępny"),
+    "notice_intro": ("The local Analyzer needs Node.js 24 or later. Install it yourself or "
+                     "through the Company Portal.",
+                     "Lokalny Analyzer wymaga Node.js w wersji 24 lub nowszej. Zainstaluj go "
+                     "samodzielnie lub przez Company Portal."),
+    "notice_restart": ("After installing Node.js, restart Revit so that Revit sees the new PATH.",
+                       "Po instalacji Node.js uruchom Revit ponownie, aby Revit zobaczył nowy "
+                       "PATH."),
+    "notice_packages": ("The Analyzer's packages must also be installed once: double-click "
+                        "Analyzer\\Start-Analyzer.cmd.",
+                        "Pakiety Analyzera trzeba też zainstalować jednorazowo: kliknij dwukrotnie "
+                        "Analyzer\\Start-Analyzer.cmd."),
+    "notice_instead": ("Until then the output folder and the website are opened instead.",
+                       "Do tego czasu zamiast tego otwierane są folder wyników i strona "
+                       "internetowa."),
+    "notice_reason_label": ("Reason:", "Powód:"),
+    "notice_dont_show": ("Don't show this again", "Nie pokazuj ponownie"),
+    "notice_ok": ("OK", "OK"),
+}
+
+PREFERENCES_FOLDER = "RevitExtractor"  # under %APPDATA%, next to the model cache
+PREFERENCES_FILE = "preferences.json"
+HIDE_NOTICE_KEY = "hide_node_notice"
+
+
+def notice_resources():
+    """NOTICE_TEXT in the current language, ready for the notice window's Resources."""
+    return dict((key, tr(english, polish)) for key, (english, polish) in NOTICE_TEXT.items())
+
+
+def preferences_path(appdata):
+    """The preferences file under <appdata>/RevitExtractor, or None when there is no AppData folder."""
+    if not appdata:
+        return None
+    return os.path.join(appdata, PREFERENCES_FOLDER, PREFERENCES_FILE)
+
+
+def _read_text(path):
+    with io.open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _write_text(path, text):
+    folder = os.path.dirname(path)
+    if folder and not os.path.isdir(folder):
+        os.makedirs(folder)
+    with io.open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def read_preferences(path, read=_read_text):
+    """The preferences as a dict; {} when the file is missing, unreadable or not a JSON object."""
+    if not path:
+        return {}
+    try:
+        data = json.loads(read(path))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def notice_hidden(path, read=_read_text):
+    """True only when the file says hide_node_notice is exactly true."""
+    return read_preferences(path, read).get(HIDE_NOTICE_KEY) is True
+
+
+def hide_notice(path, read=_read_text, write=_write_text):
+    """Store hide_node_notice = true, keeping other keys; False (never raises) on any failure.
+    A corrupt file is replaced by one holding only this key."""
+    if not path:
+        return False
+    try:
+        data = read_preferences(path, read)
+        data[HIDE_NOTICE_KEY] = True
+        text = json.dumps(data, indent=2, sort_keys=True)
+        if not isinstance(text, type("")):
+            text = text.decode("ascii")  # IronPython 2.7: dumps returns str
+        write(path, text)
+        return True
+    except Exception:
+        return False
 
 
 def _error_text(error):

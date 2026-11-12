@@ -13,6 +13,7 @@ One pyRevit button (**Export**) runs the whole Extractor workflow from Revit wit
 
 - **All v1 modules are built and committed locally on `mgo-changes`, not pushed**: shared-ui, capabilities, index-builder, model-catalog, model-reader, export-runner, status-window, export-button (`Export.pushbutton`). Last commits: `f2597a7` (Export button), `7e68ebc` (Codex review fixes).
 - **Task 9 of `specs/plan-export-button.md` is done but uncommitted:** `tests/v1_test_kit.ps1`, the final `specs/v1-revit-test.md`, READMEs (Export button EN/PL, `Setup.panel`, `lib` EN/PL), `CLAUDE.md`, this file, `specs/HANDOVER-archive.md`.
+- **2026-11-12:** Open in Analyzer now shows a Node.js notice (EN/PL, "Don't show this again", flag in `%APPDATA%\RevitExtractor\preferences.json`) when the local Analyzer is unavailable; `Analyzer\Start-Analyzer.cmd` sets `NODE_USE_SYSTEM_CA=1` so a company proxy certificate works. 577 unit tests, 6 XAML PASS, Codex review clean. Not run in Revit: checklist item C14.
 - Checks on the main machine (Revit 2023, no pyRevit): **554 unit tests OK**; `validate_xaml.ps1` 5 PASS; `run_extractor_integration.ps1` normal PASS and `-Cancel` PASS (parallel FAIL, fixed pipe); kit `-Setup` and `-Check` run for real.
 - **Never run in Revit or IronPython.** Everything inside Revit is unverified: the greying, pickers, `BasicFileInfo.Extract` from the scan timer, the background open, the status window's hand-over between script engines, closing Revit during an export, Polish text in the real windows. That is the one test: `specs/v1-revit-test.md`.
 
