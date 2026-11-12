@@ -13,7 +13,7 @@ One session, about 90 minutes, on the Revit 2022 + pyRevit machine. Part F (10 m
 0. Tell the blocks where your clone is, once per machine. Use the folder that contains `pyRevit` and `specs`, and put your real path in place of the example:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('RX_REPO', 'C:\path\to\your\RevitExtractor', 'User')   # edit this path
+[Environment]::SetEnvironmentVariable('RX_REPO', 'C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor', 'User')   # edit this path
 $env:RX_REPO = [Environment]::GetEnvironmentVariable('RX_REPO', 'User')                       # also for this window
 $env:RX_REPO                                                                                  # prints your path
 Test-Path $env:RX_REPO                                                                        # must print True
@@ -204,6 +204,18 @@ $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 ```
 
 Owner's `-Check` output (C13):
+== Machine / Komputer
+Print Spooler: StartType=Automatic, Status=Running
+RevitExtractor processes left / procesy RevitExtractor: 0
+Revit.exe processes / procesy Revit.exe: 0
+Revit 2022: Extractor 2025.3.0.12
+
+== Runs / Eksporty: 1
+run 1: NOT STARTED
+  exit code: (none); (none)
+  output: 0 files, 0 MB; bubble.json no; Resource no
+  folders (1 = present): index=1 output=0 logs=0 journals=0 console=0
+  console.log: 0 ERROR line(s), 0 WARN line(s); stderr.log -1 bytes (-1 = missing); about 0 s
 
 ```text
 == Machine / Komputer
@@ -220,7 +232,7 @@ run 1: NOT STARTED
   console.log: 0 ERROR line(s), 0 WARN line(s); stderr.log -1 bytes (-1 = missing); about 0 s
 ```
 
-- [ ] **C14** The Node.js notice. Four steps; paste each block in full.
+- [WORKS, it installed packages and returned true] **C14** The Node.js notice. Four steps; paste each block in full.
   1. Hide the Analyzer packages (Revit can stay open), then click **Open in Analyzer** on a finished row. The notice appears with the reason, the output folder and the website open, and the error line shows. Tick "Don't show this again" and OK. Click again: no notice, same fallback. Check that the text reads well in English, and in Polish after E1.
 
 ```powershell
@@ -247,7 +259,7 @@ Remove-Item -Recurse -Force (Join-Path $repo 'Analyzer\node_modules.off') -Error
 $repo = $env:RX_REPO
 Test-Path (Join-Path $repo 'Analyzer\node_modules\pdfjs-dist\build\pdf.mjs')   # must print True
 ```
-- [ ] **C15** The row context menu. With two or more rows (one queued or not yet started, one running or finished), right-click a row that is not highlighted: it becomes highlighted, then the menu shows "Show model in File Explorer" and "Show export folder in File Explorer" (Polish after E1). Right-click empty space below the rows: no menu. "Show model" opens Explorer with the model file selected, also for a model whose folder path has Polish letters, spaces, `&` or `%`; rename the model file for a moment: the item opens its folder instead; rename the folder too: the error line says the file and folder were not found. "Show export folder" opens the same folder as Open output folder (the output folder for a finished row, the run folder otherwise, Polish folder path included); on a queued row, or one cancelled before it started, the item is greyed out. Restore any names you changed.
+- [WORKS] **C15** The row context menu. With two or more rows (one queued or not yet started, one running or finished), right-click a row that is not highlighted: it becomes highlighted, then the menu shows "Show model in File Explorer" and "Show export folder in File Explorer" (Polish after E1). Right-click empty space below the rows: no menu. "Show model" opens Explorer with the model file selected, also for a model whose folder path has Polish letters, spaces, `&` or `%`; rename the model file for a moment: the item opens its folder instead; rename the folder too: the error line says the file and folder were not found. "Show export folder" opens the same folder as Open output folder (the output folder for a finished row, the run folder otherwise, Polish folder path included); on a queued row, or one cancelled before it started, the item is greyed out. Restore any names you changed.
 
   To test the missing file and folder, pick a model that has a row in the status window. These blocks take the smaller sample; edit `$model` if your row is another model. Do the steps in this order, and run the restore block at the end.
 
@@ -268,7 +280,7 @@ Get-ChildItem 'C:\RX-test\Samples' -Filter *.off | ForEach-Object { Rename-Item 
 Get-ChildItem 'C:\RX-test\Samples' | Select-Object Name   # the sample names are back to .rvt
 ```
 
-- [ ] **C16** Clear finished. With a finished, a failed or cancelled, a running and a waiting row: the button is enabled and Clear finished removes only the finished, failed and cancelled rows; the running and waiting rows stay in order and keep updating. With only running or waiting rows the button is greyed out. The output folders of the removed exports are still on disk, and nothing was cancelled. The status window still updates after clearing, and a newly started export appears as a new row (Polish button text after E1).
+- [WORKS] **C16** Clear finished. With a finished, a failed or cancelled, a running and a waiting row: the button is enabled and Clear finished removes only the finished, failed and cancelled rows; the running and waiting rows stay in order and keep updating. With only running or waiting rows the button is greyed out. The output folders of the removed exports are still on disk, and nothing was cancelled. The status window still updates after clearing, and a newly started export appears as a new row (Polish button text after E1).
 
 ## Part D: real models (20 minutes; results are private)
 
@@ -283,14 +295,15 @@ if (-not (Test-Path $kit)) { throw 'Wrong $repo: v1_test_kit.ps1 not found. Set 
 & $kit -Stamp '\\server\share\Project\Central.rvt'    # <- the model's path
 ```
 
-- [ ] **D1** Add a real root on a share. Note the file count and the time until the list is complete (cold). Rescan and note the time again (warm). The window stays responsive.
-- [ ] **D2** No backup files, no `Backup` folders, and no local copies of centrals are listed.
-- [ ] **D3** A workshared central on the share, Choose views…: note the open time and any dialog. Views are listed. Afterwards: `-Stamp` unchanged, no new local copy in your Documents, no document open in Revit, and the Export button still enabled.
-- [ ] **D4** The 1000+ sheet model, Choose views…: note the open time. Ticking, Select all shown and search are as fast as in the slice 1 test.
-- [ ] **D5** Export that central with the default scope, straight from the share. Result OK; `-Stamp` unchanged afterwards.
+- [works] **D1** Add a real root on a share. Note the file count and the time until the list is complete (cold). Rescan and note the time again (warm). The window stays responsive.
+- [works] **D2** No backup files, no `Backup` folders, and no local copies of centrals are listed.
+- [works] **D3** A workshared central on the share, Choose views…: note the open time and any dialog. Views are listed. Afterwards: `-Stamp` unchanged, no new local copy in your Documents, no document open in Revit, and the Export button still enabled.
+- [works] **D4** The 1000+ sheet model, Choose views…: note the open time. Ticking, Select all shown and search are as fast as in the slice 1 test.
+- [works] **D5** Export that central with the default scope, straight from the share. Result OK; `-Stamp` unchanged afterwards.
 - [ ] **D6** An older-version model, Choose views…: note the time. The file is unchanged. Export it: note the result.
-- [ ] **D7** List a model, rename its file in Explorer, then Choose views…: a readable message in the window's language, and nothing is queued. Rename it back.
-- [ ] **D8** Open `console.log` of the C6 run from the folder with Polish letters: is the model path readable there? Open it in Notepad with this (it picks the newest run folder; use the run of that model if you have run others since):
+- [The model file was not found.] **D7** List a model, rename its file in Explorer, then Choose views…: a readable message in the window's language, and nothing is queued. Rename it back.
+> NOTE on this please add reload folders button so it updates the list
+- [it is readable] **D8** Open `console.log` of the C6 run from the folder with Polish letters: is the model path readable there? Open it in Notepad with this (it picks the newest run folder; use the run of that model if you have run others since):
 
 ```powershell
 $ini = Join-Path $env:APPDATA 'pyRevit\pyRevit_config.ini'   # the output folder the Export window uses
@@ -304,11 +317,13 @@ notepad (Join-Path $run.FullName 'console.log')
 
 ## Part E: Polish (3 minutes)
 
-- [ ] **E1** Set pyRevit's language to Polish and reload. The button title, the model window, the view window and the status window are in Polish, with no English label left. Screenshots of the three windows with a sample model are welcome.
+- [works] **E1** Set pyRevit's language to Polish and reload. The button title, the model window, the view window and the status window are in Polish, with no English label left. Screenshots of the three windows with a sample model are welcome.
 
 ## Part F: the Revit 2025 machine (10 minutes)
+>NOTE I cannot run Exportbutton because Export.pushbutton\script.py", line 16, in <module>
+ImportError: Cannot import name FileVersionInfo
 
-- [ ] **F1** `validate_native_legacy.ps1`: send the output. It needs Python 3 (`python --version`) and finds the Revit 2022-2025 Extractor by itself; if it finds none or the wrong one, add `-ExtractorDirectory 'C:\Program Files\Autodesk\Revit 2025\RevitExtractor'`.
+- [Details below] **F1** `validate_native_legacy.ps1`: send the output. It needs Python 3 (`python --version`) and finds the Revit 2022-2025 Extractor by itself; if it finds none or the wrong one, add `-ExtractorDirectory 'C:\Program Files\Autodesk\Revit 2025\RevitExtractor'`.
 
 ```powershell
 $repo = $env:RX_REPO   # set once, see "Before you start"
@@ -318,14 +333,53 @@ $tests = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.pan
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tests 'validate_native_legacy.ps1') *>&1 | Tee-Object (Join-Path $res 'F1.txt')
 ```
-- [ ] **F2** Export is enabled with no model open. One export with the default scope: result OK.
-- [ ] **F3** One model, Choose views…, tick two 2D views and one 3D view, Export: only those are in the result (the `ElementId.Value` path).
+
+>OUTPUT
+Parser: C:\Program Files\Autodesk\Revit 2022\RevitExtractor\ExtractorUtility.dll; file version 2025.3.0.12; shape Parse (2025.3+)
+PASS bundle == lib: defaults
+PASS native parser: defaults
+PASS bundle == lib: selected-2d
+PASS native parser: selected-2d
+PASS bundle == lib: selected-3d
+PASS native parser: selected-3d
+PASS bundle == lib: separate-selections
+PASS native parser: separate-selections
+PASS bundle == lib: no-database
+PASS native parser: no-database
+PASS bundle == lib: database-only
+PASS native parser: database-only
+PASS bundle == lib: advanced
+PASS native parser: advanced
+PASS bundle == lib: int32-limit
+PASS native parser: int32-limit
+PASS bundle == lib: 2d-only-no-database
+PASS native parser: 2d-only-no-database
+PASS bundle == lib: newest-all-options
+PASS native parser: newest-all-options property Has2DViewing
+PASS native parser: newest-all-options property Has3DViewing
+PASS native parser: newest-all-options property GenerateTopologyMetadata
+powershell.exe : newest-all-options property GenerateExtendedPropertyDB: expected True, got False
+At line:1 char:1
++ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $t ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (newest-all-opti...True, got False:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+At C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtr
+actor\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_native_legacy.ps1:234 char:17
++                 throw "${label}: expected $expected, got $actual"
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (newest-all-opti...True, got False:String) [], RuntimeException
+    + FullyQualifiedErrorId : newest-all-options property GenerateExtendedPropertyDB: expected True, got False
+
+- [works] **F2** Export is enabled with no model open. One export with the default scope: result OK.
+- [untested] **F3** One model, Choose views…, tick two 2D views and one 3D view, Export: only those are in the result (the `ElementId.Value` path).
 
 Nobody can test the 2026 row: its IFC and DWG options stay marked untested.
 
 ## Part G: scripts, Revit closed (10 minutes)
 
-- [ ] **G1** `validate_native_legacy.ps1`: all lines PASS (2025.3 parser shape). Send the output. Needs Python 3 (`python --version`).
+- [Detail below] **G1** `validate_native_legacy.ps1`: all lines PASS (2025.3 parser shape). Send the output. Needs Python 3 (`python --version`).
 
 ```powershell
 $repo = $env:RX_REPO   # set once, see "Before you start"
@@ -335,7 +389,47 @@ $tests = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.pan
 $res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tests 'validate_native_legacy.ps1') *>&1 | Tee-Object (Join-Path $res 'G1.txt')
 ```
-- [ ] **G2** The parallel run with the two sample models from `C:\RX-test\Samples`. A FAIL is expected (fixed pipe); we need to know for this build. Send the output. It names your Windows user folder: private.
+
+>OUTPUT:
+Parser: C:\Program Files\Autodesk\Revit 2022\RevitExtractor\ExtractorUtility.dll; file version 2025.3.0.12; shape Parse (2025.3+)
+PASS bundle == lib: defaults
+PASS native parser: defaults
+PASS bundle == lib: selected-2d
+PASS native parser: selected-2d
+PASS bundle == lib: selected-3d
+PASS native parser: selected-3d
+PASS bundle == lib: separate-selections
+PASS native parser: separate-selections
+PASS bundle == lib: no-database
+PASS native parser: no-database
+PASS bundle == lib: database-only
+PASS native parser: database-only
+PASS bundle == lib: advanced
+PASS native parser: advanced
+PASS bundle == lib: int32-limit
+PASS native parser: int32-limit
+PASS bundle == lib: 2d-only-no-database
+PASS native parser: 2d-only-no-database
+PASS bundle == lib: newest-all-options
+PASS native parser: newest-all-options property Has2DViewing
+PASS native parser: newest-all-options property Has3DViewing
+PASS native parser: newest-all-options property GenerateTopologyMetadata
+powershell.exe : newest-all-options property GenerateExtendedPropertyDB: expected True, got False
+At line:1 char:1
++ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $t ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (newest-all-opti...True, got False:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+At C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtr
+actor\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_native_legacy.ps1:234 char:17
++                 throw "${label}: expected $expected, got $actual"
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (newest-all-opti...True, got False:String) [], RuntimeException
+    + FullyQualifiedErrorId : newest-all-options property GenerateExtendedPropertyDB: expected True, got False
+
+
+- [Detail below] **G2** The parallel run with the two sample models from `C:\RX-test\Samples`. A FAIL is expected (fixed pipe); we need to know for this build. Send the output. It names your Windows user folder: private.
 
 ```powershell
 $repo = $env:RX_REPO   # set once, see "Before you start"
@@ -348,6 +442,36 @@ $samples = Get-ChildItem 'C:\RX-test\Samples' -Filter *.rvt | Where-Object { $_.
 $samples | Select-Object Name, Length   # must list exactly two files
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tests 'run_extractor_integration.ps1') -Parallel 2 -ModelPath $samples[0].FullName -ModelPath2 $samples[1].FullName *>&1 | Tee-Object (Join-Path $res 'G2.txt')
 ```
+
+>OUTPUT:
+PS C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor> $samples | Select-Object Name, Length   # must list exactly two files
+
+Name                                      Length
+----                                      ------
+Roombook Schedule Views INT-ENU.rvt       405504
+Flaechenbuch Bauteillisten DIN-DEU.rvt    405504
+SampleA_Central.rvt                    164622336
+SampleA.rvt                            164622336
+SampleB.rvt                            272592896
+
+
+PS C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 - BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtractor> powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tests 'run_extractor_integration.ps1') -Parallel 2 -ModelPath $samples[0].FullName -ModelPath2 $samples[1].FullName *>&1 | Tee-Object (Join-Path $res 'G2.txt')
+
+== export-runner integration (parallel 2)
+Revit:            2025 - C:\Program Files\Autodesk\Revit 2025
+Extractor:        C:\Program Files\Autodesk\Revit 2025\RevitExtractor\RevitExtractor.exe
+powershell.exe : C:\Users\m.golabek\OneDrive - Cundall\_Working Locally\0000000 -
+BIM\01_Revit\01_Scripts\00_RevitExtractor\RevitExtract
+At line:1 char:1
++ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $t ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\m.gola...or\RevitExtract:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+or\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\run_extractor_integration.ps1 : The property
+'VersionInfo' cannot be found on this object. Verify that the property exists.
+    + CategoryInfo          : NotSpecified: (:) [run_extractor_integration.ps1], PropertyNotFoundException
+    + FullyQualifiedErrorId : PropertyNotFoundStrict,run_extractor_integration.ps1
 
 Both scripts are in `pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\`.
 
