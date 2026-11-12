@@ -83,6 +83,10 @@ def _hand_over(jobs, revit_dir, output_parent, max_parallel):
         handler = open_session(max_parallel)
         answer = json.loads(handler(json.dumps(request, ensure_ascii=True)))
     except Exception as error:
+        try:
+            script.get_logger().exception("Could not hand the exports to the status window.")
+        except Exception:
+            pass
         _alert(tr("The exports could not be handed to the status window.\n\n{0}",
                   "Nie udało się przekazać eksportów do okna statusu.\n\n{0}")
                .format(_error_text(error)))
