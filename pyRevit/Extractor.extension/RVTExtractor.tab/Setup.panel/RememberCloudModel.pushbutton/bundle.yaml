@@ -1,0 +1,18 @@
+title:
+  en_us: "Remember\ncloud model"
+  pl: "Zapamiętaj\nmodel z chmury"
+tooltip:
+  en_us: >-
+    Remember the open cloud (ACC) model for the Export button's cloud list:
+    its project and file name and its links. Read-only: nothing in the model
+    is changed, saved or synchronised. Needs an open cloud model.
+    Revit 2022 and later.
+  pl: >-
+    Zapamiętaj otwarty model z chmury (ACC) dla listy chmurowej przycisku
+    Eksport: nazwę projektu i pliku oraz łącza. Tylko odczyt: nic w modelu nie
+    jest zmieniane, zapisywane ani synchronizowane. Wymaga otwartego modelu
+    z chmury. Revit 2022 i nowsze.
+author: RevitExtractor
+min_revit_version: 2022
+context:
+  rule: "doc-project"
