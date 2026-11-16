@@ -20,7 +20,8 @@ import re
 
 import rx_dotnet
 from rx_i18n import tr
-from rx_runner import CANCELLED, FAILED, OK, QUEUED, RUNNING, DotNetStarter, Queue, effective_parallel
+from rx_runner import (CANCELLED, FAILED, OK, QUEUED, RUNNING, STAGING, DotNetStarter, Queue,
+                       effective_parallel)
 from rx_status import (WEBSITE_URL, SessionCore, analyzer_plan, explorer_arguments,
                        find_session, hide_notice, job_view, model_target, notice_hidden,
                        notice_resources, preferences_path, progress_info, publish_session,
@@ -41,6 +42,9 @@ XAML_PATH = os.path.join(LIB_DIR, "rx_status.xaml")
 NOTICE_XAML_PATH = os.path.join(LIB_DIR, "rx_notice.xaml")
 THEME_PATH = os.path.join(LIB_DIR, "rx_theme.xaml")
 TICK_SECONDS = 1
+# While a cloud job copies from the cache: each tick copies for at most rx_runner.STAGE_BUDGET
+# (40 ms), so 4 ticks a second keep Revit's UI thread about 84% free. Tunable (checklist H5).
+STAGING_TICK_SECONDS = 0.25
 _LOOPBACK_URL = re.compile(r"^http://127\.0\.0\.1:\d{1,5}/\Z")
 
 
@@ -137,6 +141,25 @@ def node_major(path):
         raise ValueError(tr("The file version of {0} could not be read.",
                             "Nie udało się odczytać wersji pliku {0}.").format(path))
     return int(info.FileMajorPart)
+
+
+def free_bytes(path):
+    """Free bytes for this user on the drive of `path`, or None when unknown (a UNC path, no
+    drive letter, or the .NET query failed, e.g. DriveInfo not loadable on .NET 8). None lets
+    the copy go ahead; it then fails on its own if the disk fills up."""
+    try:
+        drive = os.path.splitdrive(os.path.abspath(path))[0]
+        if not re.match(r"^[A-Za-z]:\Z", drive):
+            return None
+        from System.IO import DriveInfo
+        return int(DriveInfo(drive + "\\").AvailableFreeSpace)
+    except Exception:
+        return None
+
+
+def _interval(seconds):
+    from System import TimeSpan
+    return TimeSpan.FromSeconds(seconds)
 
 
 def _plan_analyzer(output):
@@ -433,9 +456,12 @@ class Session(object):
     """
 
     def __init__(self, queue, timer, clock, window_factory, starter, shell=None,
-                 plan_analyzer=None, notice=None, preferences=None, explorer=None):
+                 plan_analyzer=None, notice=None, preferences=None, explorer=None,
+                 interval=None):
         self.queue = queue
         self._timer = timer
+        self._interval = interval or _interval   # seconds -> timer.Interval value
+        self._fast = False
         self._clock = clock
         self._starter = starter
         self._shell = shell or shell_open
@@ -472,6 +498,7 @@ class Session(object):
         """Poll once, refresh once; never raises into the dispatcher."""
         try:
             self.queue.poll()
+            self._set_pace()
             self.refresh()
             busy = self.queue.busy()
             if not busy:
@@ -481,6 +508,15 @@ class Session(object):
             self._was_busy = busy
         except Exception as error:
             self.window._report(error)
+
+    def _set_pace(self):
+        """Faster ticks while a job copies from the cache (and is not just waiting to launch);
+        the normal pace otherwise. The interval is only set when the pace changes."""
+        fast = any(job.state == STAGING and not getattr(job, "stage_ready", False)
+                   for job in self.queue.jobs())
+        if fast != self._fast:
+            self._timer.Interval = self._interval(STAGING_TICK_SECONDS if fast else TICK_SECONDS)
+            self._fast = fast
 
     def views(self):
         now = self._clock()
@@ -603,7 +639,8 @@ def open_session(max_parallel=1):
     starter = DotNetStarter()
     clock = datetime.datetime.now
     queue = Queue(starter, clock, max_parallel=effective_parallel(max_parallel),
-                  hold=starter.extractor_running)
+                  hold=starter.extractor_running, free_space=free_bytes,
+                  tree_running=starter.extractor_tree_running)
     timer = DispatcherTimer()
     timer.Interval = TimeSpan.FromSeconds(TICK_SECONDS)
     session = Session(queue, timer, clock, StatusWindow, starter)

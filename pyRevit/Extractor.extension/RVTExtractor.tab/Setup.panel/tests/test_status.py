@@ -1753,6 +1753,10 @@ class Guards(unittest.TestCase):
                                              "get_output", "get_logger", "Kill"}, node.attr)
         self.assertNotIn("print", re.findall(r"\bprint\b", self.ui))
 
+    def test_the_runner_passes_the_ironpython_guard_too(self):
+        source = (LIB / "rx_runner.py").read_text(encoding="utf-8")
+        self.assertEqual(ironpython_problems(source), [])
+
     def test_system_imports_only_inside_functions_or_guarded(self):
         tree = ast.parse(self.ui)
 
@@ -1771,6 +1775,316 @@ class Guards(unittest.TestCase):
                     self.fail("module-level System import: " + name)
                 if root == "pyrevit":
                     self.assertTrue(guarded, "pyrevit import must be guarded")
+
+
+# --- cloud-catalog amendments (specs/SPEC-cloud-catalog.md): staging rows and submit ------------
+# Synthetic GUIDs only (repeated digits), as the privacy guard in test_cloud.py requires.
+
+P1 = "11111111-1111-1111-1111-111111111111"
+M3 = "33333333-3333-3333-3333-333333333333"
+M4 = "44444444-4444-4444-4444-444444444444"
+GUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+CACHE = os.path.join(ROOT, "Users", "x", "AppData", "Local", "Autodesk", "Revit",
+                     "Autodesk Revit X", "CollaborationCache", "99999999", P1)
+CACHE_HOST = os.path.join(CACHE, M3 + ".rvt")
+CACHE_LINK = os.path.join(CACHE, "LinkedModels", M4 + ".rvt")
+HOST_NAME = "Zażółć-Konstrukcja.rvt"
+MB = 2 ** 20
+
+
+def stage_data(host=CACHE_HOST, link=CACHE_LINK, host_size=4 * MB, link_size=6 * MB):
+    return {"items": [{"src": host, "name": HOST_NAME, "size": host_size, "mtime": 1.5e9},
+                      {"src": link, "name": "Alpha-Architecture.rvt", "size": link_size,
+                       "mtime": 1.5e9}],
+            "notes": []}
+
+
+def staged_job_data(**changes):
+    data = job_data(CACHE_HOST, stage=stage_data(), model_name=HOST_NAME,
+                    model_key="cloud:%s/%s" % (P1, M3))
+    data.update(changes)
+    return data
+
+
+def make_staged(state="staging", done=3 * MB + 5, total=10 * MB, ready=False, started=NOW,
+                with_paths=True):
+    job = rx_runner.Job(CACHE_HOST, INDEX, REVIT, OUT, stage=stage_data(), model_name=HOST_NAME,
+                        model_key="cloud:%s/%s" % (P1, M3))
+    job.id = "job-1"
+    job.state = state
+    job.queued_at = NOW
+    job.started_at = started if with_paths else None
+    if with_paths:
+        job.paths = rx_runner.plan_run(OUT, started, "a1b2c3d4")
+        job.staged_model = os.path.join(job.paths.root, "model", HOST_NAME)
+    job.stage_done = done
+    job.stage_total = total
+    job.stage_ready = ready
+    return job
+
+
+def texts_of(view):
+    return [value for value in view.values() if isinstance(value, str)]
+
+
+class StagingView(unittest.TestCase):
+    def test_staging_row_shows_the_copy_progress(self):
+        job = make_staged()
+        view = job_view(job, None, at(0, 42), None)
+        self.assertEqual(view["state"], "staging")
+        self.assertEqual(view["state_text"], "Copying")
+        self.assertEqual(view["progress"], "Copying from the cache: 3 of 10 MB")
+        self.assertEqual(view["time"], "0:42")
+        self.assertEqual(view["started"], "10:00:00")
+        self.assertEqual((view["can_cancel"], view["can_open_folder"], view["can_open_analyzer"]),
+                         (True, True, False))
+        self.assertEqual(view["folder"], job.paths.root)
+
+    def test_staging_row_in_polish(self):
+        view = under_polish(job_view, make_staged(), None, at(0, 42), None)
+        self.assertEqual(view["state_text"], "Kopiowanie")
+        self.assertEqual(view["progress"], "Kopiowanie z pamięci podręcznej: 3 z 10 MB")
+
+    def test_megabytes_round_down_done_and_up_total(self):
+        view = job_view(make_staged(done=0, total=1), None, NOW, None)
+        self.assertEqual(view["progress"], "Copying from the cache: 0 of 1 MB")
+        view = job_view(make_staged(done=10 * MB, total=10 * MB), None, NOW, None)
+        self.assertEqual(view["progress"], "Copying from the cache: 10 of 10 MB")
+
+    def test_the_model_column_never_shows_a_guid(self):
+        for build in (lambda: job_view(make_staged(), None, NOW, None),
+                      lambda: job_view(make_staged("queued", with_paths=False), None, NOW, 1),
+                      lambda: job_view(make_staged("ok", ready=True), None, NOW, None)):
+            view = build()
+            self.assertEqual(view["model"], HOST_NAME)
+            for text in texts_of(view):
+                self.assertIsNone(GUID_RE.search(text), text)
+
+    def test_show_model_points_at_the_staged_copy_never_the_cache(self):
+        self.assertEqual(job_view(make_staged(), None, NOW, None)["model_path"],
+                         make_staged().staged_model)
+        queued = job_view(make_staged("queued", with_paths=False), None, NOW, 1)
+        self.assertIsNone(queued["model_path"], "nothing to show before the copy")
+
+    def test_copied_and_held_waits_for_the_other_extractor(self):
+        view = job_view(make_staged(done=10 * MB, ready=True), None, NOW, None, held=True)
+        self.assertEqual(view["state_text"], "Waiting")
+        self.assertIn("another Extractor is running", view["progress"])
+        self.assertTrue(view["can_cancel"])
+        polish_view = under_polish(job_view, make_staged(ready=True), None, NOW, None, held=True)
+        self.assertNotEqual(polish_view["progress"], view["progress"])
+        not_held = job_view(make_staged(done=10 * MB, ready=True), None, NOW, None)
+        self.assertEqual(not_held["state_text"], "Copying")
+
+    def test_summary_and_hint_count_staging(self):
+        views = [job_view(make_staged(), None, NOW, None)]
+        self.assertIn("copying: 1", rx_status.summary(views))
+        self.assertIn("kopiowanie: 1", under_polish(rx_status.summary, views))
+        hint = rx_status.queue_hint(views)
+        self.assertIn("copying from the cache", hint)
+        self.assertNotEqual(hint, under_polish(rx_status.queue_hint, views))
+
+    def test_plain_rows_are_unchanged(self):
+        view = job_view(make_job("queued", with_paths=False), None, NOW, 3)
+        self.assertEqual((view["model"], view["model_path"]), ("DynamoSample_2023.rvt", MODEL))
+
+    def test_view_is_plain_data(self):
+        json.dumps(job_view(make_staged(), None, NOW, None))
+
+
+class SessionCoreStaging(unittest.TestCase):
+    def setUp(self):
+        self.queue = new_queue()
+        self.core = SessionCore(self.queue, lambda: NOW, Listener())
+
+    def test_submit_accepts_stage_model_name_and_key(self):
+        answer = call(self.core, {"op": "submit", "jobs": [staged_job_data()]})
+        self.assertEqual((answer["added"], answer["errors"]), (["job-1"], []))
+        job, = self.queue.jobs()
+        self.assertEqual(job.model_name, HOST_NAME)
+        self.assertEqual(job.model_key, "cloud:%s/%s" % (P1, M3))
+        self.assertEqual([item["name"] for item in job.stage["items"]],
+                         [HOST_NAME, "Alpha-Architecture.rvt"])
+        self.assertEqual(job.stage_total, 10 * MB)
+
+    def test_plain_jobs_still_work(self):
+        answer = call(self.core, {"op": "submit", "jobs": [job_data()]})
+        self.assertEqual(answer["errors"], [])
+        self.assertIsNone(self.queue.jobs()[0].stage)
+
+    def test_bad_stage_is_one_error_and_the_others_are_added(self):
+        def bad_entry(entry):
+            stage = stage_data()
+            stage["items"][1] = entry
+            return stage
+        cases = {
+            "stage not an object": staged_job_data(stage=[1, 2]),
+            "entry not an object": staged_job_data(stage=bad_entry([CACHE_LINK, "b.rvt", 1, 1])),
+            "entry is text": staged_job_data(stage=bad_entry("b.rvt")),
+            "relative src": staged_job_data(stage=bad_entry(
+                {"src": "LinkedModels\\b.rvt", "name": "b.rvt", "size": 1, "mtime": 1})),
+            "quote in src": staged_job_data(stage=bad_entry(
+                {"src": CACHE_LINK + '"', "name": "b.rvt", "size": 1, "mtime": 1})),
+            "model name not text": staged_job_data(model_name=7),
+            "model key not text": staged_job_data(model_key=["k"]),
+            "model name without stage": job_data(model_name="a.rvt"),
+        }
+        for label, data in cases.items():
+            with self.subTest(label):
+                queue = new_queue()
+                core = SessionCore(queue, lambda: NOW, Listener())
+                answer = call(core, {"op": "submit", "jobs": [data, job_data()]})
+                self.assertEqual(answer["added"], ["job-1"])
+                self.assertEqual(len(answer["errors"]), 1)
+                self.assertTrue(answer["errors"][0].startswith("Export 1:"))
+                self.assertEqual(len(queue.jobs()), 1)
+                self.assertIsNone(queue.jobs()[0].stage)
+
+    def test_every_stage_path_goes_through_clean_path(self):
+        seen = []
+        real = rx_status.clean_path
+
+        def spy(value):
+            seen.append(value)
+            return real(value)
+        with patch.object(rx_status, "clean_path", spy):
+            call(self.core, {"op": "submit", "jobs": [staged_job_data()]})
+        self.assertIn(CACHE_HOST, seen)
+        self.assertIn(CACHE_LINK, seen)
+
+
+class StagingWindow(unittest.TestCase):
+    """A cloud job in the status window: the staging row, Cancel and the faster timer.
+    WindowTest's helpers without re-running its tests."""
+
+    rows = WindowTest.rows
+    select = WindowTest.select
+    click = WindowTest.click
+    buttons = WindowTest.buttons
+    tick = WindowTest.tick
+    plan = WindowTest.plan
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmp = tempfile.mkdtemp(prefix="rx-status-stage-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.revit = os.path.join(self.tmp, "Revit")
+        os.makedirs(os.path.join(self.revit, "RevitExtractor"))
+        open(os.path.join(self.revit, "RevitExtractor", "RevitExtractor.exe"), "w").close()
+        self.out = os.path.join(self.tmp, "out")
+        SharedEventReactive.PropertyChanged = Event()
+        SharedEventReactive.raised = []
+        FuncType.made = []
+        patcher = patch.dict(sys.modules, ui_system_stubs(timers=[]))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.ui = load_status_ui()
+        self.starter = Starter()
+        self.clock = Clock()
+        self.shell = Shell()
+        self.explorer = Explorer()
+        self.notice = Notice()
+        self.plans = []
+        self.plan_answer = None
+        self.prefs = os.path.join(self.tmp, "appdata", "RevitExtractor", "preferences.json")
+        cache = os.path.join(self.tmp, "Autodesk Revit X", "CollaborationCache", "99999999", P1)
+        os.makedirs(os.path.join(cache, "LinkedModels"))
+        self.host = os.path.join(cache, M3 + ".rvt")
+        self.link = os.path.join(cache, "LinkedModels", M4 + ".rvt")
+        for path, size in ((self.host, 300 * 1024), (self.link, 200 * 1024)):
+            with open(path, "wb") as handle:
+                handle.write(os.urandom(size))
+        ticks = {"now": 0.0}
+
+        def stage_clock():
+            ticks["now"] += 0.03
+            return ticks["now"]
+        self.queue = rx_runner.Queue(self.starter, self.clock, system_root=self.tmp,
+                                     stage_clock=stage_clock, stage_chunk=64 * 1024)
+        self.timer = FakeTimer()
+        self.timer.Interval = ("seconds", 1)
+        self.session = self.ui.Session(self.queue, self.timer, self.clock, self.ui.StatusWindow,
+                                       self.starter, shell=self.shell, plan_analyzer=self.plan,
+                                       notice=self.notice, preferences=self.prefs,
+                                       explorer=self.explorer)
+        self.window = self.session.window
+
+    def submit_staged(self):
+        items = []
+        for path, name in ((self.host, HOST_NAME), (self.link, "Alpha-Architecture.rvt")):
+            info = os.stat(path)
+            items.append({"src": path, "name": name, "size": info.st_size,
+                          "mtime": info.st_mtime})
+        data = job_data(self.host, revit_dir=self.revit, output_parent=self.out,
+                        stage={"items": items}, model_name=HOST_NAME,
+                        model_key="cloud:%s/%s" % (P1, M3))
+        return call(self.session.core, {"op": "submit", "jobs": [data]})
+
+    def test_staging_row_and_cancel(self):
+        answer = self.submit_staged()
+        self.assertEqual(answer["errors"], [])
+        row, = self.rows()
+        self.assertEqual(row.State, "Copying")
+        self.assertEqual(row.Model, HOST_NAME)
+        self.assertIn("Copying from the cache:", row.Progress)
+        self.select(0)
+        self.assertEqual(self.buttons(), (True, True, False))
+        self.click("cancel_btn")
+        job, = self.queue.jobs()
+        self.assertEqual(job.state, "cancelled")
+        self.assertEqual(self.starter.extractor_handles(), [], "no process was started")
+        self.assertEqual(os.listdir(os.path.join(job.paths.root, "model")), ["stage.json"])
+        self.assertEqual(self.rows()[0].State, "Cancelled")
+
+    def test_timer_runs_faster_while_copying_and_slows_down_after(self):
+        self.submit_staged()
+        self.assertEqual(self.timer.Interval, ("seconds", self.ui.STAGING_TICK_SECONDS))
+        self.assertLess(self.ui.STAGING_TICK_SECONDS, self.ui.TICK_SECONDS)
+        for _ in range(100):
+            if self.queue.jobs()[0].state != "staging":
+                break
+            self.tick()
+        self.assertEqual(self.queue.jobs()[0].state, "running")
+        self.assertEqual(self.timer.Interval, ("seconds", self.ui.TICK_SECONDS))
+        spec = self.starter.started[-1][0]
+        self.assertEqual(spec.env["RX_MODEL"], self.queue.jobs()[0].staged_model)
+
+    def test_open_session_wires_free_space_and_the_tree_check(self):
+        domain = FakeDomain()
+        with patch.dict(sys.modules, ui_system_stubs(domain, [])):
+            ui = load_status_ui()
+            handler = ui.open_session(1)
+        queue = handler.__self__._listener.queue
+        self.assertIs(queue._free_space, ui.free_bytes)
+        self.assertEqual(queue._tree_running.__name__, "extractor_tree_running")
+
+    def test_free_bytes(self):
+        drives = []
+
+        class DriveInfo(object):
+            def __init__(self, root):
+                drives.append(root)
+                self.AvailableFreeSpace = 12345
+
+        io_stub = stub_module("System.IO", DriveInfo=DriveInfo)
+        with patch.dict(sys.modules, {"System.IO": io_stub}):
+            if ON_WINDOWS:
+                self.assertEqual(self.ui.free_bytes("D:\\Exports\\RevitExtractor"), 12345)
+                self.assertEqual(drives, ["D:\\"])
+            self.assertIsNone(self.ui.free_bytes("\\\\server\\share\\Exports"), "UNC: unknown")
+
+        class Broken(object):
+            def __init__(self, root):
+                raise IOError("not ready")
+        with patch.dict(sys.modules, {"System.IO": stub_module("System.IO", DriveInfo=Broken)}):
+            self.assertIsNone(self.ui.free_bytes("C:\\Exports"))
+
+    def test_a_staging_tick_refreshes_at_most_once(self):
+        self.submit_staged()
+        before = self.window.jobs_lv.Items.refreshes
+        self.tick()
+        self.assertLessEqual(self.window.jobs_lv.Items.refreshes - before, 1)
 
 
 if __name__ == "__main__":

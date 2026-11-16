@@ -6,6 +6,7 @@ Spec: specs/SPEC-export-runner.md, acceptance criteria 1-10. Criterion 3 really 
 """
 import ast
 import datetime
+import json
 import os
 import shutil
 import subprocess
@@ -21,6 +22,7 @@ if str(LIB) not in sys.path:
     sys.path.append(str(LIB))  # append, never insert (same-named modules in the bundles)
 
 import rx_runner  # noqa: E402
+from rx_cloud import StageItem  # noqa: E402
 from rx_index import to_json  # noqa: E402
 from rx_runner import (RunnerError, Queue, check_result, default_output_parent,  # noqa: E402
                        effective_parallel, extractor_exe, kill_spec, launch_spec, plan_run,
@@ -1113,6 +1115,570 @@ class DotNetStarterAmendments(TempDirTest):
         self.assertTrue(all(p.disposed for p in FakeProcessWithList.listed),
                         "every listed process object is disposed")
         self.assertEqual(FakeProcess.started, [], "the check starts nothing")
+
+    def test_extractor_tree_running_lists_both_process_names(self):
+        with patch.dict(sys.modules, self.stubs()):
+            self.assertIs(rx_runner.DotNetStarter().extractor_tree_running(), False)
+            FakeProcessWithList.listed = [FakeListedProcess()]
+            self.assertIs(rx_runner.DotNetStarter().extractor_tree_running(), True)
+        self.assertIn("RevitExtractor", FakeProcessWithList.names)
+        self.assertIn("RevitExtractor_Client", FakeProcessWithList.names)
+        self.assertTrue(all(p.disposed for p in FakeProcessWithList.listed))
+        self.assertEqual(FakeProcess.started, [], "the check starts nothing")
+
+
+# --- cloud-catalog amendments (specs/SPEC-cloud-catalog.md, criterion 9) --------------------
+# Synthetic GUIDs only (repeated digits), as the privacy guard in test_cloud.py requires.
+
+P1 = "11111111-1111-1111-1111-111111111111"
+M3 = "33333333-3333-3333-3333-333333333333"
+M4 = "44444444-4444-4444-4444-444444444444"
+CHUNK = 64 * 1024
+
+
+class StageTicker(object):
+    """The injectable stage clock: each call advances by `step` seconds; counts calls."""
+
+    def __init__(self, step=0.015):
+        self.now = 100.0
+        self.step = step
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        self.now += self.step
+        return self.now
+
+
+class Remover(object):
+    """os.remove stand-in that fails for the names in `locked` (a file still in use)."""
+
+    def __init__(self):
+        self.locked = set()
+        self.removed = []
+
+    def __call__(self, path):
+        if os.path.basename(path) in self.locked:
+            raise OSError("in use")
+        os.remove(path)
+        self.removed.append(path)
+
+
+def sha256(path):
+    import hashlib
+    with open(path, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
+class QueueStagingTest(TempDirTest):
+    """queued -> staging -> running; copies from a fake CollaborationCache tree."""
+
+    def setUp(self):
+        super(QueueStagingTest, self).setUp()
+        self.revit = os.path.join(self.tmp, "Revit")
+        os.makedirs(os.path.join(self.revit, "RevitExtractor"))
+        open(os.path.join(self.revit, "RevitExtractor", "RevitExtractor.exe"), "w").close()
+        self.out = os.path.join(self.tmp, "out")
+        self.starter = FakeStarter()
+        self.tokens = iter("%08x" % n for n in range(1, 1000))
+        project = os.path.join(self.tmp, "Autodesk Revit X", "CollaborationCache", "99999999", P1)
+        os.makedirs(os.path.join(project, "LinkedModels"))
+        self.host = os.path.join(project, M3 + ".rvt")
+        self.link = os.path.join(project, "LinkedModels", M4 + ".rvt")
+        with open(self.host, "wb") as handle:
+            handle.write(os.urandom(5 * CHUNK + 123))
+        with open(self.link, "wb") as handle:
+            handle.write(os.urandom(2 * CHUNK + 7))
+        self.cache_root = os.path.dirname(os.path.dirname(project))
+        self.cache_before = snapshot(self.cache_root)
+        self.hashes = {path: sha256(path) for path in (self.host, self.link)}
+        self.ticker = StageTicker()
+        self.tree = Hold(False)
+        self.remover = Remover()
+        self.free = None
+
+    def tearDown(self):
+        self.assertEqual(snapshot(self.cache_root), self.cache_before, "the cache is never written")
+        for path, digest in self.hashes.items():
+            self.assertEqual(sha256(path), digest)
+
+    def queue(self, max_parallel=1, hold=None, **kwargs):
+        return Queue(self.starter, FakeClock(), max_parallel=max_parallel,
+                     system_root=SYSTEM_ROOT, token=lambda: next(self.tokens), hold=hold,
+                     stage_clock=self.ticker, stage_chunk=CHUNK,
+                     free_space=lambda path: self.free, tree_running=self.tree,
+                     remove=self.remover, **kwargs)
+
+    def item(self, src, name):
+        info = os.stat(src)
+        return {"src": src, "name": name, "size": info.st_size, "mtime": info.st_mtime}
+
+    def stage(self, host_name="Zażółć-Konstrukcja.rvt", link_name="Alpha-Architecture.rvt",
+              notes=None):
+        stage = {"items": [self.item(self.host, host_name)]}
+        if link_name:
+            stage["items"].append(self.item(self.link, link_name))
+        if notes is not None:
+            stage["notes"] = notes
+        return stage
+
+    def staged_job(self, stage=None, model_name="Zażółć-Konstrukcja.rvt",
+                   model_key="cloud:%s/%s" % (P1, M3), model_path=None):
+        stage = self.stage() if stage is None else stage
+        return rx_runner.Job(model_path or self.host, SAMPLE_INDEX, self.revit, self.out,
+                             stage=stage, model_name=model_name, model_key=model_key)
+
+    def plain_job(self, name):
+        return rx_runner.Job(os.path.join(self.tmp, "models", name + ".rvt"), SAMPLE_INDEX,
+                             self.revit, self.out)
+
+    def job(self, queue, job_id):
+        return [job for job in queue.jobs() if job.id == job_id][0]
+
+    def model_dir(self, job):
+        return os.path.join(job.paths.root, "model")
+
+    def poll_until(self, queue, job_id, states, limit=200):
+        for _ in range(limit):
+            queue.poll()
+            if self.job(queue, job_id).state in states:
+                return self.job(queue, job_id)
+        self.fail("job never reached %s" % (states,))
+
+    def exit(self, job, code=0, complete=True):
+        if complete:
+            open(os.path.join(job.paths.output, "bubble.json"), "w").close()
+            os.makedirs(os.path.join(job.paths.output, "Resource"))
+        with open(job.paths.console, "w") as handle:
+            handle.write(SUMMARY_OK)
+        handle = self.starter.handle_for(job.staged_model)
+        handle.exited = True
+        handle.code = code
+
+    # -- states, model path and copies
+
+    def test_queued_staging_running(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        self.assertEqual(self.job(queue, a).state, "queued")
+        self.assertFalse(os.path.exists(self.out), "nothing is created while queued")
+        queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual(job.state, "staging")
+        self.assertEqual(self.starter.started, [], "no process while copying")
+        self.assertTrue(os.path.isfile(os.path.join(self.model_dir(job), "stage.json")))
+        job = self.poll_until(queue, a, ("running",))
+        target = os.path.join(job.paths.root, "model", "Zażółć-Konstrukcja.rvt")
+        self.assertEqual(job.staged_model, target)
+        (spec, handle), = self.starter.started
+        self.assertEqual(spec.env["RX_MODEL"], target)
+        self.assertEqual(spec.env["RX_INDEX"], job.paths.index)
+        self.assertEqual(sha256(target), self.hashes[self.host])
+        self.assertEqual(sha256(os.path.join(self.model_dir(job), "Alpha-Architecture.rvt")),
+                         self.hashes[self.link])
+        self.assertEqual(job.stage_done, job.stage_total)
+        self.assertEqual(job.stage_total, os.path.getsize(self.host) + os.path.getsize(self.link))
+        self.exit(job)
+        queue.poll()
+        self.assertEqual(self.job(queue, a).state, "ok")
+
+    def test_progress_grows_and_each_poll_stays_within_its_budget(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        queue.poll()  # staging begins; the copy starts on this poll too
+        seen = []
+        while self.job(queue, a).state == "staging":
+            before = self.ticker.calls
+            start = self.ticker.now
+            queue.poll()
+            steps_time = self.ticker.now - start
+            # one reading at the start, then one per chunk: stops once 40 ms are used
+            # (the first reading itself advanced the ticker by one step)
+            self.assertLessEqual(steps_time - self.ticker.step,
+                                 rx_runner.STAGE_BUDGET + self.ticker.step + 1e-9)
+            self.assertLessEqual(self.ticker.calls - before, 4)
+            seen.append(self.job(queue, a).stage_done)
+        self.assertEqual(seen, sorted(seen))
+        self.assertGreater(len(seen), 2, "the copy is spread over several polls")
+
+    def test_a_slow_step_still_ends_the_poll_after_one_chunk(self):
+        self.ticker.step = 1.0
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        queue.poll()
+        done = []
+        for _ in range(3):
+            queue.poll()
+            done.append(self.job(queue, a).stage_done)
+        self.assertEqual(done, [CHUNK * 2, CHUNK * 3, CHUNK * 4][:len(done)])
+
+    def test_stage_record_has_names_sizes_and_cache_dates_only(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job(stage=self.stage(notes=["Link X is not in the cache."])))
+        job = self.poll_until(queue, a, ("running",))
+        with open(os.path.join(self.model_dir(job), "stage.json"), "rb") as handle:
+            raw = handle.read()
+        raw.decode("ascii")  # ASCII JSON, names escaped but kept as given
+        record = json.loads(raw.decode("ascii"))
+        self.assertEqual([item["name"] for item in record["items"]],
+                         ["Zażółć-Konstrukcja.rvt", "Alpha-Architecture.rvt"])
+        self.assertEqual([item["size"] for item in record["items"]],
+                         [os.path.getsize(self.host), os.path.getsize(self.link)])
+        expected = datetime.datetime.fromtimestamp(os.stat(self.host).st_mtime)
+        self.assertEqual(record["items"][0]["cache_date"],
+                         expected.strftime("%Y-%m-%d %H:%M:%S"))
+        self.assertEqual(record["notes"], ["Link X is not in the cache."])
+        self.assertNotIn(M3, raw.decode("ascii"), "no cache path or GUID in the record")
+        self.assertNotIn("src", record["items"][0])
+
+    # -- cancel
+
+    def test_cancel_during_staging_starts_no_process(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        b = queue.add(self.plain_job("b"))
+        queue.poll()
+        queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual(job.state, "staging")
+        self.assertGreater(job.stage_done, 0)
+        self.assertTrue(queue.cancel(a))
+        self.assertEqual(job.state, "cancelled")
+        self.assertIn("copying", job.result.message)
+        self.assertFalse(queue.cancel(a), "only once")
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"],
+                         "partial and finished copies are removed, the record stays")
+        self.assertTrue(os.path.isdir(job.paths.root), "the run folder stays")
+        queue.poll()
+        self.assertEqual(self.starter.started_models(), [self.plain_job("b").model_path])
+        self.assertEqual(self.job(queue, b).state, "running")
+        self.assertEqual(self.starter.killed, [])
+
+    def test_cancel_after_the_copy_while_held_starts_nothing(self):
+        hold = Hold(False)
+        queue = self.queue(hold=hold)
+        a = queue.add(self.staged_job())
+        queue.poll()
+        hold.value = True  # a foreign Extractor started while we were copying
+        for _ in range(50):
+            queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual(job.state, "staging")
+        self.assertTrue(job.stage_ready)
+        self.assertIs(queue.held, True)
+        self.assertEqual(self.starter.started, [], "the launch waits for the hold gate")
+        self.assertTrue(queue.cancel(a))
+        self.assertEqual(sorted(os.listdir(self.model_dir(job))), ["stage.json"])
+        hold.value = False
+        queue.poll()
+        self.assertEqual(self.starter.started, [])
+
+    def test_launch_starts_once_the_hold_lifts(self):
+        hold = Hold(False)
+        queue = self.queue(hold=hold)
+        a = queue.add(self.staged_job())
+        queue.poll()
+        hold.value = True
+        for _ in range(50):
+            queue.poll()
+        hold.value = False
+        queue.poll()
+        self.assertEqual(self.job(queue, a).state, "running")
+
+    def test_cancel_while_running_kills_and_removes_after_exit(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.assertTrue(queue.cancel(a))
+        self.assertEqual(len(self.starter.killed), 1)
+        self.exit(job, code=1, complete=False)
+        queue.poll()
+        self.assertEqual(job.state, "cancelled")
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
+
+    # -- failures
+
+    def test_a_changed_cache_file_fails_only_that_job(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        b = queue.add(self.plain_job("b"))
+        stage = self.job(queue, a).stage
+        stage["items"][1]["size"] += 1  # the link changed after planning (as seen by the plan)
+        job = self.poll_until(queue, a, ("failed",))
+        self.assertIn("The cache file changed while it was copied", job.result.message)
+        self.assertEqual(self.starter.started, [], "no process for the failed job")
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"],
+                         "the copies this job made are removed at once (no process ran)")
+        queue.poll()
+        self.assertEqual(self.job(queue, b).state, "running")
+        self.assertEqual(self.starter.started_models(), [self.plain_job("b").model_path])
+
+    def test_copy_failure_message_in_polish(self):
+        def run():
+            queue = self.queue()
+            job = self.staged_job()
+            a = queue.add(job)
+            job.stage["items"][0]["mtime"] += 5
+            return self.poll_until(queue, a, ("failed",)).result.message
+        with patch.dict(sys.modules, polish()):
+            message = run()
+        self.assertIn("Plik w pamięci podręcznej zmienił się podczas kopiowania", message)
+
+    def test_any_copy_error_fails_the_job_and_the_queue_goes_on(self):
+        def broken(plan, dest, chunk):
+            yield 1, 2, StageItem(self.host, "x.rvt", 2, 0)
+            raise IOError("disk full")
+        queue = self.queue(copier=broken)
+        a = queue.add(self.staged_job())
+        b = queue.add(self.plain_job("b"))
+        job = self.poll_until(queue, a, ("failed",))
+        self.assertIn("disk full", job.result.message)
+        queue.poll()
+        self.assertEqual(self.job(queue, b).state, "running")
+
+    def test_a_missing_source_fails_the_job(self):
+        queue = self.queue()
+        stage = self.stage()
+        stage["items"][1]["src"] = os.path.join(os.path.dirname(self.link), "missing.rvt")
+        a = queue.add(self.staged_job(stage=stage))
+        job = self.poll_until(queue, a, ("failed",))
+        self.assertEqual(self.starter.started, [])
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
+
+    def test_not_enough_space_fails_before_any_folder(self):
+        self.free = 10
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual(job.state, "failed")
+        self.assertIn("Not enough free disk space", job.result.message)
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_unknown_or_broken_free_space_lets_the_copy_go_on(self):
+        def broken(path):
+            raise OSError("no drive")
+        for free_space in (lambda path: None, broken):
+            queue = Queue(self.starter, FakeClock(), system_root=SYSTEM_ROOT,
+                          token=lambda: next(self.tokens), stage_clock=self.ticker,
+                          stage_chunk=CHUNK, free_space=free_space)
+            a = queue.add(self.staged_job())
+            queue.poll()
+            self.assertEqual(self.job(queue, a).state, "staging")
+            queue.cancel(a)
+
+    def test_launch_failure_after_the_copy_removes_the_copies(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        queue.poll()
+        target = os.path.join(self.model_dir(self.job(queue, a)), "Zażółć-Konstrukcja.rvt")
+        self.starter.fail_models.add(target)
+        job = self.poll_until(queue, a, ("failed",))
+        self.assertIn("cannot start", job.result.message)
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
+
+    def test_missing_extractor_fails_before_the_copy(self):
+        queue = self.queue()
+        job = self.staged_job()
+        job.revit_dir = os.path.join(self.tmp, "no revit")
+        a = queue.add(job)
+        queue.poll()
+        self.assertEqual(self.job(queue, a).state, "failed")
+        self.assertIsNone(self.job(queue, a).paths)
+
+    # -- same model, one at a time
+
+    def test_the_same_model_key_never_runs_twice(self):
+        queue = self.queue(max_parallel=2)
+        first = queue.add(self.staged_job())
+        second = queue.add(self.staged_job())
+        queue.poll()
+        self.assertEqual(self.job(queue, first).state, "staging")
+        self.assertEqual(self.job(queue, second).state, "queued", "same key while staging")
+        job = self.poll_until(queue, first, ("running",))
+        queue.poll()
+        self.assertEqual(self.job(queue, second).state, "queued", "same key while running")
+        self.exit(job)
+        self.poll_until(queue, second, ("staging", "running"))
+
+    def test_model_key_is_used_for_plain_jobs_too(self):
+        queue = self.queue(max_parallel=2)
+        a = self.plain_job("a")
+        a.model_key = "same"
+        b = self.plain_job("b")
+        b.model_key = "SAME"
+        queue.add(a)
+        queue.add(b)
+        queue.poll()
+        self.assertEqual([j.state for j in queue.jobs()], ["running", "queued"])
+
+    def test_staging_takes_the_only_slot(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        b = queue.add(self.plain_job("b"))
+        queue.poll()
+        self.assertEqual([j.state for j in queue.jobs()], ["staging", "queued"])
+        self.poll_until(queue, a, ("running",))
+        self.assertEqual(self.job(queue, b).state, "queued", "runs stay one at a time")
+
+    # -- clean-up after the run
+
+    def test_copies_are_removed_only_after_the_process_tree_exited(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        folder = self.model_dir(job)
+        other = os.path.join(folder, "written-by-the-extractor.txt")
+        open(other, "w").close()
+        queue.poll()
+        self.assertEqual(len(os.listdir(folder)), 4, "nothing is removed while running")
+        self.tree.value = True  # cmd.exe has exited, but an Extractor process is still listed
+        self.exit(job)
+        queue.poll()
+        self.assertEqual(job.state, "ok")
+        self.assertEqual(job.cleanup, "pending")
+        self.assertTrue(queue.busy(), "the timer keeps running for the clean-up")
+        self.assertEqual(len(os.listdir(folder)), 4)
+        self.tree.value = False
+        queue.poll()
+        self.assertEqual(job.cleanup, "done")
+        self.assertEqual(sorted(os.listdir(folder)),
+                         ["stage.json", "written-by-the-extractor.txt"],
+                         "only the copies this job staged are removed")
+        self.assertTrue(os.path.isfile(os.path.join(job.paths.output, "bubble.json")))
+        self.assertFalse(queue.busy())
+
+    def test_a_locked_copy_is_retried_and_then_reported(self):
+        self.remover.locked.add("Alpha-Architecture.rvt")
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.exit(job)
+        queue.poll()
+        self.assertEqual(job.cleanup, "pending")
+        self.assertEqual(sorted(os.listdir(self.model_dir(job))),
+                         ["Alpha-Architecture.rvt", "stage.json"])
+        with patch.object(rx_runner, "CLEANUP_SECONDS", 5):
+            for _ in range(10):
+                queue.poll()
+        self.assertEqual(job.cleanup, "incomplete")
+        self.assertEqual(job.state, "ok", "the export result itself stands")
+        self.assertIn("could not be deleted", job.result.message)
+        self.assertIn(self.model_dir(job), job.result.message)
+        self.assertFalse(queue.busy())
+
+    def test_a_locked_copy_removed_on_a_later_poll(self):
+        self.remover.locked.add("Alpha-Architecture.rvt")
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.exit(job)
+        queue.poll()
+        self.remover.locked.clear()
+        queue.poll()
+        self.assertEqual(job.cleanup, "done")
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
+
+    def test_clear_finished_does_not_stop_a_pending_clean_up(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.tree.value = True
+        self.exit(job)
+        queue.poll()
+        self.assertEqual(queue.clear_finished(), [a])
+        self.tree.value = False
+        queue.poll()
+        self.assertEqual(job.cleanup, "done")
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
+
+    def test_notes_are_added_to_the_result(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job(stage=self.stage(
+            notes=["Link Beta-MEP.rvt is not in the cache; exported without it."])))
+        job = self.poll_until(queue, a, ("running",))
+        self.exit(job)
+        queue.poll()
+        self.assertIn("Export finished", job.result.message)
+        self.assertIn("Link Beta-MEP.rvt is not in the cache", job.result.message)
+
+    def test_job_record_has_the_stage_fields(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        record = self.job(queue, a).as_dict()
+        self.assertEqual(record["model_name"], "Zażółć-Konstrukcja.rvt")
+        self.assertEqual(record["model_key"], "cloud:%s/%s" % (P1, M3))
+        self.assertEqual(len(record["stage"]["items"]), 2)
+        self.assertEqual(record["stage_done"], 0)
+        self.assertIsNone(record["cleanup"])
+
+    # -- validation in add()
+
+    def test_add_validates_the_stage(self):
+        def with_items(*changes):
+            stage = self.stage()
+            for index, key, value in changes:
+                if key is None:
+                    stage["items"][index] = value
+                else:
+                    stage["items"][index][key] = value
+            return stage
+        bad = {
+            "stage not a dict": dict(stage=[self.item(self.host, "a.rvt")]),
+            "no items": dict(stage={"items": []}),
+            "items not a list": dict(stage={"items": "x"}),
+            "entry not a dict": dict(stage=with_items((1, None, [self.link, "b.rvt", 1, 1]))),
+            "relative src": dict(stage=with_items((1, "src", "LinkedModels\\b.rvt"))),
+            "quote in src": dict(stage=with_items((1, "src", self.link + '"'))),
+            "line break in src": dict(stage=with_items((1, "src", self.link + "\n"))),
+            "folder in name": dict(stage=with_items((1, "name", "..\\b.rvt"))),
+            "not rvt": dict(stage=with_items((1, "name", "stage.json"))),
+            "same name": dict(stage=with_items((1, "name", "ZAŻÓŁĆ-konstrukcja.RVT"))),
+            "negative size": dict(stage=with_items((1, "size", -1))),
+            "bool size": dict(stage=with_items((1, "size", True))),
+            "text mtime": dict(stage=with_items((1, "mtime", "yesterday"))),
+            "missing key": dict(stage={"items": [{"src": self.host, "name": "a.rvt"}]}),
+            "notes not text": dict(stage=dict(self.stage(), notes=[1])),
+            "no model name": dict(model_name=None),
+            "model name is not the host": dict(model_name="Alpha-Architecture.rvt"),
+            "model path is not the host": dict(model_path=self.link),
+            "bad key": dict(model_key="a\nb"),
+            "empty key": dict(model_key=" "),
+        }
+        queue = self.queue()
+        for label, changes in bad.items():
+            with self.subTest(label):
+                with self.assertRaises(RunnerError):
+                    queue.add(self.staged_job(**changes))
+        plain = self.plain_job("a")
+        plain.model_name = "a.rvt"
+        with self.assertRaises(RunnerError, msg="model_name needs a stage"):
+            queue.add(plain)
+        self.assertEqual(queue.jobs(), [])
+
+    def test_add_copies_the_stage_as_plain_dicts(self):
+        queue = self.queue()
+        stage = self.stage()
+        job = self.staged_job(stage=stage)
+        queue.add(job)
+        self.assertIsNot(job.stage, stage)
+        stage["items"][0]["name"] = "changed.rvt"
+        self.assertEqual(job.stage["items"][0]["name"], "Zażółć-Konstrukcja.rvt")
+        self.assertTrue(all(type(item) is dict for item in job.stage["items"]))
+        self.assertEqual(job.stage["notes"], [])
+
+    def test_plain_jobs_never_touch_the_stage_clock(self):
+        def no_clock():
+            raise AssertionError("the stage clock is only read while copying")
+        queue = Queue(self.starter, FakeClock(), system_root=SYSTEM_ROOT,
+                      token=lambda: next(self.tokens), stage_clock=no_clock)
+        a = queue.add(self.plain_job("a"))
+        queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual(job.state, "running")
+        self.assertFalse(os.path.exists(os.path.join(job.paths.root, "model")))
+        self.assertIsNone(job.staged_model)
+        self.assertIsNone(job.cleanup)
 
 
 if __name__ == "__main__":

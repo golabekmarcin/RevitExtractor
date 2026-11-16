@@ -36,6 +36,16 @@ Amendments to the built `rx_runner` (`SPEC-export-runner.md` gets the same lines
 - `clean_path` becomes public.
 - `DotNetStarter.start(spec, show_window=False)` and `DotNetStarter.extractor_running()`.
 
+Amendments for `cloud-catalog` (2026-11-16, `SPEC-cloud-catalog.md`; runner side in `SPEC-export-runner.md`):
+- `submit` also accepts `"stage"` (`{"items": [{"src", "name", "size", "mtime"}], "notes": [...]}`), `"model_name"` and an optional `"model_key"`. A stage that is not an object, an `items` entry that is not an object, a `model_name` or `model_key` that is not text, or any `src` that `clean_path` refuses is reported as that job's error, and the other jobs are still added. `Queue.add` checks the rest.
+- A `staging` row: State "Copying" / "Kopiowanie"; Progress "Copying from the cache: {0} of {1} MB" / "Kopiowanie z pamięci podręcznej: {0} z {1} MB" (copied MB rounded down, total rounded up); elapsed time as a running row. After the copy, while `queue.held`: "Waiting" / "Oczekuje", "Copied; waiting: another Extractor is running on this computer." / "Skopiowano; oczekuje: na tym komputerze działa inny Extractor."
+- Cancel applies to a staging row; Open output folder opens its run folder; Open in Analyzer does not apply. The summary counts "copying: {0}" / "kopiowanie: {0}".
+- A cloud row's Model column is its `model_name`, never the GUID-named cache file. "Show model in File Explorer" points at the staged copy `<run>\model\<model_name>` (its folder once the copy is deleted), never into the cache, and is disabled before the copy starts.
+- Hint while a job copies: "Copying from the cache needs Revit to stay open. If Revit closes while copying from the cache, that export does not start and its copies stay in its run folder." (Polish in `rx_status.queue_hint`).
+- Timer: `STAGING_TICK_SECONDS` (0.25 s) while a job copies, then back to `TICK_SECONDS` (1 s). Each tick copies for at most 40 ms, so the UI thread stays about 84 % free. The interval is set only when the pace changes. Tunable after checklist item H5.
+- `open_session` passes `free_space=free_bytes` (`System.IO.DriveInfo`; `None` for a UNC path or a failed query, e.g. on .NET 8 without the assembly) and `tree_running=DotNetStarter.extractor_tree_running` to the queue.
+- No XAML change: the row texts come from `job_view`.
+
 ## Where the queue lives
 
 Facts from the pyRevit source, tag `v6.5.5.26237+2044` (the owner's version) and develop 7.1.0, read 2026-11-11. Read, not run: this machine has no pyRevit.
@@ -68,7 +78,7 @@ Layout as Q14, about 760 × 420: title and a summary line, the job list, a hint 
 | Waiting | Queued row: its position. When `queue.held`: "another Extractor is running on this computer". |
 | Result | The runner's `Result.message`. A failed row also says the logs are in the run folder. |
 | Footer | Cancel export, Open output folder, Open in Analyzer, Close. They act on the highlighted row and are enabled by `job_view`. |
-| Cancel | `queue.cancel(id)`, no confirmation: the run folder stays. |
+| Cancel | `queue.cancel(id)`, no confirmation: the run folder stays. For a cloud job, the runner deletes the copies it staged in `<run>\model\` (after the process tree has exited, or at once during staging); `stage.json` stays. |
 | Open output folder | `output` for an `ok` job, the run folder otherwise. Shell-open of an existing folder, no arguments. |
 | Clear finished | Footer button, enabled while any row is `ok`, `failed` or `cancelled` (not tied to the highlighted row). `Queue.clear_finished()` drops those jobs and returns their ids; running and queued jobs keep order and ids, ids are never reused, the hold gate is untouched. `Session.clear_finished` refreshes, and `show_views` removes rows the queue no longer has. Never deletes, moves or opens files or folders and never cancels. `Session._analyzers` is left alone: a started Analyzer server keeps its console. Errors go to the error line. |
 | Row context menu | Right-click selects the clicked row first (one `PreviewMouseRightButtonDown` handler on the list, no per-row handlers); over empty space no menu opens. "Show model in File Explorer": `explorer.exe /select,"<model>"` (`UseShellExecute` false, so no shell parsing; absolute path without quote or line break, file must exist); if the file is gone, its parent folder is shell-opened; if that is gone too, the error line says so. "Show export folder in File Explorer": the same folder as Open output folder, disabled while there is no run folder (queued row). Header texts are also set in `apply_resources`, because a ContextMenu is outside the visual tree. Logic: `rx_status.explorer_arguments` / `model_target`. |
@@ -104,6 +114,12 @@ The window has no text input (modeless WPF keyboard input inside Revit is unreli
 11. `rx_status.xaml` keys and `UI_TEXT` match both ways, with no literal label; the file loads in real WPF (`validate_xaml.ps1`).
 12. Runner amendments: a queued job waits while `hold()` is true and nothing of the queue runs, `held` is set, and it can still be cancelled; `tail` reads without writing; `start(show_window=True)` sets `CreateNoWindow` False.
 13. On this machine, `run_extractor_integration.ps1 -Analyzer` passes: after a real run it starts the `local` plan, `/api/session` lists exactly one export, and the script ends the Node process it started.
+14. Cloud amendment:
+    - `job_view` gives the staging and copied-but-held texts in English and Polish, the MB rounding, Cancel enabled, the model name in the Model column, and no GUID in any row text;
+    - `submit` takes `stage`, `model_name` and `model_key`, sends every `src` through `clean_path`, and reports a bad stage as one error while the other jobs are still added;
+    - with WPF stubbed, a staging row is shown and Cancel ends it as `cancelled` with no process started;
+    - the timer runs at `STAGING_TICK_SECONDS` while copying and returns to `TICK_SECONDS`;
+    - `open_session` wires `free_bytes` and `extractor_tree_running`.
 
 ## Commands
 
@@ -126,5 +142,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.exte
 - No Revit API call, and never `read_model`: that belongs to the button's modal command.
 - Nothing but JSON text crosses between engines.
 - Never print or log through pyRevit; never raise into the dispatcher.
-- Never write into a run folder. Never run `npm`. Never end a process this session did not start.
+- The window never writes into a run folder. The queue it owns deletes a cloud job's staged copies after the process tree has exited; that is the runner's single exception (`SPEC-export-runner.md`). Never run `npm`. Never end a process this session did not start.
 - No per-row subscriptions and no Python threads.
