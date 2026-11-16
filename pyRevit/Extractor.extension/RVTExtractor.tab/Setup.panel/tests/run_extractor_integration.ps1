@@ -341,7 +341,9 @@ $mode = if ($Cancel) { 'cancel' } elseif ($Parallel) { "parallel $Parallel" } el
 Write-Step "export-runner integration ($mode)"
 Write-Host "Revit:            $($revit.Year) - $($revit.Directory)"
 Write-Host "Extractor:        $exe"
-Write-Host "  ExtractorUtility.dll FileVersion: $((Get-Item -LiteralPath $utility -ErrorAction SilentlyContinue).VersionInfo.FileVersion)"
+$utilityItem = Get-Item -LiteralPath $utility -ErrorAction SilentlyContinue
+$utilityVersion = if ($utilityItem) { $utilityItem.VersionInfo.FileVersion } else { '(file not found in this Extractor folder)' }
+Write-Host "  ExtractorUtility.dll FileVersion: $utilityVersion"
 Write-Host "  RevitExtractor.exe ProductVersion: $((Get-Item -LiteralPath $exe).VersionInfo.ProductVersion)"
 Write-Host "Sample:           $sample"
 Write-Host "Output parent:    $OutputParent"

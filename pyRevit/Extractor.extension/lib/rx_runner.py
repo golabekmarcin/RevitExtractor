@@ -19,8 +19,11 @@ import re
 import uuid
 from collections import namedtuple
 
+import rx_dotnet
 from rx_i18n import tr
 from rx_index import SetupError, require_index_shape, to_json
+
+rx_dotnet.ensure_assemblies()   # .NET 8 (Revit 2025+): Process lives in its own assembly
 
 try:
     _INTEGER_TYPES = (int, long)  # IronPython 2.7 / CPython 2

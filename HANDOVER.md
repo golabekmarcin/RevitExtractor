@@ -2,7 +2,7 @@
 
 For any AI agent (Claude, Codex, ...) or person picking this up. **Read `CLAUDE.md` first** (project rules), then this file. Update it at each milestone and at the end of every session. Facts are dated; re-check repo state with `git status` / `git log`.
 
-Last updated: 2026-11-11, session 4 (Claude Code, with the repo owner Marcin Golabek).
+Last updated: 2026-11-16, session 5 (Claude Code, with the repo owner Marcin Golabek).
 The full earlier text (decisions Q1-Q29, D1-D13, established facts, verification record, gotchas) is in `specs/HANDOVER-archive.md`. Read its sections 5 and 6 before touching the runner, the cloud code or the tests.
 
 ## Goal
@@ -15,12 +15,14 @@ One pyRevit button (**Export**) runs the whole Extractor workflow from Revit wit
 - **Task 9 of `specs/plan-export-button.md` is done but uncommitted:** `tests/v1_test_kit.ps1`, the final `specs/v1-revit-test.md`, READMEs (Export button EN/PL, `Setup.panel`, `lib` EN/PL), `CLAUDE.md`, this file, `specs/HANDOVER-archive.md`.
 - **2026-11-12:** Open in Analyzer now shows a Node.js notice (EN/PL, "Don't show this again", flag in `%APPDATA%\RevitExtractor\preferences.json`) when the local Analyzer is unavailable; `Analyzer\Start-Analyzer.cmd` sets `NODE_USE_SYSTEM_CA=1` so a company proxy certificate works. 577 unit tests, 6 XAML PASS, Codex review clean. Not run in Revit: checklist item C14.
 - **Owner's Revit test (2022 + Extractor 2025.3), partial, 2026-11-12:** A1-A3, B1-B7, C1-C11 pass (C6 needed the `dumps_ascii` fix for Polish paths; C3 needed `Start-Analyzer.cmd` for npm). C12 open: after closing Revit the Extractor processes kept running (by design); still need how long they took and the `-Check` result. C13-C16 and Parts D-G not run. Added since: status-window right-click menu (C15), Clear finished (C16).
+- **2026-11-12 to 16, uncommitted until 2026-11-16:** the model window stays open after Export and queues more; Revit 2025 .NET 8 import fix (`lib/rx_dotnet.py`, no-op on 2022-2024); failed views hand-over keeps the job for retry (also under a shared index); the integration script no longer stops when `ExtractorUtility.dll` is missing. 663 unit tests OK, 6 XAML PASS. **None of it has run in Revit** (new checklist items C1/C17/F2/A2).
+- **Live-test guide:** `specs/v1-revit-test.html` is the interactive, offline, single-file replacement for the Markdown checklist (44 tests, structured fields, autosave, Save filled HTML, JSON export/import, review-before-export, synthetic data only). Workflow: `specs/v1-revit-test-two-computers.md`. The `.md` stays for reference. Browser-checked in headless Chrome (41 + 8 checks); import through the real file picker and clipboard copy not checked. Set **Expected baseline** (short commit id) on its Start page before carrying it over.
 - Checks on the main machine (Revit 2023, no pyRevit): **554 unit tests OK**; `validate_xaml.ps1` 5 PASS; `run_extractor_integration.ps1` normal PASS and `-Cancel` PASS (parallel FAIL, fixed pipe); kit `-Setup` and `-Check` run for real.
 - **Never run in Revit or IronPython.** Everything inside Revit is unverified: the greying, pickers, `BasicFileInfo.Extract` from the scan timer, the background open, the status window's hand-over between script engines, closing Revit during an export, Polish text in the real windows. That is the one test: `specs/v1-revit-test.md`.
 
 ## Reviews
 
-**No review is pending.** Codex reviewed the commits up to `f2597a7`; its fixes are in `7e68ebc`. This Task 9 diff (docs and a test script) has not had a Codex review: run `codex review --uncommitted` before the commit that completes the feature (global CLAUDE.md).
+**No review is pending.** Codex reviewed up to `f2597a7` (fixes in `7e68ebc`), and on 2026-11-16 the whole uncommitted tree (one P1: Save filled HTML kept the open review dialog and excluded notes; fixed and re-tested). Not re-reviewed after that small fix.
 
 Known **unfixed** Codex findings (accepted for v1, fix after the owner's test):
 - (a) `rx_runner`'s hold check races between two Revit sessions that start exports at the same moment, and it does not see `cmd.exe` before `RevitExtractor.exe` starts. Two Extractors could then start and collide on the fixed pipe.
@@ -28,8 +30,8 @@ Known **unfixed** Codex findings (accepted for v1, fix after the owner's test):
 
 ## Next steps
 
-1. Codex review of the uncommitted Task 9 diff; fix findings; commit locally (use `git commit -F <file>`).
-2. The one push of `mgo-changes` is pre-approved (owner, 2026-11-11). **Never push to `online` or upstream.** Then send the owner `specs/v1-revit-test.md`.
+1. Done 2026-11-16: committed and pushed `mgo-changes` (owner approved). **Never push to `online` or upstream.**
+2. The owner live-tests with `specs/v1-revit-test.html` (retest C1, C17, A2, F2; finish C12/C13, D6, F3, G1 decision) and returns the sanitized JSON or summary.
 3. After the owner's results: README Validation sections, `TESTED_YEARS` (add 2025 if Part F passes), `PARALLEL_VERIFIED` (only if item G2 passes; today the Extractor build 2024.0.x fails with two at once), the question about deleting the old buttons (Q12), and the two findings above.
 4. Nice to have after v1 (owner): Revit Server (`RSN://`) models; an always-enabled "Export status" button (D8 option B); parallel exports (if G2 fails: research per-run isolation around the fixed pipe `Main_Process_to_Client_0_Pipe`).
 

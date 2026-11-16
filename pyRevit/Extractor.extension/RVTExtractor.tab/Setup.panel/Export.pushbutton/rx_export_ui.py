@@ -169,26 +169,30 @@ class ModelRow(forms.Reactive):
 class ModelWindow(forms.WPFWindow):
     """Pick models, then Export (one job per ticked model) or Choose views… (one model).
 
-    After show_dialog(): `jobs` is None (nothing to export) or a list of {"model_path",
-    "index"}; `output_parent` is the chosen output folder; `fatal_error` is set when Revit did
-    not close a model read in the background (the window then closed without queuing).
+    Export hands the jobs over at once through `submit(jobs, output_parent)` (script.py) and the
+    window STAYS OPEN, so more exports can be queued. `submit` returns {"queued": n, "failed":
+    [positions in jobs], "warning": text} or raises with the error text. Closing the window hands
+    over nothing. After show_dialog(): `output_parent` is the chosen output folder; `fatal_error`
+    is set when Revit did not close a model read in the background (the window then closed).
     """
 
     def __init__(self, caps, settings, read_info, cache, read, save_settings, extractor_build="",
-                 scan=None, clock=None):
+                 scan=None, clock=None, submit=None):
         self._updating = True
         self._caps = caps
         self._read_info = read_info
         self._cache = cache
         self._read = read
         self._save_settings = save_settings
+        self._submit = submit
+        self._submitting = False
+        self._kept_jobs = {}            # _key(path) -> job from Choose views… that failed to queue
         self._scan = scan
         self._clock = clock or time.time
         self._roots = list(settings.get("roots") or [])
         self._max_parallel = settings.get("max_parallel", 1)
         self._shared_path = settings.get("shared_index_path") or ""
         self.output_parent = settings.get("output_parent") or ""
-        self.jobs = None
         self.fatal_error = None
         self._generator = None
         self._scan_errors = []
@@ -358,6 +362,7 @@ class ModelWindow(forms.WPFWindow):
         if self._generator is not None:
             keep |= self._keep          # ticks of rows the interrupted scan had not reached
         self._keep = keep
+        self._kept_jobs = {}            # the list is rebuilt: a retained views job is dropped
         self.stop_scan()
         self._rows.Clear()
         self._start_scan()
@@ -443,6 +448,10 @@ class ModelWindow(forms.WPFWindow):
     def _refresh_state(self):
         rows = list(self._rows)
         ticked = [row for row in rows if row.enabled and row.Checked]
+        ticked_keys = set(_key(row.path) for row in ticked)
+        for key in list(self._kept_jobs):
+            if key not in ticked_keys:
+                del self._kept_jobs[key]    # unticked: the views job is dropped
         count = tr("Selected: {0} / {1}{2}Shown: {3}{2}Local copies skipped: {4}",
                    "Zaznaczone: {0} / {1}{2}Widoczne: {3}{2}Pominięte kopie lokalne: {4}") \
             .format(len(ticked), len(rows), SEPARATOR, self._view.Count, self._local_copies)
@@ -572,20 +581,104 @@ class ModelWindow(forms.WPFWindow):
 
     @_guarded
     def _on_export(self, sender, args):
+        if self._submitting:
+            return                      # a second click while the hand-over runs
         models = self._ticked()
-        try:
-            shared = None
-            if self._shared_scope():
-                if not self._shared_path:
-                    raise SetupError(tr("Choose the shared index.json first (Choose…).",
-                                        "Najpierw wybierz wspólny plik index.json (Wybierz…)."))
-                shared = load_shared_index(self._shared_path)
-            jobs = plan_jobs(models, self._caps, shared)
-        except SetupError as error:
-            self._show_error(_error_text(error))
+        if not models:
             return
-        self.jobs = jobs
-        self.Close()
+        # A row whose Choose views… hand-over failed sends exactly that job again, so the shared
+        # index.json (checked only for the other rows) cannot block that retry.
+        fresh = [row for row in models if _key(row.path) not in self._kept_jobs]
+        planned = {}
+        if fresh:
+            try:
+                shared = None
+                if self._shared_scope():
+                    if not self._shared_path:
+                        raise SetupError(tr("Choose the shared index.json first (Choose…).",
+                                            "Najpierw wybierz wspólny plik index.json (Wybierz…)."))
+                    shared = load_shared_index(self._shared_path)
+                planned = dict(zip([_key(row.path) for row in fresh],
+                                   plan_jobs(fresh, self._caps, shared)))
+            except SetupError as error:
+                self._show_error(_error_text(error))
+                return
+        jobs = [self._kept_jobs.get(_key(row.path)) or planned[_key(row.path)] for row in models]
+        self._queue(jobs, models)
+
+    def _kept_note(self, models, positions):
+        """Error-line sentence when a retained views job stays for one of `positions`."""
+        if any(_key(models[position].path) in self._kept_jobs for position in positions):
+            return " " + tr("The selected views are kept; click Export to try again.",
+                            "Wybrane widoki zostały zachowane; kliknij Eksportuj, aby spróbować "
+                            "ponownie.")
+        return ""
+
+    def _queue(self, jobs, models, retain=False):
+        """Hand `jobs` (one per row in `models`, same order) to the queue and stay open.
+
+        The button is off while the hand-over runs, and `_submitting` drops a click that still
+        gets through. Success clears the ticks of the queued models and shows a confirmation on
+        the status line. A failure shows the error and keeps every tick so the user can retry;
+        with partial errors only the models that failed keep their tick. No modal alert.
+        `retain` (the job came from Choose views…) keeps a failed job for the next Export click;
+        a queued job is forgotten.
+        """
+        if self._submitting:
+            return False
+        self._submitting = True
+        self.export_btn.IsEnabled = False
+        self.views_btn.IsEnabled = False
+        try:
+            try:
+                if self._submit is None:
+                    raise RuntimeError(tr("The export queue is not available.",
+                                          "Kolejka eksportów jest niedostępna."))
+                result = self._submit(jobs, self.output_parent)
+            except Exception as error:
+                if retain:
+                    for row, job in zip(models, jobs):
+                        self._kept_jobs[_key(row.path)] = job
+                self._show_error((_error_text(error) or type(error).__name__) +
+                                 self._kept_note(models, range(len(models))))
+                return False
+            if not isinstance(result, dict):
+                result = {}
+            failed = set(number for number in (result.get("failed") or [])
+                         if isinstance(number, int))
+            for position, row in enumerate(models):
+                if position not in failed:
+                    row.set_quietly(False)
+                    self._kept_jobs.pop(_key(row.path), None)
+                elif retain:
+                    self._kept_jobs[_key(row.path)] = jobs[position]
+            self.models_lv.Items.Refresh()
+            if not failed:
+                self._reset_scope()
+            queued = result.get("queued")
+            if not isinstance(queued, int):
+                queued = len(jobs) - len(failed)
+            warning = result.get("warning") or ""
+            if warning:
+                warning += self._kept_note(models, sorted(failed))
+            self._show_error(warning)
+            self._set_status(tr("Exports queued: {0}. Close this window or queue more.",
+                                "Dodano eksportów do kolejki: {0}. Zamknij okno albo dodaj "
+                                "kolejne.").format(queued))
+            self._persist()
+            return True
+        finally:
+            self._submitting = False
+            self._refresh_state()
+
+    def _reset_scope(self):
+        """Back to the Extractor default scope; the remembered shared index.json file stays."""
+        self._updating = True
+        try:
+            self.default_scope_rb.IsChecked = True
+            self.shared_scope_rb.IsChecked = False
+        finally:
+            self._updating = False
 
     def _save_dir(self):
         if self._shared_path:
@@ -650,9 +743,7 @@ class ModelWindow(forms.WPFWindow):
             return
         job = getattr(view, "job", None)
         if job:
-            self.jobs = [job]
-            self.Close()
-            return
+            self._queue([job], [row], retain=True)
         self._resume(resume)
         self._refresh_state()
 

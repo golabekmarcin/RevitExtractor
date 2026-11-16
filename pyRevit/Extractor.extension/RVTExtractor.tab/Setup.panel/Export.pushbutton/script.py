@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""The one Export button: with no model open, pick models (and optionally views of one), then
-hand the exports to the status window's queue and return at once.
+"""The one Export button: with no model open, pick models (and optionally views of one). Export
+hands the jobs to the status window's queue at once and the model window stays open (modal, so
+Revit API calls keep the command's context); closing it ends the command and hands over nothing.
 
 Guards first, in this order: a model is open (refuse, bring up the status window if there is
 one), an unsupported Revit, a missing RevitExtractor.exe. Only JSON text goes to the session:
@@ -11,10 +12,14 @@ from __future__ import unicode_literals
 
 import json
 import os
+import re
 
 from System import AppDomain, Environment
-from System.Diagnostics import FileVersionInfo
 from pyrevit import DB, HOST_APP, forms, script
+
+import rx_dotnet
+
+rx_dotnet.ensure_assemblies()   # .NET 8 (Revit 2025+) needs some assemblies added first
 
 import rx_catalog
 import rx_reader
@@ -69,14 +74,24 @@ def _show_session():
 def _extractor_build(revit_dir):
     """File version of ExtractorUtility.dll, or "" when it cannot be read."""
     path = os.path.join(revit_dir, "RevitExtractor", "ExtractorUtility.dll")
-    try:
-        version = FileVersionInfo.GetVersionInfo(path).FileVersion
-    except Exception:
-        return ""
-    return ("%s" % version).strip() if version else ""
+    return rx_dotnet.file_version(path)
+
+
+def _failed_positions(errors):
+    """0-based positions of the jobs the session refused. It numbers them "Export 2: ..." or
+    "Eksport 2: ..." (rx_status); an error without a number (status window failure) fails none."""
+    positions = []
+    for line in errors:
+        match = re.match(r"^(?:Export|Eksport) (\d+):", line)
+        if match and int(match.group(1)) > 0:
+            positions.append(int(match.group(1)) - 1)
+    return sorted(set(positions))
 
 
 def _hand_over(jobs, revit_dir, output_parent, max_parallel):
+    """Hand the jobs to the status window's queue. Returns {"queued": n, "failed": [job
+    positions], "warning": text}. Raises RuntimeError with a ready, translated message when the
+    session cannot be reached or refuses; the model window shows it on its error line."""
     request = {"op": "submit", "jobs": [
         {"model_path": job["model_path"], "index": job["index"], "revit_dir": revit_dir,
          "output_parent": output_parent} for job in jobs]}
@@ -84,37 +99,30 @@ def _hand_over(jobs, revit_dir, output_parent, max_parallel):
         handler = open_session(max_parallel)
         answer = json.loads(handler(dumps_ascii(request)))
     except Exception as error:
-        try:
+        try:  # the full traceback goes to the pyRevit log; the window gets one line
             script.get_logger().exception("Could not hand the exports to the status window.")
         except Exception:
             pass
-        trace = ""
-        try:  # the first exception argument alone can be just "ascii": show where it came from
-            import traceback
-            trace = traceback.format_exc()
-            if not isinstance(trace, type("")):
-                trace = trace.decode("utf-8", "replace")
-            trace = "\n\n" + trace[-1500:]
-        except Exception:
-            pass
-        _alert(tr("The exports could not be handed to the status window.\n\n{0}",
-                  "Nie udało się przekazać eksportów do okna statusu.\n\n{0}")
-               .format(_error_text(error)) + trace)
-        return
+        raise RuntimeError(tr("The exports could not be handed to the status window: {0}",
+                              "Nie udało się przekazać eksportów do okna statusu: {0}")
+                           .format(_error_text(error)))
     if not isinstance(answer, dict) or answer.get("ok") is not True:
         reason = answer.get("error") if isinstance(answer, dict) else None
-        _alert(tr("The exports were not queued.\n\n{0}",
-                  "Eksporty nie zostały dodane do kolejki.\n\n{0}").format(reason or ""))
-        return
+        raise RuntimeError(tr("The exports were not queued: {0}",
+                              "Eksporty nie zostały dodane do kolejki: {0}").format(reason or ""))
     errors = [("%s" % item) for item in (answer.get("errors") or [])]
+    added = answer.get("added")
+    result = {"queued": len(added) if isinstance(added, list) else len(jobs) - len(errors),
+              "failed": _failed_positions(errors), "warning": ""}
     if errors:
-        _alert(tr("Some exports were not queued:\n\n{0}",
-                  "Niektóre eksporty nie zostały dodane do kolejki:\n\n{0}")
-               .format("\n".join(errors)))
+        result["warning"] = tr("Some exports were not queued: {0}",
+                               "Niektóre eksporty nie zostały dodane do kolejki: {0}"
+                               ).format("; ".join(errors))
     try:
         handler(json.dumps({"op": "show"}))
     except Exception:
         pass
+    return result
 
 
 def main():
@@ -164,9 +172,13 @@ def main():
         if save_settings(config, values):
             script.save_config()
 
+    def submit(jobs, output_parent):
+        return _hand_over(jobs, revit_dir, output_parent, settings["max_parallel"])
+
     try:
         window = ModelWindow(caps, settings, read_info, cache, read, save,
-                             extractor_build=_extractor_build(revit_dir), scan=rx_catalog.scan)
+                             extractor_build=_extractor_build(revit_dir), scan=rx_catalog.scan,
+                             submit=submit)
     except Exception as error:
         script.get_logger().exception("Could not open the export window.")
         _alert(tr("The export window could not be opened.\n\n{0}",
@@ -188,9 +200,6 @@ def main():
                   "wyeksportowane. Zamknij go w Revicie albo uruchom Revit ponownie przed "
                   "kolejnym eksportem.\n\n{0}").format(window.fatal_error))
         return
-    if not window.jobs:
-        return
-    _hand_over(window.jobs, revit_dir, window.output_parent, settings["max_parallel"])
 
 
 if __name__ == "__main__":

@@ -949,6 +949,10 @@ class StepClock(object):
         return value
 
 
+def forms_alerts():
+    return FORMS.alert.call_count
+
+
 @unittest.skipIf(EXPORT_UI is None, "rx_export_ui.py not built yet")
 class ModelWindowTests(unittest.TestCase):
     def setUp(self):
@@ -961,6 +965,10 @@ class ModelWindowTests(unittest.TestCase):
         self.saved = []
         self.cache = object()
         self.read_info = Mock(name="read_info")
+        self.submitted = []
+        self.submit_result = None
+        self.submit_error = None
+        self.submit_hook = None
 
     def read(self, path, workshared):
         self.reads.append((path, workshared, TIMERS[-1].IsEnabled, MOUSE.OverrideCursor,
@@ -969,6 +977,18 @@ class ModelWindowTests(unittest.TestCase):
             raise self.read_error
         return self.read_answer
 
+    def submit(self, jobs, output_parent):
+        self.submitted.append({"jobs": jobs, "output_parent": output_parent,
+                               "ticked": self.ticked(), "closed": self.window.closed,
+                               "export_enabled": self.window.export_btn.IsEnabled})
+        if self.submit_hook is not None:
+            self.submit_hook()
+        if self.submit_error is not None:
+            raise self.submit_error
+        if self.submit_result is not None:
+            return self.submit_result
+        return {"queued": len(jobs), "failed": [], "warning": ""}
+
     def open(self, rows=None, roots=(ROOT_M, ROOT_N), step=0.0, shared="", build="2025.3.0.12",
              caps=CAPS_2022, show=True):
         self.scan = FakeScan(sample_rows() if rows is None else rows)
@@ -976,7 +996,8 @@ class ModelWindowTests(unittest.TestCase):
                     "max_parallel": 1, "shared_index_path": shared}
         self.window = EXPORT_UI.ModelWindow(caps, settings, self.read_info, self.cache, self.read,
                                             self.saved.append, extractor_build=build,
-                                            scan=self.scan, clock=StepClock(step))
+                                            scan=self.scan, clock=StepClock(step),
+                                            submit=self.submit)
         if show:
             self.window.show_dialog()
         return self.window
@@ -1022,7 +1043,7 @@ class ModelWindowTests(unittest.TestCase):
         self.assertEqual(list(window.roots_lb.ItemsSource), [ROOT_M, ROOT_N])
         self.assertEqual(window.output_text.Text, os.path.join("D:\\", "Out"))
         self.assertTrue(window.default_scope_rb.IsChecked)
-        self.assertIsNone(window.jobs)
+        self.assertEqual(self.submitted, [])
 
     def test_header_leaves_out_an_unreadable_build(self):
         window = self.open(build="")
@@ -1199,14 +1220,15 @@ class ModelWindowTests(unittest.TestCase):
         self.click(self.by_name("e.rvt"))
         self.click(self.by_name("b.rvt"))
         self.fire("export_btn")
-        self.assertTrue(self.window.closed)
-        self.assertEqual([job["model_path"] for job in self.window.jobs],
+        self.assertFalse(self.window.closed, "the window stays open after Export")
+        self.assertEqual(len(self.submitted), 1)
+        jobs = self.submitted[0]["jobs"]
+        self.assertEqual([job["model_path"] for job in jobs],
                          [os.path.join(ROOT_M, "b.rvt"), os.path.join(ROOT_N, "e.rvt")])
-        for job in self.window.jobs:
+        for job in jobs:
             self.assertEqual(job["index"], build_index(CAPS_2022))
-        self.assertEqual(self.window.output_parent, os.path.join("D:\\", "Out"))
+        self.assertEqual(self.submitted[0]["output_parent"], os.path.join("D:\\", "Out"))
         self.assertEqual(self.reads, [], "a default-scope export reads no model")
-        self.assertIn("1", self.window.summary_text.Text)
 
     def test_summary_counts_older_models(self):
         self.open()
@@ -1229,7 +1251,7 @@ class ModelWindowTests(unittest.TestCase):
         self.click(self.by_name("a.rvt"))
         self.click(self.by_name("e.rvt"))
         self.fire("export_btn")
-        self.assertEqual([job["index"] for job in self.window.jobs], [default, default])
+        self.assertEqual([job["index"] for job in self.submitted[0]["jobs"]], [default, default])
 
     def test_shared_index_with_view_ids_and_two_models_is_refused(self):
         with_ids = os.path.join(self.tmp, "ids.json")
@@ -1243,12 +1265,12 @@ class ModelWindowTests(unittest.TestCase):
         self.click(self.by_name("a.rvt"))
         self.click(self.by_name("e.rvt"))
         self.fire("export_btn")
-        self.assertIsNone(self.window.jobs)
+        self.assertEqual(self.submitted, [])
         self.assertFalse(self.window.closed)
         self.assertIn("view", self.window.error_text.Text)
         self.click(self.by_name("e.rvt"))
         self.fire("export_btn")
-        self.assertEqual(len(self.window.jobs), 1)
+        self.assertEqual(len(self.submitted[0]["jobs"]), 1)
 
     def test_shared_scope_without_a_file_or_a_broken_file_is_refused(self):
         self.open()
@@ -1258,7 +1280,7 @@ class ModelWindowTests(unittest.TestCase):
         self.window._on_scope_changed(None, None)
         self.click(self.by_name("a.rvt"))
         self.fire("export_btn")
-        self.assertIsNone(self.window.jobs)
+        self.assertEqual(self.submitted, [])
         self.assertTrue(self.window.error_text.Text)
         broken = os.path.join(self.tmp, "broken.json")
         with open(broken, "w") as handle:
@@ -1267,6 +1289,334 @@ class ModelWindowTests(unittest.TestCase):
         self.fire("shared_choose_btn")
         self.assertIn("JSON", self.window.error_text.Text)
         self.assertEqual(self.saved, [], "a broken file is not remembered")
+
+    # -- the window stays open after Export (queue more without reopening)
+
+    def tick_two(self):
+        self.open()
+        self.tick()
+        self.click(self.by_name("a.rvt"))
+        self.click(self.by_name("e.rvt"))
+
+    def test_export_hands_over_at_once_and_the_window_stays_open(self):
+        self.tick_two()
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 1)
+        call = self.submitted[0]
+        self.assertEqual([job["model_path"] for job in call["jobs"]],
+                         [os.path.join(ROOT_M, "a.rvt"), os.path.join(ROOT_N, "e.rvt")])
+        self.assertFalse(call["closed"])
+        self.assertEqual(self.window.closes, 0)
+        self.assertFalse(self.window.closed)
+
+    def test_success_clears_ticks_and_shows_a_confirmation(self):
+        self.tick_two()
+        self.window.error_text.Text = "old error"
+        self.fire("export_btn")
+        self.assertEqual(self.ticked(), [])
+        self.assertEqual(self.window.error_text.Text, "")
+        self.assertIn("2", self.window.status_text.Text)
+        self.assertIn("queued", self.window.status_text.Text)
+        self.assertFalse(self.window.export_btn.IsEnabled, "nothing is ticked any more")
+        self.assertIn("No model selected", self.window.summary_text.Text)
+        self.assertEqual(forms_alerts(), 0, "no modal alert")
+
+    def test_success_keeps_folders_output_and_filters_and_saves_settings(self):
+        self.tick_two()
+        self.window._search.Text = "a"
+        self.fire("export_btn")
+        self.assertEqual(list(self.window.roots_lb.ItemsSource), [ROOT_M, ROOT_N])
+        self.assertEqual(self.window.output_parent, os.path.join("D:\\", "Out"))
+        self.assertEqual(self.window.output_text.Text, os.path.join("D:\\", "Out"))
+        self.assertEqual(self.window._search.Text, "a")
+        self.assertEqual(len(self.rows()), 5)
+        self.assertEqual(self.saved[-1]["max_parallel"], 1)
+        self.assertEqual(self.saved[-1]["roots"], [ROOT_M, ROOT_N])
+        self.assertEqual(self.saved[-1]["output_parent"], os.path.join("D:\\", "Out"))
+
+    def test_success_resets_the_shared_index_scope_but_remembers_the_file(self):
+        plain = os.path.join(self.tmp, "plain.json")
+        with open(plain, "w") as handle:
+            json.dump(launcher_default_index(), handle)
+        self.open(shared=plain)
+        self.tick()
+        self.window.default_scope_rb.IsChecked = False
+        self.window.shared_scope_rb.IsChecked = True
+        self.window._on_scope_changed(None, None)
+        self.click(self.by_name("a.rvt"))
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 1)
+        self.assertTrue(self.window.default_scope_rb.IsChecked)
+        self.assertFalse(self.window.shared_scope_rb.IsChecked)
+        self.assertEqual(self.window.shared_path_text.Text, plain)
+
+    def test_a_second_batch_can_be_queued_and_a_model_can_be_queued_twice(self):
+        self.tick_two()
+        self.fire("export_btn")
+        self.click(self.by_name("a.rvt"))
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 2)
+        self.assertEqual([job["model_path"] for job in self.submitted[1]["jobs"]],
+                         [os.path.join(ROOT_M, "a.rvt")])
+        self.assertEqual(self.submitted[0]["jobs"][0]["model_path"],
+                         self.submitted[1]["jobs"][0]["model_path"])
+
+    def test_a_failed_hand_over_shows_the_error_and_keeps_the_ticks(self):
+        self.tick_two()
+        self.submit_error = RuntimeError("The exports were not queued. no session")
+        self.fire("export_btn")
+        self.assertIn("no session", self.window.error_text.Text)
+        self.assertEqual(self.ticked(), ["a.rvt", "e.rvt"])
+        self.assertTrue(self.window.export_btn.IsEnabled, "retry is possible")
+        self.assertFalse(self.window.closed)
+        self.assertNotIn("queued:", self.window.status_text.Text)
+        self.assertEqual(forms_alerts(), 0)
+        self.submit_error = None
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 2)
+        self.assertEqual(self.ticked(), [])
+        self.assertEqual(self.window.error_text.Text, "")
+
+    def test_any_exception_from_submit_is_shown_not_raised(self):
+        self.tick_two()
+        self.submit_error = ValueError()
+        self.fire("export_btn")
+        self.assertTrue(self.window.error_text.Text)
+        self.assertEqual(self.ticked(), ["a.rvt", "e.rvt"])
+
+    def test_partial_errors_clear_the_queued_ticks_and_keep_the_failed_ones(self):
+        self.tick_two()
+        self.submit_result = {"queued": 1, "failed": [1],
+                              "warning": "Some exports were not queued: Export 2: bad path"}
+        self.fire("export_btn")
+        self.assertEqual(self.ticked(), ["e.rvt"])
+        self.assertIn("Export 2: bad path", self.window.error_text.Text)
+        self.assertIn("1", self.window.status_text.Text)
+        self.assertTrue(self.window.export_btn.IsEnabled)
+        self.assertFalse(self.window.closed)
+
+    def test_a_warning_without_failed_jobs_clears_the_ticks_and_is_shown(self):
+        self.tick_two()
+        self.submit_result = {"queued": 2, "failed": [], "warning": "The status window failed: x"}
+        self.fire("export_btn")
+        self.assertEqual(self.ticked(), [])
+        self.assertIn("status window failed", self.window.error_text.Text)
+
+    def test_a_double_click_queues_once(self):
+        self.tick_two()
+        self.submit_hook = lambda: self.fire("export_btn")   # a second click during the hand-over
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 1)
+        self.assertFalse(self.submitted[0]["export_enabled"], "the button is off during hand-over")
+        self.fire("export_btn")                              # a click after it: nothing ticked
+        self.assertEqual(len(self.submitted), 1)
+
+    def test_the_button_works_again_after_a_failure_during_a_double_click(self):
+        self.tick_two()
+        self.submit_error = RuntimeError("down")
+        self.submit_hook = lambda: self.fire("export_btn")
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 1)
+        self.submit_hook = None
+        self.submit_error = None
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 2)
+
+    def test_no_submit_callable_is_an_error_on_the_window(self):
+        self.tick_two()
+        self.window._submit = None
+        self.fire("export_btn")
+        self.assertTrue(self.window.error_text.Text)
+        self.assertEqual(self.ticked(), ["a.rvt", "e.rvt"])
+
+    def test_closing_hands_nothing_over(self):
+        self.tick_two()
+        self.fire("close_btn")
+        self.assertTrue(self.window.closed)
+        self.assertEqual(self.submitted, [])
+
+    def test_the_views_export_is_handed_over_and_the_list_stays(self):
+        self.read_answer = {"title": "a.rvt", "path": os.path.join(ROOT_M, "a.rvt"),
+                            "views_2d": [], "views_3d": []}
+        job = {"model_path": os.path.join(ROOT_M, "a.rvt"), "index": {"x": 1}}
+
+        class OkWindow(object):
+            def __init__(inner, *args, **kwargs):
+                inner.job = job
+
+            def show_dialog(inner):
+                pass
+
+        self.open()
+        self.tick()
+        self.click(self.by_name("a.rvt"))
+        with patch.object(EXPORT_UI, "ViewWindow", OkWindow):
+            self.fire("views_btn")
+        self.assertEqual(self.submitted[0]["jobs"], [job])
+        self.assertEqual(self.submitted[0]["output_parent"], os.path.join("D:\\", "Out"))
+        self.assertFalse(self.window.closed)
+        self.assertEqual(self.ticked(), [])
+        self.assertIn("queued", self.window.status_text.Text)
+        self.assertTrue(self.window.IsEnabled)
+        self.assertEqual(len(self.rows()), 5)
+
+    def test_a_failed_views_hand_over_keeps_the_tick_and_shows_the_error(self):
+        self.read_answer = {"title": "a.rvt", "path": os.path.join(ROOT_M, "a.rvt"),
+                            "views_2d": [], "views_3d": []}
+
+        class OkWindow(object):
+            def __init__(inner, *args, **kwargs):
+                inner.job = {"model_path": os.path.join(ROOT_M, "a.rvt"), "index": {}}
+
+            def show_dialog(inner):
+                pass
+
+        self.open()
+        self.tick()
+        self.click(self.by_name("a.rvt"))
+        self.submit_error = RuntimeError("no session")
+        with patch.object(EXPORT_UI, "ViewWindow", OkWindow):
+            self.fire("views_btn")
+        self.assertIn("no session", self.window.error_text.Text)
+        self.assertEqual(self.ticked(), ["a.rvt"])
+        self.assertFalse(self.window.closed)
+
+    # -- a failed views hand-over keeps the configured job for the retry
+
+    def failed_views_submit(self):
+        """a.rvt ticked, Choose views... produced a job, the hand-over failed. Returns the job."""
+        self.read_answer = {"title": "a.rvt", "path": os.path.join(ROOT_M, "a.rvt"),
+                            "views_2d": [], "views_3d": []}
+        job = {"model_path": os.path.join(ROOT_M, "a.rvt"), "index": {"picked": "views"}}
+
+        class OkWindow(object):
+            def __init__(inner, *args, **kwargs):
+                inner.job = job
+
+            def show_dialog(inner):
+                pass
+
+        self.open()
+        self.tick()
+        self.click(self.by_name("a.rvt"))
+        self.submit_error = RuntimeError("no session")
+        with patch.object(EXPORT_UI, "ViewWindow", OkWindow):
+            self.fire("views_btn")
+        self.submit_error = None
+        return job
+
+    def test_a_failed_views_hand_over_says_the_views_are_kept(self):
+        self.failed_views_submit()
+        self.assertIn("no session", self.window.error_text.Text)
+        self.assertIn("selected views are kept", self.window.error_text.Text)
+
+    def test_the_kept_views_note_is_polish_in_polish(self):
+        with patch.dict(sys.modules, polish_modules()):
+            self.failed_views_submit()
+            self.assertIn("Wybrane widoki", self.window.error_text.Text)
+
+    def test_export_after_a_failed_views_submit_sends_the_views_job_not_the_default(self):
+        job = self.failed_views_submit()
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 2)
+        self.assertEqual(self.submitted[1]["jobs"], [job])
+        self.assertEqual(self.ticked(), [])
+        self.assertEqual(self.window.error_text.Text, "")
+
+    def test_the_kept_job_is_used_for_its_row_only_next_to_other_ticked_rows(self):
+        job = self.failed_views_submit()
+        self.click(self.by_name("e.rvt"))
+        self.fire("export_btn")
+        sent = self.submitted[1]["jobs"]
+        self.assertEqual([item["model_path"] for item in sent],
+                         [os.path.join(ROOT_M, "a.rvt"), self.by_name("e.rvt").path])
+        self.assertEqual(sent[0], job)
+        self.assertEqual(sent[1]["index"], build_index(CAPS_2022))
+
+    def test_a_kept_job_is_retried_even_when_the_shared_index_is_missing(self):
+        job = self.failed_views_submit()
+        self.window.default_scope_rb.IsChecked = False
+        self.window.shared_scope_rb.IsChecked = True       # shared scope, but no file chosen
+        self.window._on_scope_changed(None, None)
+        self.fire("export_btn")
+        self.assertEqual(self.submitted[1]["jobs"], [job])
+        self.assertEqual(self.window.error_text.Text, "")
+
+    def test_shared_validation_still_applies_to_rows_without_a_kept_job(self):
+        self.failed_views_submit()
+        self.window.default_scope_rb.IsChecked = False
+        self.window.shared_scope_rb.IsChecked = True
+        self.window._on_scope_changed(None, None)
+        self.click(self.by_name("e.rvt"))                  # a second row, no kept job
+        self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 1)           # nothing new was handed over
+        self.assertTrue(self.window.error_text.Text)
+
+    def test_unticking_drops_the_kept_job(self):
+        self.failed_views_submit()
+        self.click(self.by_name("a.rvt"))              # untick
+        self.click(self.by_name("a.rvt"))              # tick again
+        self.fire("export_btn")
+        self.assertEqual(self.submitted[1]["jobs"][0]["index"], build_index(CAPS_2022))
+
+    def test_a_successful_hand_over_clears_the_kept_job(self):
+        self.failed_views_submit()
+        self.fire("export_btn")                        # queues the kept job
+        self.click(self.by_name("a.rvt"))
+        self.fire("export_btn")
+        self.assertEqual(self.submitted[2]["jobs"][0]["index"], build_index(CAPS_2022))
+
+    def test_a_rescan_drops_the_kept_job(self):
+        self.failed_views_submit()
+        self.fire("rescan_btn")
+        while TIMERS[-1].IsEnabled:
+            self.tick()
+        self.assertEqual(self.ticked(), ["a.rvt"])               # the tick survives
+        self.fire("export_btn")
+        self.assertEqual(self.submitted[1]["jobs"][0]["index"], build_index(CAPS_2022))
+
+    def test_a_partially_failed_views_job_is_kept_and_a_queued_one_is_not(self):
+        self.read_answer = {"title": "a.rvt", "path": os.path.join(ROOT_M, "a.rvt"),
+                            "views_2d": [], "views_3d": []}
+        job = {"model_path": os.path.join(ROOT_M, "a.rvt"), "index": {"picked": "views"}}
+
+        class OkWindow(object):
+            def __init__(inner, *args, **kwargs):
+                inner.job = job
+
+            def show_dialog(inner):
+                pass
+
+        self.open()
+        self.tick()
+        self.click(self.by_name("a.rvt"))
+        self.submit_result = {"queued": 0, "failed": [0], "warning": "Export 1: bad path"}
+        with patch.object(EXPORT_UI, "ViewWindow", OkWindow):
+            self.fire("views_btn")
+        self.assertIn("Export 1: bad path", self.window.error_text.Text)
+        self.assertIn("selected views are kept", self.window.error_text.Text)
+        self.submit_result = None
+        self.fire("export_btn")
+        self.assertEqual(self.submitted[1]["jobs"], [job])
+
+    def test_new_texts_follow_language(self):
+        english = {}
+        self.tick_two()
+        self.fire("export_btn")
+        english["queued"] = self.window.status_text.Text
+        self.window._submit = None
+        self.click(self.by_name("a.rvt"))
+        self.fire("export_btn")
+        english["unavailable"] = self.window.error_text.Text
+        with patch.dict(sys.modules, polish_modules()):
+            self.tick_two()
+            self.fire("export_btn")
+            self.assertNotEqual(english["queued"], self.window.status_text.Text)
+            self.assertIn("2", self.window.status_text.Text)
+            self.window._submit = None
+            self.click(self.by_name("a.rvt"))
+            self.fire("export_btn")
+            self.assertNotEqual(english["unavailable"], self.window.error_text.Text)
 
     # -- reading a model
 
@@ -1298,9 +1648,9 @@ class ModelWindowTests(unittest.TestCase):
         self.assertIs(snapshot, self.read_answer)
         self.assertIs(caps, CAPS_2022)
         self.assertIn("upgrades", note)
-        self.assertEqual(self.window.jobs, [{"model_path": os.path.join(ROOT_M, "b.rvt"),
-                                             "index": {"x": 1}}])
-        self.assertTrue(self.window.closed)
+        self.assertEqual(self.submitted[0]["jobs"], [{"model_path": os.path.join(ROOT_M, "b.rvt"),
+                                                      "index": {"x": 1}}])
+        self.assertFalse(self.window.closed, "the window stays open after the views export")
         self.assertIsNone(MOUSE.OverrideCursor)
 
     def test_back_from_the_view_window_keeps_the_list(self):
@@ -1320,7 +1670,7 @@ class ModelWindowTests(unittest.TestCase):
         with patch.object(EXPORT_UI, "ViewWindow", BackWindow):
             self.fire("views_btn")
         self.assertFalse(self.window.closed)
-        self.assertIsNone(self.window.jobs)
+        self.assertEqual(self.submitted, [])
         self.assertEqual(self.ticked(), ["a.rvt"])
         self.assertTrue(self.window.IsEnabled)
         self.assertIsNone(MOUSE.OverrideCursor)
@@ -1334,7 +1684,7 @@ class ModelWindowTests(unittest.TestCase):
         with patch.object(EXPORT_UI, "ViewWindow", Mock(side_effect=AssertionError("opened"))):
             self.fire("views_btn")
         self.assertEqual(self.window.error_text.Text, "The model file was not found.")
-        self.assertIsNone(self.window.jobs)
+        self.assertEqual(self.submitted, [])
         self.assertFalse(self.window.closed)
         self.assertIsNone(MOUSE.OverrideCursor)
         self.assertTrue(self.window.IsEnabled)
@@ -1355,7 +1705,7 @@ class ModelWindowTests(unittest.TestCase):
         self.click(self.by_name("a.rvt"))
         self.fire("views_btn")
         self.assertTrue(self.window.closed)
-        self.assertIsNone(self.window.jobs)
+        self.assertEqual(self.submitted, [])
         self.assertEqual(self.window.fatal_error, "Revit did not close the model.")
         self.assertIsNone(MOUSE.OverrideCursor)
         self.assertFalse(TIMERS[-1].IsEnabled, "the scan does not resume after Close")
@@ -1369,7 +1719,7 @@ class ModelWindowTests(unittest.TestCase):
         self.fire("views_btn")
         self.fire("export_btn")
         self.assertEqual(self.reads, [])
-        self.assertIsNone(self.window.jobs)
+        self.assertEqual(self.submitted, [])
 
     # -- settings
 
@@ -1634,28 +1984,42 @@ class SessionHandler(object):
 
 
 class FakeModelWindow(object):
+    """The real window calls submit(jobs, output_parent) while it is open; this one does it for
+    each batch in `batches` (a click on Export) from inside show_dialog."""
     made = []
-    jobs = None
+    batches = []
     fatal_error = None
     raise_on_show = None
+    output_override = None
+    ops_source = None
 
     def __init__(self, caps, settings, read_info, cache, read, save_settings, extractor_build="",
-                 scan=None):
+                 scan=None, submit=None):
         self.caps, self.settings, self.read_info = caps, settings, read_info
         self.cache, self.read, self.save_settings = cache, read, save_settings
         self.extractor_build = extractor_build
         self.scan = scan
-        self.output_parent = settings["output_parent"]
+        self.submit = submit
+        self.output_parent = FakeModelWindow.output_override or settings["output_parent"]
         self.shown = 0
         self.stopped = 0
+        self.results = []
+        self.submit_errors = []
+        self.ops_at_end_of_dialog = None
         FakeModelWindow.made.append(self)
 
     def show_dialog(self):
         self.shown += 1
         if FakeModelWindow.raise_on_show is not None:
             raise FakeModelWindow.raise_on_show
-        self.jobs = FakeModelWindow.jobs
+        for batch in FakeModelWindow.batches:
+            try:
+                self.results.append(self.submit(batch, self.output_parent))
+            except Exception as error:
+                self.submit_errors.append(str(error))
         self.fatal_error = FakeModelWindow.fatal_error
+        if FakeModelWindow.ops_source is not None:
+            self.ops_at_end_of_dialog = FakeModelWindow.ops_source()
 
     def stop_scan(self):
         self.stopped += 1
@@ -1684,7 +2048,9 @@ class ScriptTests(unittest.TestCase):
         self.appdata = os.path.join(self.tmp, "AppData")
         self.documents = os.path.join(self.tmp, "Documents")
         FakeModelWindow.made = []
-        FakeModelWindow.jobs = None
+        FakeModelWindow.batches = []
+        FakeModelWindow.output_override = None
+        FakeModelWindow.ops_source = lambda: getattr(self.handler, "ops", list)()
         FakeModelWindow.fatal_error = None
         FakeModelWindow.raise_on_show = None
         self.sessions = []
@@ -1729,12 +2095,15 @@ class ScriptTests(unittest.TestCase):
             "System": stub_module(
                 "System", AppDomain=types.SimpleNamespace(CurrentDomain=None),
                 Environment=types.SimpleNamespace(GetFolderPath=self.folder, SpecialFolder=special)),
-            "System.Diagnostics": stub_module("System.Diagnostics", FileVersionInfo=types.SimpleNamespace(
-                GetVersionInfo=file_version)),
             "rx_export_ui": stub_module("rx_export_ui", ModelWindow=FakeModelWindow),
             "rx_status_ui": stub_module("rx_status_ui", open_session=self.open_session),
         }
         module = legacy.load("export_script_under_test", "script.py", stubs, BUTTON)
+        # script.py reads the build through rx_dotnet (real System is absent on CPython).
+        info_class = types.SimpleNamespace(GetVersionInfo=file_version)
+        real = module.rx_dotnet.file_version
+        module.rx_dotnet.file_version = lambda path: real(path, importer=lambda: info_class)
+        self.addCleanup(setattr, module.rx_dotnet, "file_version", real)
         self.script_stub = script
         return module
 
@@ -1856,10 +2225,13 @@ class ScriptTests(unittest.TestCase):
         window.save_settings(values)
         self.assertEqual(self.config_saves, 1)
 
-    # -- hand-over (criterion 9)
+    # -- hand-over (criterion 9): the window calls submit while it is open
+
+    def queue(self, *batches):
+        FakeModelWindow.batches = [list(batch) for batch in batches]
 
     def test_jobs_go_to_the_session_as_json_then_show(self):
-        FakeModelWindow.jobs = [self.job("a.rvt"), self.job("b.rvt")]
+        self.queue([self.job("a.rvt"), self.job("b.rvt")])
         self.config.max_parallel = 3
         self.run_main()
         self.assertEqual(self.sessions, [3])
@@ -1875,37 +2247,108 @@ class ScriptTests(unittest.TestCase):
             self.assertEqual(job["output_parent"], os.path.join(self.documents, "RevitExtractor"))
             self.assertEqual(job["index"], build_index(CAPS_2022))
         self.assertEqual(self.alerts, [])
+        self.assertEqual(FakeModelWindow.made[0].results[0]["queued"], 1)
 
-    def test_errors_in_the_answer_are_shown(self):
-        FakeModelWindow.jobs = [self.job()]
-        self.handler.answer = {"ok": True, "added": [], "errors": ["Export 1: bad path"]}
+    def test_the_hand_over_happens_while_the_window_is_open(self):
+        self.queue([self.job()])
         self.run_main()
-        self.assertEqual(len(self.alerts), 1)
-        self.assertIn("Export 1: bad path", self.alerts[0][0])
+        window = FakeModelWindow.made[0]
+        self.assertEqual(window.ops_at_end_of_dialog, ["submit", "show"])
 
-    def test_a_refused_request_is_shown(self):
-        FakeModelWindow.jobs = [self.job()]
+    def test_the_output_folder_of_the_window_goes_with_the_jobs(self):
+        self.queue([self.job()])
+        FakeModelWindow.output_override = os.path.join("D:\\", "Elsewhere")
+        self.run_main()
+        submit = [r for r in self.handler.requests if r["op"] == "submit"][0]
+        self.assertEqual(submit["jobs"][0]["output_parent"], os.path.join("D:\\", "Elsewhere"))
+
+    def test_two_batches_use_one_session_and_both_are_submitted(self):
+        self.queue([self.job("a.rvt")], [self.job("b.rvt")])
+        self.run_main()
+        self.assertEqual(self.handler.ops(), ["submit", "show", "submit", "show"])
+
+    def test_main_never_hands_over_after_the_dialog(self):
+        with patch.object(self.module, "_hand_over", Mock()) as hand_over:
+            self.run_main()                       # window closed with nothing queued
+            hand_over.assert_not_called()
+            self.queue([self.job()])
+            self.run_main()                       # one batch: submitted once, by the window
+            self.assertEqual(hand_over.call_count, 1)
+
+    def test_errors_in_the_answer_come_back_as_a_warning_and_failed_numbers(self):
+        self.queue([self.job("a.rvt"), self.job("b.rvt")])
+        self.handler.answer = {"ok": True, "added": ["job-1"], "errors": ["Export 2: bad path"]}
+        self.run_main()
+        result = FakeModelWindow.made[0].results[0]
+        self.assertEqual(result["queued"], 1)
+        self.assertEqual(result["failed"], [1])
+        self.assertIn("Export 2: bad path", result["warning"])
+        self.assertEqual(self.alerts, [], "no modal alert")
+
+    def test_polish_error_numbers_are_understood_and_unnumbered_errors_fail_nothing(self):
+        self.queue([self.job("a.rvt"), self.job("b.rvt")])
+        self.handler.answer = {"ok": True, "added": ["job-1"],
+                               "errors": ["Eksport 1: zła ścieżka", "Błąd okna statusu: x"]}
+        self.run_main()
+        result = FakeModelWindow.made[0].results[0]
+        self.assertEqual(result["failed"], [0])
+        self.assertIn("Błąd okna statusu: x", result["warning"])
+
+    def test_a_refused_request_raises_with_the_reason(self):
+        self.queue([self.job()])
         self.handler.answer = {"ok": False, "error": "Nothing to export"}
         self.run_main()
-        self.assertIn("Nothing to export", self.alerts[0][0])
+        window = FakeModelWindow.made[0]
+        self.assertEqual(window.results, [])
+        self.assertIn("Nothing to export", window.submit_errors[0])
+        self.assertEqual(self.alerts, [])
 
-    def test_a_broken_answer_is_shown(self):
-        FakeModelWindow.jobs = [self.job()]
+    def test_a_broken_answer_raises(self):
+        self.queue([self.job()])
         self.handler = lambda text: "not json"
         self.run_main()
-        self.assertEqual(len(self.alerts), 1)
+        window = FakeModelWindow.made[0]
+        self.assertEqual(len(window.submit_errors), 1)
+        self.assertTrue(window.submit_errors[0])
+        self.assertEqual(self.alerts, [])
+
+    def test_a_session_that_cannot_be_opened_raises(self):
+        self.queue([self.job()])
+
+        def broken(max_parallel):
+            raise RuntimeError("no engine")
+        self.module.open_session = broken
+        self.run_main()
+        self.assertIn("no engine", FakeModelWindow.made[0].submit_errors[0])
+
+    def test_failure_texts_follow_language(self):
+        self.queue([self.job()])
+        self.handler.answer = {"ok": False, "error": "x"}
+        self.run_main()
+        english = FakeModelWindow.made[0].submit_errors[0]
+        FakeModelWindow.made = []
+        with patch.dict(sys.modules, polish_modules()):
+            self.run_main()
+        self.assertNotEqual(english, FakeModelWindow.made[0].submit_errors[0])
 
     def test_nothing_ticked_creates_no_session(self):
         self.run_main()
         self.assertEqual(self.sessions, [])
         self.assertEqual(self.alerts, [])
 
-    def test_close_failed_is_shown_and_nothing_is_queued(self):
+    def test_close_failed_is_shown_and_nothing_more_is_queued(self):
         FakeModelWindow.fatal_error = "Revit did not close the model."
-        FakeModelWindow.jobs = [self.job()]
         self.run_main()
         self.assertEqual(self.sessions, [])
         self.assertIn("Revit did not close the model.", self.alerts[0][0])
+
+    def test_close_failed_after_an_earlier_batch_keeps_that_batch_and_alerts(self):
+        self.queue([self.job()])
+        FakeModelWindow.fatal_error = "Revit did not close the model."
+        self.run_main()
+        self.assertEqual(self.handler.ops(), ["submit", "show"])
+        self.assertIn("Revit did not close the model.", self.alerts[0][0])
+        self.assertEqual(FakeModelWindow.made[0].stopped, 1)
 
     def test_a_window_error_is_shown_and_the_scan_stopped(self):
         FakeModelWindow.raise_on_show = RuntimeError("xaml broke")

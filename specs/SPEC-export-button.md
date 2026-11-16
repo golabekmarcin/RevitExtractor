@@ -4,7 +4,7 @@ Module of `SPEC.md`. Depends on: every other v1 module. Status: **written under 
 
 ## Objective
 
-The one ribbon button (Q1, Q3): with no document open, the user picks one or more models, optionally picks views of one model, and starts the export. The command returns at once and the status window takes over. It closes v1 (`SPEC.md` criteria 1–10).
+The one ribbon button (Q1, Q3): with no document open, the user picks one or more models, optionally picks views of one model, and starts the export. Export hands the jobs to the status window's queue at once and the model window **stays open** (modal), so more exports can be queued without reopening the button; closing the window ends the command and hands nothing over. It closes v1 (`SPEC.md` criteria 1–10).
 
 ## Files (`RVTExtractor.tab/Setup.panel/Export.pushbutton/`)
 
@@ -52,6 +52,15 @@ pyRevit 6.5.5 passes a `rule` through unchanged (`genericcomps._parse_context_di
 | Counter | selected / all, shown, skipped local copies, folders that could not be read |
 | Scope | Extractor default scope, or Shared index.json with Choose… |
 | Footer | Rescan, summary and status, Close (Esc), Choose views…, Export (primary, Enter; at least one ticked) |
+
+**Export keeps the window open.** `script.py` passes `submit(jobs, output_parent)`, which wraps `_hand_over` (`open_session`, `dumps_ascii` request, answer handling). The window stays modal (`show_dialog`, not modeless, no `ExternalEvent`): `rx_reader` and `BasicFileInfo` need the command's Revit API context. On Export (and on Export from the view window) the window builds the jobs as before and calls `submit` at once; `main()` calls nothing after `show_dialog`, so Close or X hands nothing over.
+- `submit` returns `{"queued": n, "failed": [positions in jobs], "warning": text}`, or raises `RuntimeError` with a translated message (session unreachable, answer not ok).
+- Success: the ticks of the queued models are cleared, the scope returns to the Extractor default (the remembered shared `index.json` file stays), the status line says "Exports queued: n. Close this window or queue more.", and the settings are saved (including `max_parallel`). Folder list, output folder, search and column filters are untouched. After the view window the list is shown again and the scan resumes.
+- Failure: the error goes to the error line (no modal alert) and every tick is kept, so the user can retry. Partial errors ("Some exports were not queued: …", from the session's "Export N: …" lines): the ticks of the queued models are cleared, the failed ones keep theirs and the scope is not reset, so a retry sends only those.
+- Double click: the Export and Choose views… buttons are disabled during the hand-over and a `_submitting` flag drops a click that still arrives; the selection is cleared only after success. A model may be queued again later (no duplicate blocking).
+- Failed views hand-over: the view window is already closed, so the job it made is retained per model row (`_kept_jobs`, keyed by path). Export for a ticked row with a retained job sends exactly that job, never the default or shared index. The job is dropped when the row is unticked, queued, or the list is rebuilt (Rescan); the error line adds "The selected views are kept; click Export to try again." (EN/PL).
+- Revit 2025+ (.NET 8) **UNVERIFIED**: `lib/rx_dotnet.py` `ensure_assemblies()` (no-op below .NET 5) adds `System.Diagnostics.Process` (Process, ProcessStartInfo), `System.Diagnostics.FileVersionInfo` (FileVersionInfo), `System.Net.Primitives` (IPAddress), `System.Net.Sockets` (TcpListener), `System.ObjectModel` (ObservableCollection) with `clr.AddReference`, guarded; `script.py`, `rx_runner` and `rx_status_ui` call it before those types are imported, and file versions go through `rx_dotnet.version_info`/`file_version`. Never run on a .NET 8 Revit; the owner confirms.
+- Modal caveat: while the model window is open WPF disables input on the status window. It still updates; the user closes the model window to use Cancel export, Clear finished or the row menu.
 
 **Reading a model.** `script.py` passes `read(path, workshared)`, which calls `rx_reader.read_model(app, DB, path, caps, workshared)`. `workshared` comes from the catalog (`Row.workshared`, a new field; `None` when unknown). The window shows a wait line, forces one render, calls `read`, and restores the cursor in `finally`. A `ReadError` goes to the error line. After `close_failed` the window closes without queuing anything, and the next click hits the first guard.
 
@@ -102,7 +111,7 @@ Used again, cited in `SPEC-model-reader.md` and `SPEC-model-catalog.md`: `Applic
 6. Model window with WPF stubbed: disabled rows cannot be ticked by click, Space or Select all shown; local copies are counted and not listed; the scan is time-sliced and its generator is closed on Rescan and on close; Choose views… needs exactly one tick and Export at least one; no row subscription.
 7. Reading: `read` gets the row's path and `workshared`; a `ReadError` is shown and nothing is queued; `close_failed` closes the window.
 8. View window with WPF stubbed: the slice 1 window tests pass against it (ticking, search, type filter, lazy preview, invalid selection disables Export and Save); ids follow `caps.view_key`; format and metadata controls follow `caps`; Export returns one job.
-9. Hand-over: the request is JSON text with plain values only; errors in the answer are shown; the command ends without waiting for the export.
+9. Hand-over: the request is JSON text with plain values only; `submit` is called by the window while it is open and `main()` hands over nothing after `show_dialog`; an answer that is not ok raises with the reason and per-job errors come back as `failed` positions and a warning; the window stays open after Export, clears the queued ticks and shows a confirmation, shows the error and keeps the ticks on failure, keeps the failed ticks on partial errors, queues once on a double click, and queues the same model twice when asked.
 10. `tick_targets` and `toggled_state` equal the legacy ones while the old button exists.
 11. Text: the keys of both XAML files and `UI_TEXT` match both ways, no literal label; every runtime string goes through `tr`.
 12. AST tests: `rx_export_logic.py` and `rx_export_text.py` are pure; `rx_export_ui.py` imports no `Autodesk` and no `rx_reader`; every new file passes the IronPython syntax guard; no new module name exists in either old bundle.

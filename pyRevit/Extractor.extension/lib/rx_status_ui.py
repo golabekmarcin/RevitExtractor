@@ -18,6 +18,7 @@ import datetime
 import os
 import re
 
+import rx_dotnet
 from rx_i18n import tr
 from rx_runner import CANCELLED, FAILED, OK, QUEUED, RUNNING, DotNetStarter, Queue, effective_parallel
 from rx_status import (WEBSITE_URL, SessionCore, analyzer_plan, explorer_arguments,
@@ -32,6 +33,8 @@ except Exception:  # outside pyRevit (CPython tests): only the helpers are usabl
 
 _WINDOW_BASE = forms.WPFWindow if forms is not None else object
 _ROW_BASE = forms.Reactive if forms is not None else object
+
+rx_dotnet.ensure_assemblies()   # .NET 8 (Revit 2025+): add assemblies before the lazy imports
 
 LIB_DIR = os.path.dirname(os.path.abspath(__file__))
 XAML_PATH = os.path.join(LIB_DIR, "rx_status.xaml")
@@ -129,8 +132,11 @@ def free_port():
 
 def node_major(path):
     """Major version from node.exe's file version; no process is started."""
-    from System.Diagnostics import FileVersionInfo
-    return int(FileVersionInfo.GetVersionInfo(path).FileMajorPart)
+    info = rx_dotnet.version_info(path)
+    if info is None:
+        raise ValueError(tr("The file version of {0} could not be read.",
+                            "Nie udało się odczytać wersji pliku {0}.").format(path))
+    return int(info.FileMajorPart)
 
 
 def _plan_analyzer(output):
