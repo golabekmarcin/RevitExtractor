@@ -22,6 +22,7 @@ import rx_dotnet
 rx_dotnet.ensure_assemblies()   # .NET 8 (Revit 2025+) needs some assemblies added first
 
 import rx_catalog
+import rx_cloud
 import rx_reader
 from rx_capabilities import for_revit
 from rx_export_logic import CONFIG_SECTION, load_settings, save_settings
@@ -34,6 +35,7 @@ from rx_status_ui import open_session
 
 CACHE_FOLDER = "RevitExtractor"            # under %APPDATA% (D2); holds model paths
 CACHE_FILE = "catalog-cache.json"
+CLOUD_FILE = "cloud-catalog.json"          # names, project selection and link lists of the Cloud source
 
 
 def _error_text(error):
@@ -88,13 +90,23 @@ def _failed_positions(errors):
     return sorted(set(positions))
 
 
+def _job_request(job, revit_dir, output_parent):
+    """One job of the submit request. A cloud job also carries its staging plan, the real file
+    name of the model and the catalog key (all plain JSON values)."""
+    entry = {"model_path": job["model_path"], "index": job["index"], "revit_dir": revit_dir,
+             "output_parent": output_parent}
+    for name in ("stage", "model_name", "model_key"):
+        if job.get(name) is not None:
+            entry[name] = job[name]
+    return entry
+
+
 def _hand_over(jobs, revit_dir, output_parent, max_parallel):
     """Hand the jobs to the status window's queue. Returns {"queued": n, "failed": [job
     positions], "warning": text}. Raises RuntimeError with a ready, translated message when the
     session cannot be reached or refuses; the model window shows it on its error line."""
     request = {"op": "submit", "jobs": [
-        {"model_path": job["model_path"], "index": job["index"], "revit_dir": revit_dir,
-         "output_parent": output_parent} for job in jobs]}
+        _job_request(job, revit_dir, output_parent) for job in jobs]}
     try:
         handler = open_session(max_parallel)
         answer = json.loads(handler(dumps_ascii(request)))
@@ -165,8 +177,9 @@ def main():
     def read_info(path):
         return rx_catalog.read_basic_info(path, DB.BasicFileInfo)
 
-    def read(path, workshared):
-        return rx_reader.read_model(app, DB, path, caps, workshared)
+    def read(path, workshared, links=False):
+        extra = {"links": True} if links else {}
+        return rx_reader.read_model(app, DB, path, caps, workshared, **extra)
 
     def save(values):
         if save_settings(config, values):
@@ -175,10 +188,16 @@ def main():
     def submit(jobs, output_parent):
         return _hand_over(jobs, revit_dir, output_parent, settings["max_parallel"])
 
+    cloud = None
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        cloud = {"folders": rx_cloud.revit_folders(local_appdata, caps.year),
+                 "memory": rx_cloud.Memory(os.path.join(appdata, CACHE_FOLDER, CLOUD_FILE)).load()}
+
     try:
         window = ModelWindow(caps, settings, read_info, cache, read, save,
                              extractor_build=_extractor_build(revit_dir), scan=rx_catalog.scan,
-                             submit=submit)
+                             submit=submit, cloud=cloud)
     except Exception as error:
         script.get_logger().exception("Could not open the export window.")
         _alert(tr("The export window could not be opened.\n\n{0}",

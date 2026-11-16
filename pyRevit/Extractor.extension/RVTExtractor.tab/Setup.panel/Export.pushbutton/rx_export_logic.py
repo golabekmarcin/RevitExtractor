@@ -11,6 +11,7 @@ import io
 import json
 
 from rx_catalog import normalize_roots
+from rx_cloud import model_key, plan_stage
 from rx_i18n import tr
 from rx_index import SetupError, build_index, require_index_shape
 from rx_runner import default_output_parent
@@ -181,4 +182,74 @@ def plan_jobs(models, caps, shared_index=None):
     for path in paths:
         index = build_index(caps) if shared_index is None else copy.deepcopy(shared_index)
         jobs.append({"model_path": path, "index": index})
+    return jobs
+
+
+# --- cloud jobs -------------------------------------------------------------------------------
+
+def link_key(row):
+    """The key of a cloud row's link list in rx_cloud.Memory (not the row key)."""
+    return model_key(row.project_guid, row.model_guid)
+
+
+def stage_dict(plan):
+    """A StagePlan as plain dicts, the form Job.stage and the status session take:
+    {"items": [{"src", "name", "size", "mtime"}], "notes": [text]}."""
+    return {"items": [{"src": item.src, "name": item.name, "size": item.size,
+                       "mtime": item.mtime} for item in plan.items],
+            "notes": list(plan.notes)}
+
+
+def _host_only_note():
+    return tr("The links of this model were not read; it is exported without them.",
+              "Linków tego modelu nie odczytano; model wyeksportowano bez nich.")
+
+
+def plan_cloud_job(row, index, cache_files, memory, links=None, host_only=False):
+    """One job for a cloud row (a rx_cloud.CloudRow): the cache copy of the model is the job's
+    model_path, `stage` lists what the runner copies into the run folder (host first), and
+    `model_name` is the real file name (never the GUID-named cache file). `links` is the host's
+    link list (None: from `memory` while the host copy is unchanged); `host_only` stages the host
+    alone, with a note. Raises SetupError for a greyed row, rx_cloud.StageError when the model
+    name cannot be a file name."""
+    if getattr(row, "enabled", True) is not True:
+        raise SetupError(tr("A model that cannot be exported is selected.",
+                            "Zaznaczono model, którego nie można wyeksportować."))
+    plan = plan_stage(row, [] if host_only else links, cache_files, memory)
+    stage = stage_dict(plan)
+    if host_only:
+        stage["notes"].append(_host_only_note())
+    return {"model_path": row.cache_path, "model_name": stage["items"][0]["name"],
+            "model_key": row.key, "index": index, "stage": stage}
+
+
+def plan_cloud_jobs(rows, caps, cache_files, memory, link_lists=None, host_only=(),
+                    shared_index=None):
+    """One cloud job per ticked, enabled CloudRow, in the given order: the shape of plan_jobs plus
+    "model_name", "model_key" and "stage" (see plan_cloud_job).
+
+    `link_lists` maps a row's key to its link list; a row without an entry takes the list from
+    `memory`. `host_only` holds the keys of rows exported without their links. The index rules are
+    plan_jobs's: default scope gives each job build_index(caps), a shared index is copied, and a
+    shared index with view ids needs exactly one model. Raises SetupError, StageError.
+    """
+    rows = list(rows or ())
+    if not rows:
+        raise SetupError(tr("Select at least one model.", "Zaznacz co najmniej jeden model."))
+    for row in rows:
+        if getattr(row, "enabled", True) is not True:
+            raise SetupError(tr("A model that cannot be exported is selected.",
+                                "Zaznaczono model, którego nie można wyeksportować."))
+    if shared_index is not None and len(rows) > 1 and index_has_view_ids(shared_index):
+        raise SetupError(tr(
+            "This index.json selects views, and view ids belong to one model. Select one model "
+            "or use an index.json without views.",
+            "Ten index.json wskazuje widoki, a identyfikatory widoków należą do jednego modelu. "
+            "Zaznacz jeden model albo użyj pliku index.json bez widoków."))
+    link_lists = link_lists or {}
+    jobs = []
+    for row in rows:
+        index = build_index(caps) if shared_index is None else copy.deepcopy(shared_index)
+        jobs.append(plan_cloud_job(row, index, cache_files, memory, link_lists.get(row.key),
+                                   row.key in host_only))
     return jobs
