@@ -70,7 +70,7 @@ ol,ul{padding-left:22px;margin:6px 0}li{margin:3px 0}
    All text from users or imported files is inserted with textContent only (never as HTML). */
 
 var GUIDE = { schema: 'rx-v1-live-test', schemaVersion: 1, version: '1.0.0', date: '2026-11-16',
-  baseline: '880cb3f plus uncommitted working-tree changes (window stays open, Revit 2025 .NET fix, views-retry fix); origin/mgo-changes was c2829ab. Not testable from git until committed and pushed.' };
+  baseline: 'branch mgo-changes; the exact commit is the Expected baseline set on the Start page' };
 var STATUSES = ['NOT TESTED', 'PASS', 'FAIL', 'BLOCKED', 'INCONCLUSIVE'];
 var GLYPH = { 'NOT TESTED': '\u00b7', 'PASS': '\u2713', 'FAIL': '\u2717', 'BLOCKED': '\u2298', 'INCONCLUSIVE': '?' };
 var SCLASS = { 'NOT TESTED': 'NT', 'PASS': 'PASS', 'FAIL': 'FAIL', 'BLOCKED': 'BLOCKED', 'INCONCLUSIVE': 'INCONCLUSIVE' };
@@ -579,7 +579,7 @@ function homeView() {
   m.append(h('h3', { class: 'sec' }, 'How to test on my second computer'));
   var steps = [
     ['Computer A (development computer)', [
-      '**Fix the baseline.** The code to test includes uncommitted work. Commit it (and, with the owner\'s approval, push `mgo-changes`), then run `git rev-parse --short HEAD` and type the result into "Expected baseline" above.',
+      '**Fix the baseline.** Commit it (and, with the owner\'s approval, push `mgo-changes`), then run `git rev-parse --short HEAD` and type the result into "Expected baseline" above.',
       'Run `git status` and confirm the tree is clean. A dirty tree is not a fixed baseline.',
       '**Prepare the files to carry:** this HTML (use "Save filled HTML" so the baseline is stored in it) and the repository at that commit. Either the clone is fetched from the fork on Computer B, or make a zip with `git archive --format=zip -o RevitExtractor-<commit>.zip <commit>` and move it with a company-approved method. The repository is public code; no client file is needed.',
       'Do not copy any client model, `test-*` folder, pyRevit config or `catalog-cache.json`.']],
