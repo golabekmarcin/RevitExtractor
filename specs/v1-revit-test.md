@@ -1,6 +1,6 @@
 # v1 Revit test: the owner's one session
 
-One session, about 90 minutes, on the Revit 2022 + pyRevit machine. Part F (10 minutes) is on the machine with Revit 2025. Answer with the item number and PASS, FAIL or a note, for example `C6 FAIL: second window appeared`. Results come back privately, never through git.
+One session, about two hours (Part H, the Cloud source, adds 30 minutes and needs your ACC model), on the Revit 2022 + pyRevit machine. Part F (10 minutes) is on the machine with Revit 2025. Answer with the item number and PASS, FAIL or a note, for example `C6 FAIL: second window appeared`. Results come back privately, never through git.
 
 **Everything below is unverified inside Revit.** The unit tests and the real Extractor runs on the agent's machine never ran IronPython, pyRevit or Revit's API. This session is the first time the code runs there, so a first-click failure (Part A) is possible and cheap to find: Part A comes first and takes minutes.
 
@@ -479,10 +479,63 @@ or\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\run_extractor_
 
 Both scripts are in `pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\`.
 
+## Part H: Cloud (ACC) models (30 minutes; results are private)
+
+The Cloud source of the Export window lists cloud models from the Revit journals and the `CollaborationCache`, and exports them from copies. **Not run in Revit by the agent: every item below is unverified.** It needs your real ACC model (yours has 28 links), so this part is the exception to the synthetic-data rule, like D4: send **counts and choices only**, never a model, project or file name, a path or a GUID. The commands below print numbers only. Start Revit with no model open, `pyRevit` reloaded.
+
+The paths used by the code are fixed: `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit <year>\Journals` and `...\CollaborationCache`. Replace `2022` below with the Revit year in use.
+
+- [ ] **H1** Journals and names. Run `& $kit -Check` (after the `$kit` lines of the other blocks); the section "Cloud models" prints: journals folder found (1/0), journal count, named cloud models, cached models, unnamed cached models, cache folder present. Then click **Export**, choose **Cloud (ACC)**, tick your project: real project and file names appear, **Polish letters and `%20` names read correctly**, and **no GUID is ever shown as a name**. Also run this block; it prints only the key names of the model-browser journal lines, to see whether a folder field exists (open question: folder selection):
+
+```powershell
+$y = 2022   # your Revit year
+$j = Join-Path $env:LOCALAPPDATA "Autodesk\Revit\Autodesk Revit $y\Journals"
+$keys = Get-ChildItem $j -Filter 'journal*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 20 |
+  ForEach-Object { Select-String -LiteralPath $_.FullName -Pattern 'ModelBrowserOpenDocumentEvent:open:' } |
+  ForEach-Object { [regex]::Matches($_.Line, '"+([A-Za-z]+)"+\s*:') | ForEach-Object { $_.Groups[1].Value } } | Sort-Object -Unique
+"Key names: " + ($keys -join ', ')
+```
+
+- [ ] **H2** The current-session journal is readable. Open the ACC model (this Revit session), close it without saving, then **Export** > **Cloud (ACC)**: the model is listed, and `-Check` prints `unreadable 0` for the journals.
+- [ ] **H3** Background open of the cache copy. Save a size/time list of the cache files (numbers, no names), tick the host model in the Cloud list, click **Choose views...**, then list again and compare:
+
+```powershell
+$y = 2022   # your Revit year
+$cache = Join-Path $env:LOCALAPPDATA "Autodesk\Revit\Autodesk Revit $y\CollaborationCache"
+$res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
+$name = 'H3-before'   # run again with 'H3-after' after Choose views...
+$i = 0; Get-ChildItem $cache -Recurse -File -Filter *.rvt -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object { $i++; '{0}: {1} bytes; {2}' -f $i, $_.Length, $_.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss') } | Tee-Object (Join-Path $res "$name.txt")
+# after both lists exist:
+$d = @(Compare-Object (Get-Content (Join-Path $res 'H3-before.txt')) (Get-Content (Join-Path $res 'H3-after.txt'))); "Lines that differ: " + $d.Count
+```
+
+  Pass: the view window opens with no sign-in or cloud dialog, **the link count is 28** (the number your model has), no document stays open, Export is still enabled, and **`Lines that differ: 0`** (for a single file, `& $kit -Stamp <file>` prints size and time). Note the seconds it took.
+- [ ] **H4** Staged export. Tick the host in the Cloud list and click **Export**. The status row shows "Copying from the cache", then runs. Pass: the run ends OK, `& $kit -Check <run folder>` shows `Success Jobs: N, Failed Jobs: 0`, and in the Analyzer a federated 3D view shows the host **and its links**. Note how many "Link ... is not in the cache" notes appear (count only).
+- [ ] **H5** Copy time and Revit while it copies. Queue the model again. While the row says "Copying from the cache", pan a view and open a ribbon tab. Note the seconds of the copy phase, the size shown (MB) and whether Revit stayed usable (fully / short pauses / froze).
+- [ ] **H6** Remember cloud model button. With a sample copy open: the button says it is not a cloud model and writes nothing. With the cloud model open: it confirms and gives a link count (counts only). No change to the model (no Undo entry, nothing to save or synchronise). Afterwards the model is listed under **Cloud (ACC)**, also if no journal names it.
+- [ ] **H7** Disk use and clean-up. After H4 and when no RevitExtractor process runs, the run's `model` folder holds only `stage.json` (the copies are deleted). Block (counts only):
+
+```powershell
+$ini = Join-Path $env:APPDATA 'pyRevit\pyRevit_config.ini'
+$out = $null; $inSec = $false
+if (Test-Path $ini) { foreach ($l in Get-Content $ini) { if ($l -match '^\[') { $inSec = ($l.Trim() -eq '[RevitExtractorExport]') } elseif ($inSec -and $l -match '^output_parent\s*=\s*(.+)$') { $out = $Matches[1].Trim().Trim('"') } } }
+if (-not $out) { $out = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor' }
+$run = Get-ChildItem $out -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
+$m = Join-Path $run.FullName 'model'
+"Items in the model folder: " + @(Get-ChildItem $m -Force -ErrorAction SilentlyContinue).Count
+"stage.json present: " + (Test-Path (Join-Path $m 'stage.json'))
+"RevitExtractor processes: " + @(Get-Process -Name 'RevitExtractor*' -ErrorAction SilentlyContinue).Count
+"Free space on the output drive (GB): " + [math]::Round((Get-PSDrive -Name ([IO.Path]::GetPathRoot($out).Substring(0, 1))).Free / 1GB, 1)
+```
+
+Expected: `Items in the model folder: 1`, `stage.json present: True`, `RevitExtractor processes: 0`.
+
+Open questions this part answers (also in `HANDOVER.md`): do journals after Revit 2022 keep the same lines (H1); folders cannot be chosen, only projects, because the journals carry no folder (H1 key names); does a background open of a cache file work without touching the cloud or the file (H3); can the journal or cache folder be moved (the kit only reports whether the fixed paths exist).
+
 ## What to send back, privately
 
 1. This list with PASS, FAIL or a note per item, and the times of D1, D3, D4 and D6.
-2. The outputs: the files in `C:\RX-test\results` (`S1.txt`, `C9.txt`, `C12.txt`, `C13.txt`, `G1.txt`, `G2.txt`, and `F1.txt` from the Revit 2025 machine). To list them: `Get-ChildItem C:\RX-test\results | Select-Object Name, Length, LastWriteTime`.
+2. The outputs: the files in `C:\RX-test\results` (`S1.txt`, `C9.txt`, `C12.txt`, `C13.txt`, `G1.txt`, `G2.txt`, and `F1.txt` from the Revit 2025 machine). Part H: `H1.txt`, `H3-before.txt`, `H3-after.txt` hold numbers only; send the counts, not the files. To list them: `Get-ChildItem C:\RX-test\results | Select-Object Name, Length, LastWriteTime`.
 3. For any failure: the text of pyRevit's output window, and `console.log` and `stderr.log` of that run folder. These can name models and paths, so never commit them.
 
 ## What the agent does with the results

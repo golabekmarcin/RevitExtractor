@@ -13,6 +13,12 @@ Real Extractor run, started from rx_runner's launch spec (specs/SPEC-export-runn
                   tab opens), GET /api/session must list exactly this one export, then the
                   script ends the Node process it started. SKIP (not FAIL) when Node.js 24+ or
                   the Analyzer packages are missing; npm is never run.
+    -Cloud        cloud-catalog (specs/SPEC-cloud-catalog.md, criterion 14): a fake Revit profile
+                  under -OutputParent (the sample saved under GUID file names in a fake
+                  CollaborationCache, a synthetic journal), the real scan and stage plan, then
+                  the staged job on rx_runner.Queue with a real Extractor run. PASS = result ok,
+                  both cache copies' SHA-256 unchanged, only stage.json left in the run's model
+                  folder, no RevitExtractor process left. Uses tests\cloud_cli.py.
     -RevitDirectory, -ModelPath, -ModelPath2, -OutputParent   override the defaults
 
 The process is started with System.Diagnostics.Process from exactly the spec's file, arguments,
@@ -28,6 +34,7 @@ param(
     [string]$OutputParent,
     [switch]$Cancel,
     [switch]$Analyzer,
+    [switch]$Cloud,
     [ValidateSet(0, 2)]
     [int]$Parallel = 0,
     [ValidateRange(1, 240)]
@@ -38,10 +45,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($Cancel -and $Parallel) { throw 'Use -Cancel or -Parallel, not both.' }
+if ($Cloud -and ($Cancel -or $Parallel -or $Analyzer)) { throw '-Cloud runs alone.' }
 if ($Analyzer -and ($Cancel -or $Parallel)) { throw '-Analyzer goes with the normal run only.' }
 
 $testsDir = $PSScriptRoot
 $cli = Join-Path $testsDir 'runner_cli.py'
+$cloudCli = Join-Path $testsDir 'cloud_cli.py'
 $repo = (Resolve-Path -LiteralPath (Join-Path $testsDir '..\..\..\..\..')).ProviderPath.TrimEnd('\')
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $failures = New-Object System.Collections.Generic.List[string]
@@ -50,10 +59,10 @@ function Write-Step([string]$Text) { Write-Host "`n== $Text" -ForegroundColor Cy
 function Add-Failure([string]$Text) { $failures.Add($Text); Write-Host "FAIL: $Text" -ForegroundColor Red }
 
 function Invoke-Cli {
-    param([string[]]$CliArgs)
+    param([string[]]$CliArgs, [string]$Script = $cli)
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { $text = (& $Python -B $cli @CliArgs | Out-String) } finally { $ErrorActionPreference = $previous }
+    try { $text = (& $Python -B $Script @CliArgs | Out-String) } finally { $ErrorActionPreference = $previous }
     $code = $LASTEXITCODE
     if (!$text.Trim()) { throw "runner_cli.py $($CliArgs[0]) printed nothing (exit $code)" }
     $data = $text | ConvertFrom-Json
@@ -337,7 +346,7 @@ foreach ($path in @($sample, $ModelPath2) | Where-Object { $_ }) {
     }
 }
 
-$mode = if ($Cancel) { 'cancel' } elseif ($Parallel) { "parallel $Parallel" } elseif ($Analyzer) { 'normal + Analyzer' } else { 'normal' }
+$mode = if ($Cloud) { 'cloud' } elseif ($Cancel) { 'cancel' } elseif ($Parallel) { "parallel $Parallel" } elseif ($Analyzer) { 'normal + Analyzer' } else { 'normal' }
 Write-Step "export-runner integration ($mode)"
 Write-Host "Revit:            $($revit.Year) - $($revit.Directory)"
 Write-Host "Extractor:        $exe"
@@ -361,7 +370,43 @@ New-Item -ItemType Directory -Path $OutputParent -Force | Out-Null
 $total = [System.Diagnostics.Stopwatch]::StartNew()
 
 try {
-    if (!$Cancel -and !$Parallel) {
+    if ($Cloud) {
+        Write-Step 'Cloud: fake cache tree, stage plan, staged real run'
+        $fixtureFile = Join-Path $OutputParent 'cloud-fixture.json'
+        $built = Invoke-Cli @('fixture', '--base', (Join-Path $OutputParent 'profile'), '--sample', $sample,
+                              '--year', [string]$revit.Year, '--out', $fixtureFile) $cloudCli
+        $cacheFiles = @($built.cache_files)
+        Write-Host ("Fake cache files: {0}; catalog rows named: {1}; staged items: {2}; plan notes: {3}" -f
+            $cacheFiles.Count, $built.counts.named_rows, $built.counts.items, $built.counts.notes)
+        if ($cacheFiles.Count -ne 2) { Add-Failure "expected 2 fake cache files, found $($cacheFiles.Count)" }
+        foreach ($file in $cacheFiles) {
+            if (!($file.StartsWith($OutputParent + '\', [StringComparison]::OrdinalIgnoreCase))) { Add-Failure 'a fake cache file is outside the output parent' }
+            $hashes[$file] = Get-Hash $file
+        }
+        $before = Get-ChildItem -LiteralPath $cacheFiles -File | ForEach-Object { '{0}|{1}' -f $_.Length, $_.LastWriteTimeUtc.Ticks }
+        $exportParent = Join-Path $OutputParent 'exports'
+        $cloudRun = Invoke-Cli @('run', '--fixture', $fixtureFile, '--revit-dir', $revit.Directory,
+                                 '--year', [string]$revit.Year, '--output-parent', $exportParent,
+                                 '--timeout', [string]($TimeoutMinutes * 60)) $cloudCli
+        Write-Host ("states: {0}; result: {1}; {2} s" -f ($cloudRun.states -join ' -> '), $cloudRun.state, $cloudRun.elapsed_seconds)
+        Write-Host "message: $($cloudRun.message)"
+        Write-Host ("Success Jobs {0}, Failed Jobs {1}; cleanup {2}; worst staging poll {3} ms" -f
+            $cloudRun.success_jobs, $cloudRun.failed_jobs, $cloudRun.cleanup, $cloudRun.worst_staging_poll_ms)
+        Write-Host ("model folder after the run: {0}; stage.json items: {1}; bubble.json: {2}" -f
+            (@($cloudRun.model_dir) -join ', '), $cloudRun.stage_record_items, $cloudRun.has_bubble)
+        if ($cloudRun.timed_out) { Add-Failure 'timed out' }
+        if ($cloudRun.state -ne 'ok') { Add-Failure "result $($cloudRun.state): $($cloudRun.message)" }
+        if (@($cloudRun.states)[0] -ne 'staging') { Add-Failure "the job did not go through staging: $(@($cloudRun.states) -join ',')" }
+        if ((@($cloudRun.model_dir) -join ',') -ne 'stage.json') { Add-Failure "model folder holds: $(@($cloudRun.model_dir) -join ', ') (expected only stage.json)" }
+        if ($cloudRun.stage_record_items -ne 2) { Add-Failure "stage.json lists $($cloudRun.stage_record_items) items, expected 2" }
+        if ($cloudRun.cleanup -ne 'done') { Add-Failure "cleanup is '$($cloudRun.cleanup)', expected done" }
+        if (!$cloudRun.has_bubble) { Add-Failure 'output has no bubble.json' }
+        $after = Get-ChildItem -LiteralPath $cacheFiles -File | ForEach-Object { '{0}|{1}' -f $_.Length, $_.LastWriteTimeUtc.Ticks }
+        if (($before -join ';') -ne ($after -join ';')) { Add-Failure 'a fake cache file changed size or time' }
+        else { Write-Host 'Fake cache files: size and time unchanged.' }
+    }
+
+    if (!$Cancel -and !$Parallel -and !$Cloud) {
         Write-Step 'Run on the sample (in place; the Extractor copies it)'
         $run = New-Run $sample 'run'
         Wait-Runs @($run)

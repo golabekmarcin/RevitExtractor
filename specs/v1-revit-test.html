@@ -69,7 +69,7 @@ ol,ul{padding-left:22px;margin:6px 0}li{margin:3px 0}
 /* RevitExtractor v1 live-test guide. Standalone, offline. No network calls, no external assets.
    All text from users or imported files is inserted with textContent only (never as HTML). */
 
-var GUIDE = { schema: 'rx-v1-live-test', schemaVersion: 1, version: '1.0.0', date: '2026-11-16',
+var GUIDE = { schema: 'rx-v1-live-test', schemaVersion: 1, version: '1.1.0', date: '2026-11-16',
   baseline: 'branch mgo-changes; the exact commit is the Expected baseline set on the Start page' };
 var STATUSES = ['NOT TESTED', 'PASS', 'FAIL', 'BLOCKED', 'INCONCLUSIVE'];
 var GLYPH = { 'NOT TESTED': '\u00b7', 'PASS': '\u2713', 'FAIL': '\u2717', 'BLOCKED': '\u2298', 'INCONCLUSIVE': '?' };
@@ -118,9 +118,11 @@ var PARTS = [
   { id: 'C', name: 'C. Exports with sample models' },
   { id: 'D', name: 'D. Scale and edge cases' },
   { id: 'E', name: 'E. Polish' },
-  { id: 'F', name: 'F. Revit 2025 machine' }
+  { id: 'F', name: 'F. Revit 2025 machine' },
+  { id: 'H', name: 'H. Cloud (ACC) models' }
 ];
 var SYN = 'Uses only the Autodesk sample models copied by the kit. No client model is needed.';
+var CLOUDRULE = 'Needs a real ACC model, so this is an exception to the synthetic-data rule (like D4) and needs your explicit authorization. Only counts and choices leave the computer, never a model, project or file name, a path or a GUID.';
 var TESTS = [
 { id: 'P1', part: 'P', title: 'Baseline, tools and pyRevit registration', where: 'PowerShell (Windows PowerShell 5.1) on Computer B, then Revit',
   purpose: 'Make sure Computer B runs exactly the code version you intend to test, and that the tools the later tests need are present.',
@@ -387,7 +389,107 @@ notepad (Join-Path $run.FullName 'console.log')` }]; },
   expect: ['Export is enabled with no model open and the window opened.', 'The result is OK.', 'Open in Analyzer and the folder buttons still work.'], fields: [{ k: 'exc', l: 'If it failed: exception type name only', t: 'code' }],
   changed: 'This is the first run of the Revit 2025 import fix; it is unverified.', prior: 'Earlier (2026-11-12) the button failed to load on this machine; later notes say F2 worked but on which machine is unknown.', evidence: 'Status and, on failure, the exception type only.', trouble: ['Failure to load: record the exception class only (A2).'] },
 { id: 'F3', part: 'F', title: 'Choose views on Revit 2025', where: 'Revit 2025', purpose: 'The view-id code path that differs on newer Revit versions.', prereq: ['F2.'], steps: ['Tick a sample, Choose views\u2026, tick two 2D views and one 3D view, Export.'],
-  expect: ['Only those three views are in the result.'], fields: [], prior: 'Not tested.', evidence: GENERIC_EVIDENCE, trouble: [] }
+  expect: ['Only those three views are in the result.'], fields: [], prior: 'Not tested.', evidence: GENERIC_EVIDENCE, trouble: [] },
+
+{ id: 'H1', part: 'H', title: 'Cloud (ACC): journals and names', where: 'PowerShell + Revit (Export window, Cloud source)',
+  purpose: 'The Cloud source lists a model only when a Revit journal names it. Check that this computer\'s journals are found, that real names appear (also Polish letters and %20 names) and that no GUID is ever shown as a name.',
+  prereq: ['P1 done, pyRevit reloaded, Revit started with no model open.', CLOUDRULE, 'The ACC model has been opened on this computer before (you open it daily).'],
+  steps: ['Run block 1. It prints counts only: journals folder found, journal count, named cloud models, cached models, unnamed cached models, cache folder present.',
+    'Run block 2. It prints only the key names of the model-browser lines in your journals (no values), to see whether a folder field exists.',
+    'Click **Export**, choose **Cloud (ACC)** in "Models from", and wait for the list. Tick your project in the projects card (none is ticked at first).',
+    'Look at the rows: real project and file names. If a project or file name has Polish letters or was written with %20 in the journal, check it reads correctly. A GUID must never appear as a name.',
+    'If a message says no cloud model names were found, record that and go on to H6.'],
+  cmds: function () { return [
+    { t: '1. Cloud counts (numbers only)', cwd: 'any', c: P.kit + '\n' + P.res + "\n& $kit -Check *>&1 | Tee-Object (Join-Path $res 'H1.txt')" },
+    { t: '2. Key names of the model-browser journal lines (no values printed)', cwd: 'any', c: String.raw`$y = ` + (S.session.revitYear || '2022') + String.raw`
+$j = Join-Path $env:LOCALAPPDATA "Autodesk\Revit\Autodesk Revit $y\Journals"
+$keys = Get-ChildItem $j -Filter 'journal*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 20 |
+  ForEach-Object { Select-String -LiteralPath $_.FullName -Pattern 'ModelBrowserOpenDocumentEvent:open:' } |
+  ForEach-Object { [regex]::Matches($_.Line, '"+([A-Za-z]+)"+\s*:') | ForEach-Object { $_.Groups[1].Value } } | Sort-Object -Unique
+"Key names: " + ($keys -join ', ')` }]; },
+  expect: ['Block 1 shows journals folder 1, a journal count above 0, and named cloud models above 0.', 'The Cloud list shows your models under real names; Polish letters and %20 names read correctly; no GUID is shown as a name.', 'Block 2 lists key names (it may list none if your journals have no browser lines).'],
+  fields: [{ k: 'jfolder', l: 'Journals folder found (block 1)', t: 'choice', o: YN }, { k: 'journals', l: 'Journals read (count)', t: 'int' }, { k: 'named', l: 'Named cloud models (count)', t: 'int' }, { k: 'unnamed', l: 'Unnamed cached models (count)', t: 'int' },
+    { k: 'rows', l: 'Rows listed after ticking the project (count)', t: 'int' }, { k: 'pl', l: 'Polish or %20 names read correctly', t: 'choice', o: ['yes', 'no', 'no such name'] }, { k: 'guid', l: 'A GUID shown as a name', t: 'choice', o: YN },
+    { k: 'folderkey', l: 'A folder-like key in block 2 (owner question: folder selection)', t: 'choice', o: ['yes', 'no', 'no browser lines'] }],
+  evidence: 'The counts and choices above. Never a model, project or file name, a path, a GUID, or the output file.',
+  prior: 'Journal lines were read by hand once on Revit 2022 (earlier session); the code has never read a real journal.',
+  trouble: ['Journals folder 0: the folder is fixed at `%LOCALAPPDATA%\\Autodesk\\Revit\\Autodesk Revit <year>\\Journals`. Record it; whether it can be moved is an open question.', 'The list is empty but journals exist: the models were opened in another Revit year, or only the cache has them. Use H6.'] },
+
+{ id: 'H2', part: 'H', title: 'Cloud (ACC): the current-session journal', where: 'Revit (Export window)',
+  purpose: 'The journal of the running Revit is locked for writing. Check that the Cloud scan can still read it, so a model opened a minute ago is listed.',
+  prereq: ['H1 done.', CLOUDRULE, 'Start Revit fresh, so no earlier journal names the model you open now: any model of H1 will do if it was not opened in earlier sessions; otherwise just note that.'],
+  steps: ['Open the ACC model from the cloud (this session), then close it. Do not save or synchronise.', 'Click **Export**, choose **Cloud (ACC)**, tick the project.', 'The model you just opened is listed.', 'Run the block and note "unreadable" for the journals.'],
+  cmds: function () { return [{ t: 'Cloud counts again', cwd: 'any', c: P.kit + '\n' + P.res + "\n& $kit -Check *>&1 | Tee-Object (Join-Path $res 'H2.txt')" }]; },
+  expect: ['The model opened in this session is listed.', 'The block prints "unreadable 0".'],
+  fields: [{ k: 'listed', l: 'Model opened this session is listed', t: 'choice', o: ['yes', 'no', 'cannot tell'] }, { k: 'unread', l: 'Journals unreadable (block)', t: 'int' }],
+  evidence: 'The choice and the number.', prior: 'Not tested.',
+  trouble: ['Not listed: the journal may be written late or locked. Close Revit, start it again, and look at the list once more; record both results.'] },
+
+{ id: 'H3', part: 'H', title: 'Cloud (ACC): background open of the cache copy; links', where: 'PowerShell + Revit (Export window)',
+  purpose: 'The links of a cloud model are read by opening its cache copy in the background (detached, read-only). Check that Revit allows it without any cloud dialog, that all links are found, and that the cache file is not changed.',
+  prereq: ['H1 done.', CLOUDRULE, 'A cloud model with links (yours has 28).'],
+  steps: ['Run block 1 (list before): it prints a number, size and time per cached model file, never a name.', 'Click **Export**, choose **Cloud (ACC)**, tick the project, tick the one host model, and click **Choose views\u2026** (this reads the links).',
+    'Note any dialog (sign-in, sync, cloud), the time, and whether the view window opens. Click **Back** and close the window.', 'Check that no document is open in Revit and that the Export button is still enabled.',
+    'Run block 2 (list after) and block 3 (compare). Block 3 prints how many lines differ; it must be 0.'],
+  cmds: function () { var y = (S.session.revitYear || '2022'); var list = function (n) { return String.raw`$cache = Join-Path $env:LOCALAPPDATA 'Autodesk\Revit\Autodesk Revit ` + y + String.raw`\CollaborationCache'
+$res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
+$i = 0; Get-ChildItem $cache -Recurse -File -Filter *.rvt -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object { $i++; '{0}: {1} bytes; {2}' -f $i, $_.Length, $_.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss') } | Tee-Object (Join-Path $res '` + n + String.raw`.txt')`; };
+    return [{ t: '1. List the cache files before (numbers, sizes, times)', cwd: 'any', c: list('H3-before') }, { t: '2. List the cache files after', cwd: 'any', c: list('H3-after') },
+      { t: '3. Compare (0 = nothing changed)', cwd: 'any', c: String.raw`$d = @(Compare-Object (Get-Content 'C:\RX-test\results\H3-before.txt') (Get-Content 'C:\RX-test\results\H3-after.txt'))
+"Lines that differ: " + $d.Count` }]; },
+  expect: ['The view window opens, with no sign-in or cloud dialog.', 'The block 3 count is 0.', 'No document stays open and Export is still enabled.'],
+  fields: [{ k: 'links', l: 'Links found (see the view window or the Export window note)', t: 'int' }, { k: 'dialog', l: 'Any dialog appeared', t: 'choice', o: YN }, { k: 'changed', l: 'Cache lines that differ (block 3)', t: 'int' }, { k: 'open', l: 'A document left open', t: 'choice', o: YN }, { k: 'secs', l: 'Seconds until the view window opened', t: 'int' }, F_ERR],
+  evidence: 'The numbers and choices. If it failed, only an error category (for example, the exception type name).',
+  prior: 'Never run. If Revit refuses or connects to the cloud, stage the host first and open the copy (a code change), or take the links only from H6.',
+  trouble: ['A dialog about the cloud or a sign-in: close it, mark FAIL, and record the type only.', 'Block 3 shows a difference: the cache file changed. Mark FAIL and do not repeat the test on this model until the agent has looked.'] },
+
+{ id: 'H4', part: 'H', title: 'Cloud (ACC): staged export; links in a federated view', where: 'Revit + PowerShell',
+  purpose: 'Export one cloud model from copies. The Extractor must finish with no failed job, and the links must appear in a federated 3D view of the result.',
+  prereq: ['H3 done.', CLOUDRULE, 'About 2 GB of free disk space per 1 GB of model, for the copies and the Extractor\'s own copy.'],
+  steps: ['Click **Export**, choose **Cloud (ACC)**, tick the project and the host model, and click **Export**.', 'Close the model window; watch the status window: first a "Copying from the cache" row, then running.', 'When it ends, run the block (counts only).',
+    'Open the result in the Analyzer (**Open in Analyzer**) and open a 3D view that shows several models together: your links should be there.', 'Note how many "Link ... is not in the cache" notes the row shows.'],
+  cmds: function () { return [{ t: 'Check the finished run (counts only)', cwd: 'any', c: P.check('H4') }]; },
+  expect: ['The row ends OK. The block prints state OK and `Success Jobs: N, Failed Jobs: 0`.', 'The 3D view shows the host and its links.', 'The cache copy was never changed (repeat the H3 comparison if unsure).'],
+  fields: [{ k: 'state', l: 'Run state (block)', t: 'choice', o: RUNSTATE }, { k: 'ok', l: 'Success Jobs', t: 'int' }, { k: 'failed', l: 'Failed Jobs', t: 'int' }, { k: 'fed', l: 'Links visible in a federated 3D view', t: 'choice', o: ['yes', 'some', 'no'] }, { k: 'missing', l: 'Link notes "not in the cache" (count)', t: 'int' }, F_ERR],
+  evidence: 'The values above. Not the output folder, console.log or any name.',
+  prior: 'The Extractor accepted cached copies renamed to their real names on Revit 2022 (an earlier hand test); the staged queue itself ran only on the agent\'s machine with a fake cache.',
+  trouble: ['Failed Jobs above 0: record the number only and keep the run folder private.', 'Not enough disk space: the row fails with a message before copying; free space and retry.'] },
+
+{ id: 'H5', part: 'H', title: 'Cloud (ACC): copy time and Revit while it copies', where: 'Revit',
+  purpose: 'The copy runs in small steps inside Revit. Check how long it takes for your model and whether Revit stays usable.',
+  prereq: ['H4 done.', CLOUDRULE, 'Export again if you need a new copy phase (the same model may be queued again).'],
+  steps: ['Queue the host model from the Cloud list again.', 'While the status row says "Copying from the cache", work in Revit: pan a view, open a ribbon tab, type in the status window search.', 'Note how long the copy phase took and the size shown in the row.'],
+  expect: ['Revit responds during the copy; a freeze under one second at most.'],
+  fields: [{ k: 'secs', l: 'Copy phase (seconds)', t: 'int' }, { k: 'mb', l: 'Size shown (MB)', t: 'int' }, { k: 'freeze', l: 'Revit stayed usable', t: 'choice', o: ['fully', 'short pauses', 'froze'] }],
+  evidence: 'The two numbers and the choice.', prior: 'The copy budget is 40 ms per timer tick; never measured next to a working Revit.',
+  trouble: ['It froze: mark FAIL and record how long (seconds); the chunk size can be tuned.'] },
+
+{ id: 'H6', part: 'H', title: 'Cloud (ACC): Remember cloud model button', where: 'Revit (RevitExtractor tab)',
+  purpose: 'The fallback button stores the open cloud model\'s names and links, for when journals name nothing. It must be read-only on the model.',
+  prereq: ['H1 done.', CLOUDRULE, 'pyRevit reloaded; one cloud model and one non-cloud model (a sample copy) to open.'],
+  steps: ['Open a sample copy from `C:\\RX-test\\Samples` and click **Remember cloud model**: a message says it is not a cloud model, and nothing is written. Close the model (do not save).', 'Open the cloud model and click **Remember cloud model**. A short message gives counts only.',
+    'Look at the Undo list and the model: nothing changed, nothing to save or synchronise. Close the model.', 'Click **Export** > **Cloud (ACC)**: the model is listed (also if no journal names it).'],
+  expect: ['The non-cloud model gets a message and no write.', 'The cloud model gets a confirmation and a link count.', 'No change in the model; the model is listed in Export afterwards.'],
+  fields: [{ k: 'noncloud', l: 'Non-cloud model: message, nothing written', t: 'choice', o: YN }, { k: 'links', l: 'Links remembered (count in the message)', t: 'int' }, { k: 'undo', l: 'An Undo entry or a change appeared', t: 'choice', o: YN }, { k: 'listed', l: 'Model listed in Export afterwards', t: 'choice', o: YN }, F_ERR],
+  evidence: 'The values above. No names.', prior: 'Never run in Revit; `doc-project` for a cloud model and the user-visible path shape are unverified.',
+  trouble: ['The button is greyed with a cloud model open: record it (the pyRevit `doc-project` context); the Export list still works from journals.'] },
+
+{ id: 'H7', part: 'H', title: 'Cloud (ACC): disk use and clean-up', where: 'PowerShell',
+  purpose: 'Staged copies must be removed once the Extractor has finished, and only stage.json may stay in the model folder.',
+  prereq: ['H4 done; wait until no RevitExtractor process is running (the block shows it).', CLOUDRULE],
+  steps: ['Run the block. It prints counts and sizes of the newest run folder only (no names).', 'Note the free space before H4 and now if you wrote it down.'],
+  cmds: function () { return [{ t: 'Newest run: model folder and processes (counts only)', cwd: 'any', c: P.out + String.raw`
+$run = Get-ChildItem $out -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
+$m = Join-Path $run.FullName 'model'
+"Items in the model folder: " + @(Get-ChildItem $m -Force -ErrorAction SilentlyContinue).Count
+"stage.json present: " + (Test-Path (Join-Path $m 'stage.json'))
+"RevitExtractor processes: " + @(Get-Process -Name 'RevitExtractor*' -ErrorAction SilentlyContinue).Count
+"Free space on the output drive (GB): " + [math]::Round((Get-PSDrive -Name ([IO.Path]::GetPathRoot($out).Substring(0, 1))).Free / 1GB, 1)` }]; },
+  expect: ['Items in the model folder: 1, and stage.json present: True.', 'No RevitExtractor process is running.'],
+  fields: [{ k: 'items', l: 'Items in the model folder', t: 'int' }, { k: 'stage', l: 'stage.json present', t: 'choice', o: YN }, { k: 'procs', l: 'RevitExtractor processes', t: 'int' }, { k: 'free', l: 'Free space on the output drive (GB)', t: 'int' }],
+  evidence: 'The values above.', prior: 'Not tested.',
+  trouble: ['More than one item left: the copies were still in use when the queue tried to delete them; wait a few minutes and run the block again, then record both counts.']
+}
 ];
 
 /* ---------- state ---------- */
@@ -586,7 +688,7 @@ function homeView() {
     ['Computer B (Revit computer)', [
       'Open this HTML by double-clicking it (Edge, Chrome or Firefox). If a red banner says storage is unavailable, save regularly.',
       'Do tests in order, starting with **P1**. Commands run in Windows PowerShell 5.1 on Computer B; nothing runs on Computer A.',
-      'Create synthetic data only (P2 builds it from Autodesk sample models). Never open a client model for these tests; D4 and the optional production variants are the only exceptions, and need your explicit authorization.',
+      'Create synthetic data only (P2 builds it from Autodesk sample models). Never open a client model for these tests; D4, Part H (needs a real ACC model, counts only) and the optional production variants are the only exceptions, and need your explicit authorization.',
       'After each test choose a result button. Autosave keeps the progress in the browser; click **Save filled HTML** now and then. Reopen the saved file once to confirm progress comes back.']],
     ['Returning results to Claude', [
       'Click **Export results** (JSON) or **Copy summary** (text). A review dialog lists exactly what will leave: all typed values, ticked checks and each note you approved.',
