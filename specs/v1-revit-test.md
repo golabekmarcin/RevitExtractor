@@ -103,12 +103,14 @@ Start Revit with no model open.
 
 ## Part C: exports with the sample models (25 minutes)
 
-- [Works] **C1** Tick sample A, default scope, Export. Control returns at once and the status window shows the row, the time running and the finished steps.
+**The model window stays open after Export** so you can queue more (it is modal, on purpose: the background reads need the command's Revit API context). While it is open the status window still shows progress, but WPF does not pass clicks to it. Click **Close** on the model window before you use Cancel export, Clear finished, Open output folder, Open in Analyzer or the row menu, or before you open a model in Revit.
+
+- [Works] **C1** Tick sample A, default scope, Export. The model window stays open (a short line says how many exports were queued, and the ticks are cleared) and the status window shows the row, the time running and the finished steps.
 - [Works] **C2** Result is Done. Open output folder opens `…\export-<date>-<id>\output`. The run folder has `index.json`, `output\`, `logs\`, `journals\`, `console.log`.
 - [Works, I got problem with npm ci so it returned the error with instruction how to do it manually. After resolving it opened local server] **C3** Open in Analyzer: the model shows in the browser (local Analyzer), or the folder and the website open (fallback). Say which. With the local Analyzer: a console window appeared, and closing it stops the server.
 - [Works] **C4** Tick sample A, Choose views…: views are listed. Tick two 2D views and one 3D view, Export. Only those three are in the result.
 - [Works] **C5** In the view window, Save index.json… writes a file. Back returns to the model list with its ticks.
-- [Works] **C6** Tick three models (include the one in the folder with Polish letters, `&` and `%`), Export. They run one after another. **While they run:**
+- [Works] **C6** Tick three models (include the one in the folder with Polish letters, `&` and `%`), Export. They run one after another. **While they run** (click Close on the model window first):
   - open a model in Revit: the Export button is greyed, the status window still updates;
   - click X on the status window: it minimises and can be restored from the taskbar;
   - click the old "Export setup" button and close it: the status window still updates.
@@ -281,6 +283,8 @@ Get-ChildItem 'C:\RX-test\Samples' | Select-Object Name   # the sample names are
 ```
 
 - [WORKS] **C16** Clear finished. With a finished, a failed or cancelled, a running and a waiting row: the button is enabled and Clear finished removes only the finished, failed and cancelled rows; the running and waiting rows stay in order and keep updating. With only running or waiting rows the button is greyed out. The output folders of the removed exports are still on disk, and nothing was cancelled. The status window still updates after clearing, and a newly started export appears as a new row (Polish button text after E1).
+
+- [ ] **C17** Queue more from the still-open window. Tick sample A, Export, and do not close the model window. While the export runs, tick sample B (or sample A again: queuing a model twice is allowed) and Export again. The second row appears behind the first in the status window (it only updates, WPF takes no clicks there while the model window is open), and it starts when the first ends. After each Export the ticks are cleared and the window says how many exports were queued; the folder list, the output folder and the search stay as they were. Choose views… on one model and Export from the view window: the view window closes, the model window is still open, and the third row appears. Then click Close: nothing more is queued, and the status window takes clicks again (Cancel export, Clear finished). If you can provoke a failed hand-over (for example pyRevit **Reload** between two Exports), the red error line shows the reason and the ticks are kept, so a second click on Export retries. Note anything unusual.
 
 ## Part D: real models (20 minutes; results are private)
 
