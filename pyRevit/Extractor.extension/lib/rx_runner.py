@@ -27,6 +27,7 @@ from collections import namedtuple
 import rx_dotnet
 from rx_cloud import safe_file_name
 from rx_cloud_stage import check_space, copy_steps
+from rx_cloud_stage import _in_cache, _items as _stage_items
 from rx_i18n import tr
 from rx_index import SetupError, require_index_shape, to_json
 from rx_json import dumps_ascii
@@ -663,6 +664,17 @@ class Queue(object):
             folder = os.path.join(paths.root, STAGE_FOLDER)
             target = os.path.join(folder, job.model_name)
             spec = launch_spec(exe, job.revit_dir, target, paths, self._root())
+            # Before any write: the run folder (and so <run>\model) must lie outside Revit's
+            # cache. copy_steps checks this too, but only once the run folder exists.
+            items = _stage_items(job.stage)
+            if _in_cache(paths.root, items) or _in_cache(folder, items):
+                raise RunnerError(tr(
+                    "The output folder is inside Revit's cache (CollaborationCache) or inside "
+                    "the folder of a cache file; nothing is ever written there. Choose another "
+                    "output folder.",
+                    "Folder wyjściowy jest w pamięci podręcznej Revita (CollaborationCache) lub "
+                    "w folderze pliku z tej pamięci; nic nie jest tam nigdy zapisywane. Wybierz "
+                    "inny folder wyjściowy."))
             check_space(job.stage, self._free_bytes(job.output_parent))
             prepare_run(paths, job.index)
             job.paths = paths
@@ -724,7 +736,7 @@ class Queue(object):
         self._fail(job, tr("The copy from the cache failed: {0}",
                            "Kopiowanie z pamięci podręcznej nie powiodło się: {0}")
                    .format(_error_text(error)))
-        self._remove_copies(job)   # no process ran, so nothing can hold them
+        self._remove_or_retry(job)   # no process ran, but another program may hold a copy
 
     def _launch_staged(self, job):
         spec = self._specs.get(job.id)
@@ -737,7 +749,7 @@ class Queue(object):
         except Exception as error:
             self._fail(job, tr("The export could not start: {0}",
                                "Nie udało się uruchomić eksportu: {0}").format(_error_text(error)))
-            self._remove_copies(job)
+            self._remove_or_retry(job)
             return
         job.pid = handle.pid
         self._handles[job.id] = handle
@@ -773,6 +785,16 @@ class Queue(object):
             return False
         self._staged.pop(job.id, None)
         return True
+
+    def _remove_or_retry(self, job):
+        """Delete a finished job's copies now; whatever stays locked is retried on each poll
+        (busy() stays True) until CLEANUP_SECONDS, then reported with the folder."""
+        if self._remove_copies(job):
+            job.cleanup = "done"
+        else:
+            job.cleanup = "pending"
+            self._cleanups.append(job)
+            self._cleanup_since[job.id] = job.ended_at
 
     def _tree_alive(self):
         if self._tree_running is None:
@@ -857,12 +879,7 @@ class Queue(object):
                 "Export cancelled while copying from the cache; the Extractor was not started.",
                 "Eksport anulowany podczas kopiowania z pamięci podręcznej; Extractor nie został "
                 "uruchomiony."))
-            if self._remove_copies(job):
-                job.cleanup = "done"
-            else:
-                job.cleanup = "pending"
-                self._cleanups.append(job)
-                self._cleanup_since[job.id] = job.ended_at
+            self._remove_or_retry(job)
             return True
         if job.state != RUNNING or job.cancel_requested:
             return False

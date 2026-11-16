@@ -1486,6 +1486,95 @@ class QueueStagingTest(TempDirTest):
         self.assertEqual(self.job(queue, a).state, "failed")
         self.assertIsNone(self.job(queue, a).paths)
 
+    def test_an_output_folder_in_the_cache_fails_before_anything_is_written(self):
+        destinations = {
+            "under CollaborationCache": os.path.join(self.cache_root, "exports"),
+            "under the host's own folder": os.path.join(os.path.dirname(self.host), "exports"),
+        }
+        for label, out in destinations.items():
+            with self.subTest(label):
+                queue = self.queue()
+                job = self.staged_job()
+                job.output_parent = out
+                a = queue.add(job)
+                queue.poll()
+                job = self.job(queue, a)
+                self.assertEqual(job.state, "failed")
+                self.assertIn("cache", job.result.message)
+                self.assertIn("CollaborationCache", job.result.message)
+                self.assertIsNone(job.paths)
+                self.assertEqual(self.starter.started, [])
+                self.assertFalse(queue.busy())
+                self.assertEqual(snapshot(self.cache_root), self.cache_before,
+                                 "no run folder, index or stage.json in the cache")
+                self.assertFalse(os.path.exists(out))
+
+    def test_an_output_folder_in_the_cache_message_in_polish(self):
+        queue = self.queue()
+        job = self.staged_job()
+        job.output_parent = os.path.join(self.cache_root, "exports")
+        a = queue.add(job)
+        with patch.dict(sys.modules, polish()):
+            queue.poll()
+        message = self.job(queue, a).result.message
+        self.assertIn("pamięci podręcznej", message)
+        self.assertIn("CollaborationCache", message)
+
+    def test_a_locked_copy_after_a_copy_failure_is_retried_and_then_reported(self):
+        self.remover.locked.add("Zażółć-Konstrukcja.rvt")
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        self.job(queue, a).stage["items"][1]["size"] += 1    # the link fails after the host
+        job = self.poll_until(queue, a, ("failed",))
+        self.assertIn("The cache file changed", job.result.message)
+        self.assertEqual(sorted(os.listdir(self.model_dir(job))),
+                         ["Zażółć-Konstrukcja.rvt", "stage.json"])
+        self.assertEqual(job.cleanup, "pending")
+        self.assertTrue(queue.busy(), "the timer keeps running for the clean-up")
+        with patch.object(rx_runner, "CLEANUP_SECONDS", 5):
+            for _ in range(10):
+                queue.poll()
+        self.assertEqual(job.cleanup, "incomplete")
+        self.assertEqual(job.state, "failed")
+        self.assertIn("The cache file changed", job.result.message)
+        self.assertIn("could not be deleted", job.result.message)
+        self.assertIn(self.model_dir(job), job.result.message)
+        self.assertFalse(queue.busy())
+
+    def test_a_locked_copy_after_a_copy_failure_removed_on_a_later_poll(self):
+        self.remover.locked.add("Zażółć-Konstrukcja.rvt")
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        self.job(queue, a).stage["items"][1]["size"] += 1
+        job = self.poll_until(queue, a, ("failed",))
+        self.assertEqual(job.cleanup, "pending")
+        self.remover.locked.clear()
+        queue.poll()
+        self.assertEqual(job.cleanup, "done")
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
+        self.assertFalse(queue.busy())
+
+    def test_a_locked_copy_after_a_launch_failure_is_retried_and_then_reported(self):
+        self.remover.locked.add("Alpha-Architecture.rvt")
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        queue.poll()
+        target = os.path.join(self.model_dir(self.job(queue, a)), "Zażółć-Konstrukcja.rvt")
+        self.starter.fail_models.add(target)
+        job = self.poll_until(queue, a, ("failed",))
+        self.assertIn("cannot start", job.result.message)
+        self.assertEqual(sorted(os.listdir(self.model_dir(job))),
+                         ["Alpha-Architecture.rvt", "stage.json"])
+        self.assertEqual(job.cleanup, "pending")
+        self.assertTrue(queue.busy())
+        with patch.object(rx_runner, "CLEANUP_SECONDS", 5):
+            for _ in range(10):
+                queue.poll()
+        self.assertEqual(job.cleanup, "incomplete")
+        self.assertIn("cannot start", job.result.message)
+        self.assertIn(self.model_dir(job), job.result.message)
+        self.assertFalse(queue.busy())
+
     # -- same model, one at a time
 
     def test_the_same_model_key_never_runs_twice(self):

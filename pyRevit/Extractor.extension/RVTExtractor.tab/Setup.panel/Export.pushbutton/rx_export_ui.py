@@ -1122,6 +1122,9 @@ class ModelWindow(forms.WPFWindow):
         return text_
 
     def _store_links(self, row, links):
+        """A link read succeeded (Export or Choose views): store it, and an earlier failed read
+        no longer sends this row out without its links."""
+        self._host_only.discard(row.job_key)
         memory = self._cloud["memory"]
         memory.store_links(link_key(row.cloud), row.cloud.cache_mtime, links)
         memory.save()           # a failed save only costs the next read; it never raises

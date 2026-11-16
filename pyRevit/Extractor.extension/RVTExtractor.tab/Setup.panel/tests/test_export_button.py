@@ -3205,6 +3205,29 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(self.submitted, [])
         self.assertIsNone(MOUSE.OverrideCursor)
 
+    def test_a_later_successful_links_read_clears_the_host_alone_choice(self):
+        """Export fails to read the links (host alone offered), then Choose views reads them
+        and the user goes back without queuing: the next Export stages the links too."""
+        self.read_error = RuntimeError("boom")
+        self.open_cloud()
+        alpha = self.cby("Alpha-Architecture.rvt")
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(self.window._host_only, {alpha.key})
+        self.read_error = None
+        self.read_answer = {"views_2d": [], "views_3d": [], "links": [
+            self.link("Beta-MEP", CP1, CM4)]}
+        with patch.object(EXPORT_UI, "ViewWindow", self.views_window([], job=False)):
+            self.fire("views_btn")
+        self.assertEqual(self.submitted, [], "back from the picker: nothing queued")
+        self.assertEqual(self.window._host_only, set(), "the links were read after all")
+        self.fire("export_btn")
+        self.assertEqual(len(self.reads), 2, "the stored links need no third read")
+        job = self.submitted[0]["jobs"][0]
+        self.assertEqual([item["name"] for item in job["stage"]["items"]],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(job["stage"]["notes"], [], "no 'links not read' note")
+
     def test_a_failed_views_hand_over_keeps_the_cloud_job_for_the_next_export(self):
         self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
         self.submit_error = RuntimeError("session unreachable")
