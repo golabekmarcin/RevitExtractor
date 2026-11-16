@@ -23,7 +23,7 @@ One pyRevit button (**Export**) runs the whole Extractor workflow from Revit wit
 
 ## Reviews
 
-**No review is pending.** 2026-11-16: Codex reviewed the cloud-catalog work (`e4e57a8`..`4eb9975`): 3 P2 findings (run folder written into the cache before the check; cleanup not retried after a failed copy/launch; host-only flag left set), all fixed test-first in `c0dc4bc`, not re-reviewed. Still open, not cloud-specific: a normal local job whose output folder is under `CollaborationCache` is not refused. Earlier: Codex reviewed up to `f2597a7` (fixes in `7e68ebc`), and on 2026-11-16 the whole uncommitted tree (one P1: Save filled HTML kept the open review dialog and excluded notes; fixed and re-tested). Not re-reviewed after that small fix.
+**No review is pending.** 2026-11-16: Codex reviewed the cloud-catalog work (`e4e57a8`..`4eb9975`): 3 P2 findings (run folder written into the cache before the check; cleanup not retried after a failed copy/launch; host-only flag left set), all fixed test-first in `c0dc4bc`, not re-reviewed. A normal local job whose output folder is under `CollaborationCache` is now refused too (before any write; test added 2026-11-16). Earlier: Codex reviewed up to `f2597a7` (fixes in `7e68ebc`), and on 2026-11-16 the whole uncommitted tree (one P1: Save filled HTML kept the open review dialog and excluded notes; fixed and re-tested). Not re-reviewed after that small fix.
 
 Known **unfixed** Codex findings (accepted for v1, fix after the owner's test):
 - (a) `rx_runner`'s hold check races between two Revit sessions that start exports at the same moment, and it does not see `cmd.exe` before `RevitExtractor.exe` starts. Two Extractors could then start and collide on the fixed pipe.
@@ -48,14 +48,17 @@ Problem: the Export scan marks every `CollaborationCache` file `local_copy` (dis
 - No journal data: message, and fall back to the open model and its links (`LinkedModelModelId`).
 - **APS Data Management API route parked (2026-11-16).** Researched and prototyped as a read-only probe (`specs/cloud-api-probe/`, kept for reference). Dropped because a self-registered APS app must be provisioned by an Account Admin of the hub that owns the project; the owner's projects belong to another company, the owner has no admin rights there, and the company email cannot register an APS app. Ideate Automation works only because that hub's admin authorized Ideate's own connector (its Client ID cannot be reused). Revisit only if an admin of the hub agrees: probe first, then API metadata (names, folders, cloud version dates).
 - Local commits only; push waits for the end of the Revit test; never `online`/upstream.
+- `specs/cloud-api-probe/` stays in the repo (owner decision 2026-11-16), parked.
 
-## Next session: in-place cloud export instead of copies (grill started 2026-11-16)
+## Parked idea: in-place cloud export instead of copies (2026-11-16)
+
+**Status: parked by the owner.** Cloud export stays in copy mode, consistent with how local models are handled; the owner is live-testing Part H now and will report. The notes below are only a record of the idea; the grill questions were not answered.
 
 Owner question: the built cloud-catalog **copies** the host and its links from `CollaborationCache` into `<run>\model\` under real names (needed because the Extractor resolves links by file name and cache files are GUID-named), then deletes the copies. Owner would rather export from the cache files **in place** (no copies), expecting cloud link paths (Autodesk Docs) to keep working.
 - Facts: the copy approach passed on 2026-11-10 (archive Q29). In-place is **untested**: (1) does the Extractor open a GUID-named cache host directly; (2) do links resolve at all without real names (the Extractor searches folders by file name; it has no Autodesk sign-in, so cloud paths probably do not resolve); (3) does the Extractor ever write to the model file or beside it (that would damage the cache).
 - Candidate designs: A) direct host path, links unresolved; B) staging folder of **NTFS hard links** with real names pointing at the cache files (no copy, no extra space, same volume only; created with ctypes `CreateHardLink` on IronPython 2.7, no admin; removing the link never touches the cache); C) current copy mode (safe, slow, GBs).
 - Proposed rule: in place/hard link only if a test shows size/mtime/SHA-256 of the cache files unchanged and no new files beside them after an export; else keep copy. Fall back to copy automatically when linking fails.
-- Open questions asked in the grill (answers pending): main driver (space/time vs link paths vs freshness); willing to run a counts-only A/B/C experiment in the Revit 2022 session; safety rule; default mode and a switch.
+- Grill questions that were asked, unanswered: main driver (space/time vs link paths vs freshness); willing to run a counts-only A/B/C experiment in the Revit 2022 session; safety rule; default mode and a switch.
 
 ## Key decisions
 

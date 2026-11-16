@@ -631,6 +631,13 @@ class Queue(object):
         job.started_at = self._clock()
         try:
             exe = extractor_exe(job.revit_dir)
+            # Before any write: nothing is ever created under Revit's CollaborationCache.
+            if _in_cache(job.output_parent, []):
+                raise RunnerError(tr(
+                    "The output folder is inside Revit's cache (CollaborationCache); nothing is "
+                    "ever written there. Choose another output folder.",
+                    "Folder wyjściowy jest w pamięci podręcznej Revita (CollaborationCache); nic "
+                    "nie jest tam nigdy zapisywane. Wybierz inny folder wyjściowy."))
             paths = plan_run(job.output_parent, job.started_at, self._token())
             spec = launch_spec(exe, job.revit_dir, job.model_path, paths, self._root())
             prepare_run(paths, job.index)

@@ -502,6 +502,22 @@ class QueueTest(TempDirTest):
         self.assertEqual(self.job(queue, c).state, "failed")
         self.assertFalse(queue.busy())
 
+    def test_local_job_with_output_folder_inside_the_revit_cache_is_refused(self):
+        # Nothing is ever written under CollaborationCache, also for a normal (local) job.
+        cache_out = os.path.join(self.tmp, "Autodesk Revit X", "CollaborationCache", "exports")
+        queue = self.queue()
+        job_id = queue.add(rx_runner.Job(self.model("a"), SAMPLE_INDEX, self.revit, cache_out))
+        queue.poll()
+        job = self.job(queue, job_id)
+        self.assertEqual(job.state, "failed")
+        self.assertIn("CollaborationCache", job.result.message)
+        self.assertFalse(os.path.exists(cache_out), "no folder is created in the cache")
+        self.assertEqual(self.starter.started, [], "no process is started")
+        # The next job still runs: one failed job never stops the queue.
+        other = self.add(queue, "b")
+        queue.poll()
+        self.assertEqual(self.job(queue, other).state, "running")
+
     def test_job_record(self):
         queue = self.queue()
         job_id = self.add(queue, "a")
