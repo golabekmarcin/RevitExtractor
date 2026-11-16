@@ -48,6 +48,17 @@ CloudRow = namedtuple(str("CloudRow"),
                           "account project_guid model_guid place cache_mtime"))
 Project = namedtuple(str("Project"), str("key account guid name selected count unnamed note"))
 Catalog = namedtuple(str("Catalog"), str("rows projects counts message"))
+StageItem = namedtuple(str("StageItem"), str("src name size mtime"))
+StagePlan = namedtuple(str("StagePlan"), str("items notes"))
+
+_BAD_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED_NAMES = set(["CON", "PRN", "AUX", "NUL"] + ["COM%d" % n for n in range(1, 10)] +
+                      ["LPT%d" % n for n in range(1, 10)])
+_MAX_NAME = 255
+
+
+class StageError(ValueError):
+    """Staging a cloud model cannot be planned or copied. The message is translated."""
 
 
 # ---------------------------------------------------------------- helpers
@@ -591,3 +602,110 @@ def scan(folders, memory, now, read=read_bytes, budget=LINES_PER_STEP, stale_day
         memory.save()
     message = _no_journal_message() if not counts["sightings"] else ""
     yield build_catalog(cache_files, memory, now, stale_days, counts, message)
+
+
+# ---------------------------------------------------------------- staging plan
+
+def safe_file_name(name):
+    """True when `name` is one plain Windows file name: no folder part, drive, wildcard, control
+    character, reserved device name or trailing dot/space. Used before anything is joined to the
+    staging folder, so a link name can never point outside it."""
+    if not isinstance(name, type("")) or not name or len(name) > _MAX_NAME:
+        return False
+    if name in (".", "..") or name != name.strip() or name.endswith("."):
+        return False
+    if _BAD_NAME_CHARS.search(name):
+        return False
+    return name.split(".")[0].strip().upper() not in _RESERVED_NAMES
+
+
+def _rvt_name(name):
+    """The staging file name: trimmed, ".rvt" added when missing; None when unusable."""
+    value = _clean_name(name) if isinstance(name, type("")) else None
+    if value is None or value in (".", ".."):
+        return None
+    if not value.lower().endswith(".rvt"):
+        value += ".rvt"
+    return value if safe_file_name(value) else None
+
+
+def _note_missing(name):
+    return tr("Link {0} is not in the cache; exported without it.",
+              "Linku {0} nie ma w pamięci podręcznej; wyeksportowano bez niego.").format(name)
+
+
+def _note_clash(name):
+    return tr("Link {0} was not copied: another file in this export has the same name.",
+              "Nie skopiowano linku {0}: inny plik w tym eksporcie ma tę samą nazwę.").format(name)
+
+
+def _note_bad_name(name):
+    return tr("Link {0} was not copied: its name cannot be used as a file name.",
+              "Nie skopiowano linku {0}: jego nazwy nie można użyć jako nazwy "
+              "pliku.").format(name)
+
+
+def _note_unnamed():
+    return tr("A link without a usable name was not copied.",
+              "Nie skopiowano linku bez użytecznej nazwy.")
+
+
+def _shown_name(name):
+    """A link name for a note: never a GUID, line breaks flattened."""
+    value = _clean_name(name) if isinstance(name, type("")) else None
+    if value is None:
+        return None
+    return value.replace("\r", " ").replace("\n", " ")
+
+
+def plan_stage(row, link_refs, cache_files, memory):
+    """StagePlan for exporting `row` (a CloudRow) from copies: the host first, then its links.
+
+    `link_refs` is the host's link list ([{"name", "project_guid", "model_guid", ...}], as
+    rx_reader.collect_cloud_links gives it); None takes it from `memory` while the host copy's
+    mtime is unchanged. Each link is found by project GUID + model GUID across all of
+    `cache_files` (the newer of root and linked copy, any account) and staged under its link
+    name with ".rvt" added when missing. Names are unique without regard to case: a later clash
+    is skipped with a note. A link missing from the cache gives a note and the export goes on.
+    Pure: nothing is opened, stat'ed or written. StageError when the host name is unusable.
+    """
+    host_name = _rvt_name(row.name)
+    if host_name is None:
+        raise StageError(tr("The model name cannot be used as a file name: {0}",
+                            "Nazwy modelu nie można użyć jako nazwy pliku: {0}").format(
+            _shown_name(row.name) or ""))
+    items = [StageItem(row.cache_path, host_name, row.size, row.cache_mtime)]
+    notes = []
+    taken = {host_name.lower(): (row.project_guid, row.model_guid)}
+    if link_refs is None:
+        link_refs = memory.links_for(model_key(row.project_guid, row.model_guid),
+                                     row.cache_mtime) or []
+    copies = _newest_copies(cache_files)
+    for ref in link_refs:
+        if not isinstance(ref, dict):
+            continue
+        project = normalize_guid(ref.get("project_guid"))
+        model = normalize_guid(ref.get("model_guid"))
+        raw = ref.get("name")
+        if _shown_name(raw) is None and project and model:
+            raw = memory.model_name(project, model)
+        shown = _shown_name(raw)
+        if shown is None:
+            notes.append(_note_unnamed())
+            continue
+        name = _rvt_name(raw)
+        if name is None:
+            notes.append(_note_bad_name(shown))
+            continue
+        if taken.get(name.lower()) == (project, model):
+            continue    # the same file under the same name, e.g. a nested and a direct link
+        found = copies.get((project, model)) if project and model else None
+        if found is None:
+            notes.append(_note_missing(name))
+            continue
+        if name.lower() in taken:
+            notes.append(_note_clash(name))
+            continue
+        taken[name.lower()] = (project, model)
+        items.append(StageItem(found.path, name, found.size, found.mtime))
+    return StagePlan(items, notes)

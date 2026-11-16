@@ -622,6 +622,162 @@ class Timing(CatalogCase):
         self.assertLess(slowest, 2.0)
 
 
+# ------------------------------------------------------------------ criterion 6 (plan_stage)
+
+M9 = "%s-%s-%s-%s-%s" % ("9" * 8, "9" * 4, "9" * 4, "9" * 4, "9" * 12)
+
+
+def cache_file(project, model, place="root", mtime=NOW - DAY, size=10, account=ACCOUNT):
+    sub = "LinkedModels\\" if place == "linked" else ""
+    path = "C:\\cache\\%s\\%s\\%s%s.rvt" % (account, project, sub, model)
+    return CacheFile(account, project, model, place, path, size, mtime)
+
+
+def host_row(name="Alpha-Architecture.rvt", project=P1, model=M3, mtime=NOW - DAY, size=10):
+    return rx_cloud.CloudRow(
+        key="cloud:%s/%s" % (project, model), project="Demo Tower", name=name,
+        cache_path="C:\\cache\\%s\\%s\\%s.rvt" % (ACCOUNT, project, model),
+        cache_date="2026-01-01", size=size, state="ok", enabled=True, note="", account=ACCOUNT,
+        project_guid=project, model_guid=model, place="root", cache_mtime=mtime)
+
+
+def link(name, project, model, nested=False):
+    return {"name": name, "project_guid": project, "model_guid": model, "region": "US",
+            "nested": nested}
+
+
+class PlanStage(unittest.TestCase):
+    def setUp(self):
+        self.memory = Memory(os.path.join(tempfile.gettempdir(), "rx-never-written.json"))
+
+    def plan(self, links, files, row=None, memory=None):
+        return rx_cloud.plan_stage(row or host_row(), links, files, memory or self.memory)
+
+    def test_host_comes_first_and_keeps_its_cache_facts(self):
+        row = host_row(size=123, mtime=NOW - 5)
+        plan = self.plan([link("Beta-MEP.rvt", P1, M4)], [cache_file(P1, M4, size=7)], row=row)
+        host = plan.items[0]
+        self.assertEqual((host.src, host.name, host.size, host.mtime),
+                         (row.cache_path, "Alpha-Architecture.rvt", 123, NOW - 5))
+        self.assertEqual([i.name for i in plan.items], ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(plan.items[1].size, 7)
+        self.assertEqual(plan.notes, [])
+
+    def test_link_found_in_another_project_and_account_by_both_guids(self):
+        files = [cache_file(P2, M3, size=1),                       # same model GUID, other project
+                 cache_file(P2, M5, account="88888888", size=55)]
+        plan = self.plan([link("Gamma-Browser.rvt", P2, M5)], files)
+        self.assertEqual([(i.name, i.size) for i in plan.items[1:]], [("Gamma-Browser.rvt", 55)])
+        self.assertIn("88888888", plan.items[1].src)
+
+    def test_newer_of_root_and_linked_copy_is_used(self):
+        files = [cache_file(P2, M5, "root", mtime=NOW - 9 * DAY, size=1),
+                 cache_file(P2, M5, "linked", mtime=NOW - DAY, size=2)]
+        plan = self.plan([link("Gamma-Browser.rvt", P2, M5)], files)
+        self.assertEqual((plan.items[1].size, plan.items[1].mtime), (2, NOW - DAY))
+        self.assertIn("LinkedModels", plan.items[1].src)
+
+    def test_guids_are_normalised_for_the_lookup(self):
+        plan = self.plan([link("Beta-MEP.rvt", "{%s}" % P2.upper(), M5.upper())],
+                         [cache_file(P2, M5)])
+        self.assertEqual([i.name for i in plan.items], ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+
+    def test_missing_link_gives_a_note_and_the_export_goes_on(self):
+        plan = self.plan([link("Beta-MEP.rvt", P2, M5), link("Gamma-Browser", P2, M6)],
+                         [cache_file(P2, M6)])
+        self.assertEqual([i.name for i in plan.items], ["Alpha-Architecture.rvt",
+                                                        "Gamma-Browser.rvt"])
+        self.assertEqual(plan.notes, ["Link Beta-MEP.rvt is not in the cache; exported without it."])
+
+    def test_link_without_ids_is_missing(self):
+        plan = self.plan([{"name": "Beta-MEP.rvt"}, link("Gamma-Browser.rvt", None, "")],
+                         [cache_file(P2, M5)])
+        self.assertEqual(len(plan.items), 1)
+        self.assertEqual(len(plan.notes), 2)
+        self.assertTrue(all("is not in the cache" in n for n in plan.notes))
+
+    def test_case_insensitive_clash_skips_the_later_one(self):
+        files = [cache_file(P2, M4), cache_file(P2, M5)]
+        plan = self.plan([link("beta-mep.RVT", P2, M4), link("BETA-MEP", P2, M5),
+                          link("ALPHA-architecture.rvt", P2, M5)], files)
+        self.assertEqual([i.name for i in plan.items], ["Alpha-Architecture.rvt", "beta-mep.RVT"])
+        self.assertEqual(plan.notes, [
+            "Link BETA-MEP.rvt was not copied: another file in this export has the same name.",
+            "Link ALPHA-architecture.rvt was not copied: another file in this export has the "
+            "same name."])
+
+    def test_the_same_link_twice_is_copied_once_without_a_note(self):
+        plan = self.plan([link("Beta-MEP.rvt", P2, M5), link("Beta-MEP.rvt", P2, M5, nested=True)],
+                         [cache_file(P2, M5)])
+        self.assertEqual([i.name for i in plan.items], ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(plan.notes, [])
+
+    def test_rvt_is_added_when_missing_and_nested_links_are_included(self):
+        plan = self.plan([link("Beta-MEP", P2, M4), link("Gamma-Browser.Rvt", P2, M5, nested=True)],
+                         [cache_file(P2, M4), cache_file(P2, M5)],
+                         row=host_row(name="Alpha-Architecture"))
+        self.assertEqual([i.name for i in plan.items],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt", "Gamma-Browser.Rvt"])
+
+    def test_link_list_comes_from_the_memory_when_not_given(self):
+        memory = Memory(os.path.join(tempfile.gettempdir(), "rx-never-written.json"))
+        memory.store_links(rx_cloud.model_key(P1, M3), NOW - DAY, [link("Beta-MEP.rvt", P2, M5)])
+        plan = self.plan(None, [cache_file(P2, M5)], memory=memory)
+        self.assertEqual([i.name for i in plan.items], ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        stale = self.plan(None, [cache_file(P2, M5)], row=host_row(mtime=NOW), memory=memory)
+        self.assertEqual([i.name for i in stale.items], ["Alpha-Architecture.rvt"])
+
+    def test_a_link_without_a_name_uses_the_memory_name_never_a_guid(self):
+        memory = Memory(os.path.join(tempfile.gettempdir(), "rx-never-written.json"))
+        memory.merge([Sighting(P2, None, M5, "Beta-MEP.rvt", "path")], NOW)
+        plan = self.plan([link("", P2, M5), link(M6 + ".rvt", P2, M6)],
+                         [cache_file(P2, M5), cache_file(P2, M6)], memory=memory)
+        self.assertEqual([i.name for i in plan.items], ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(len(plan.notes), 1)
+        for text in plan.notes + [i.name for i in plan.items]:
+            self.assertFalse(GUID_RE.search(text), text)
+
+    def test_unsafe_link_names_are_skipped_with_a_note(self):
+        bad = ["..\\Beta-MEP.rvt", "sub/Beta-MEP.rvt", "C:Beta.rvt", "CON.rvt", "nul", "a\x01.rvt",
+               "Beta?.rvt", "Beta<1>.rvt", "Beta|x.rvt", 'Be"ta.rvt', "Beta*.rvt", "..", ".",
+               "x" * 300]
+        plan = self.plan([link(n, P2, M5) for n in bad], [cache_file(P2, M5)])
+        self.assertEqual([i.name for i in plan.items], ["Alpha-Architecture.rvt"])
+        self.assertEqual(len(plan.notes), len(bad))
+
+    def test_unsafe_host_name_raises_the_stage_error(self):
+        for name in ("..\\Alpha.rvt", "LPT1.rvt", ""):
+            with self.assertRaises(rx_cloud.StageError):
+                self.plan([], [], row=host_row(name=name))
+
+    def test_plan_stage_is_pure(self):
+        files = [cache_file(P2, M5)]
+        links = [link("Beta-MEP", P2, M5)]
+        with unittest.mock.patch("io.open") as io_open, unittest.mock.patch("os.stat") as stat:
+            self.plan(links, files)
+        io_open.assert_not_called()
+        stat.assert_not_called()
+        self.assertEqual(links, [link("Beta-MEP", P2, M5)])
+        self.assertFalse(os.path.exists(self.memory.file_path))
+
+    def test_notes_exist_in_polish(self):
+        files = [cache_file(P2, M4)]
+        links = [link("Beta-MEP.rvt", P2, M5), link("alpha-architecture.rvt", P2, M4),
+                 link("..\\x.rvt", P2, M4), link("", P2, M9)]
+        english = self.plan(links, files).notes
+        with unittest.mock.patch.dict(sys.modules, polish()):
+            polish_notes = self.plan(links, files).notes
+            with self.assertRaises(rx_cloud.StageError) as caught:
+                self.plan([], [], row=host_row(name="..\\x.rvt"))
+        self.assertEqual(len(english), 4)
+        self.assertEqual(len(polish_notes), 4)
+        for en, pl in zip(english, polish_notes):
+            self.assertNotEqual(en, pl)
+        self.assertIn("Linku Beta-MEP.rvt nie ma w pamięci podręcznej", polish_notes[0])
+        self.assertIn("Nie skopiowano linku alpha-architecture.rvt", polish_notes[1])
+        self.assertIn("pliku", "%s" % caught.exception)
+
+
 # ------------------------------------------------------------------ criterion 12 and 13
 
 class SourceGuards(unittest.TestCase):
