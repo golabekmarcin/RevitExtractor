@@ -35,16 +35,15 @@ Known **unfixed** Codex findings (accepted for v1, fix after the owner's test):
 3. After the owner's results: README Validation sections, `TESTED_YEARS` (add 2025 if Part F passes), `PARALLEL_VERIFIED` (only if item G2 passes; today the Extractor build 2024.0.x fails with two at once), the question about deleting the old buttons (Q12), and the two findings above.
 4. Nice to have after v1 (owner): Revit Server (`RSN://`) models; an always-enabled "Export status" button (D8 option B); parallel exports (if G2 fails: research per-run isolation around the fixed pipe `Main_Process_to_Client_0_Pipe`).
 
-## Cloud catalog redesign (decided 2026-11-16, grill session; supersedes Q27 and the mapping part of Q29)
+## Cloud catalog (decided 2026-11-16, grill session; refines Q27/Q29)
 
 Problem: the Export scan marks every `CollaborationCache` file `local_copy` (disabled), and the files are GUID-named.
-- Build `cloud-catalog` now, in v1, as a separate "Cloud" source (not a folder-scan hack). Names/paths/version dates come from the **APS Data Management API**; no model file is opened.
-- Match key: project GUID + model GUID from the cache path `<Account>\<ProjectGUID>\<ModelGUID>.rvt` against `projectGuid`/`modelGuid` in the version extension data (from docs/forums, unverified on the owner's tenant). Never show a GUID as a name; unmatched cache files are "not in selected folders", disabled.
-- Export still runs on a copy from the cache under the real name (cache never written). Stale = cloud version newer than cache file: warn, allow, show both dates. Two same-named items in one run: second is disabled with a note.
-- Selection is Ideate style: Refresh button pulls hubs, projects, folders; user ticks what to include; saved per user. On open, a light re-read of ticked folders' version dates.
-- Auth: 3-legged OAuth + PKCE, localhost callback, no client secret. Client ID is entered once in per-user config (never git); refresh token DPAPI-encrypted in the profile. Metadata reads only.
-- No sign-in/network: message + "Sign in" button; fall back to the open model and its links (`LinkedModelModelId`).
-- **Open risk:** whether a self-registered app works without an ACC admin adding it (the owner has no admin rights). **Probe first:** `specs/cloud-api-probe/` (read-only, prints counts/field names only). Pass: build the full path (spec `SPEC-cloud-catalog.md`, test-first against mocked HTTP, Codex review, Revit 2022 check). Fail (0 hubs / HTTP 403): park the API, ship the fallback.
+- Build `cloud-catalog` now, in v1, as a separate "Cloud" source (not a folder-scan hack). Spec: `SPEC-cloud-catalog.md`.
+- **Names come from Revit journals** (`CLD:\US\{project GUID}<project name>\{model GUID}<file name>.rvt` lines and `ModelBrowserOpenDocumentEvent` JSON; formats in the archive, section 5 Cloud, checked 2026-11-10 on Revit 2022), matched to cache files by project GUID + model GUID from the cache path `<Account>\<ProjectGUID>\<ModelGUID>.rvt`. No model file is opened. Limit: only models opened on this machine appear (fits the owner's daily use).
+- Never show a GUID as a name; unmatched cache files are "not in selected folders", disabled. User ticks projects/folders to include, saved per user.
+- Export still runs on a copy from the cache under the real name (cache never written). Stale warning shows both dates. Two same-named items in one run: second is disabled with a note.
+- No journal data: message, and fall back to the open model and its links (`LinkedModelModelId`).
+- **APS Data Management API route parked (2026-11-16).** Researched and prototyped as a read-only probe (`specs/cloud-api-probe/`, kept for reference). Dropped because a self-registered APS app must be provisioned by an Account Admin of the hub that owns the project; the owner's projects belong to another company, the owner has no admin rights there, and the company email cannot register an APS app. Ideate Automation works only because that hub's admin authorized Ideate's own connector (its Client ID cannot be reused). Revisit only if an admin of the hub agrees: probe first, then API metadata (names, folders, cloud version dates).
 - Local commits only; push waits for the end of the Revit test; never `online`/upstream.
 
 ## Key decisions
