@@ -159,7 +159,7 @@ def main():
                   "zapamiętane."))
         return
 
-    lines = [tr("Models remembered: {0}", "Zapamiętane modele: {0}").format(len(memory.names)),
+    lines = [tr("This model was remembered.", "Zapamiętano ten model."),
              tr("Links remembered: {0}", "Zapamiętane łącza: {0}").format(links_remembered)]
     if mtime is None:
         lines.append(tr("No cache copy of this model was found, so its links were not stored.",

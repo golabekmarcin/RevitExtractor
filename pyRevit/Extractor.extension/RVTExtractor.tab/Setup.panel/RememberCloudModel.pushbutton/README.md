@@ -10,7 +10,7 @@ A pyRevit button for the fallback case of the Export button's cloud list: with a
 
 1. Open a cloud model (Autodesk Docs / ACC) in Revit. The button is greyed when no project is open.
 2. Click **Remember cloud model**.
-3. A short message gives counts only: the models remembered and the links remembered for this model. Names and ids are never shown.
+3. A short message gives counts only: a confirmation that this model was remembered and the number of its links remembered. Names and ids are never shown.
 
 If the open model is not a cloud model, you get a message and nothing is written.
 

@@ -10,7 +10,7 @@ Przycisk pyRevit na wypadek, gdy dzienniki Revita nie nazywają modelu na liści
 
 1. Otwórz w Revicie model z chmury (Autodesk Docs / ACC). Bez otwartego projektu przycisk jest wyszarzony.
 2. Kliknij **Zapamiętaj model z chmury**.
-3. Krótki komunikat podaje tylko liczby: zapamiętane modele i zapamiętane łącza tego modelu. Nazwy i identyfikatory nie są pokazywane.
+3. Krótki komunikat potwierdza zapamiętanie tego modelu i podaje liczbę zapamiętanych łączy. Nazwy i identyfikatory nie są pokazywane.
 
 Jeśli otwarty model nie jest modelem z chmury, pojawia się komunikat i nic nie jest zapisywane.
 

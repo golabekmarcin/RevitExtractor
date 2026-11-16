@@ -280,13 +280,13 @@ class RememberTests(unittest.TestCase):
         self.links = self.links * 3
         self.module.main()
         text = self.summary()
-        self.assertIn("Models remembered: 1", text)
+        self.assertIn("This model was remembered.", text)
         self.assertIn("Links remembered: 3", text)
 
     def test_messages_are_english_by_default_and_polish_on_request(self):
         self.module.main()
         english = self.summary()
-        self.assertIn("Models remembered", english)
+        self.assertIn("This model was remembered", english)
         for make in (lambda: FakeDoc(cloud=False), lambda: FakeDoc()):
             self.alerts[:] = []
             self.set_doc(make())
