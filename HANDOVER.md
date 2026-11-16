@@ -49,6 +49,14 @@ Problem: the Export scan marks every `CollaborationCache` file `local_copy` (dis
 - **APS Data Management API route parked (2026-11-16).** Researched and prototyped as a read-only probe (`specs/cloud-api-probe/`, kept for reference). Dropped because a self-registered APS app must be provisioned by an Account Admin of the hub that owns the project; the owner's projects belong to another company, the owner has no admin rights there, and the company email cannot register an APS app. Ideate Automation works only because that hub's admin authorized Ideate's own connector (its Client ID cannot be reused). Revisit only if an admin of the hub agrees: probe first, then API metadata (names, folders, cloud version dates).
 - Local commits only; push waits for the end of the Revit test; never `online`/upstream.
 
+## Next session: in-place cloud export instead of copies (grill started 2026-11-16)
+
+Owner question: the built cloud-catalog **copies** the host and its links from `CollaborationCache` into `<run>\model\` under real names (needed because the Extractor resolves links by file name and cache files are GUID-named), then deletes the copies. Owner would rather export from the cache files **in place** (no copies), expecting cloud link paths (Autodesk Docs) to keep working.
+- Facts: the copy approach passed on 2026-11-10 (archive Q29). In-place is **untested**: (1) does the Extractor open a GUID-named cache host directly; (2) do links resolve at all without real names (the Extractor searches folders by file name; it has no Autodesk sign-in, so cloud paths probably do not resolve); (3) does the Extractor ever write to the model file or beside it (that would damage the cache).
+- Candidate designs: A) direct host path, links unresolved; B) staging folder of **NTFS hard links** with real names pointing at the cache files (no copy, no extra space, same volume only; created with ctypes `CreateHardLink` on IronPython 2.7, no admin; removing the link never touches the cache); C) current copy mode (safe, slow, GBs).
+- Proposed rule: in place/hard link only if a test shows size/mtime/SHA-256 of the cache files unchanged and no new files beside them after an export; else keep copy. Fall back to copy automatically when linking fails.
+- Open questions asked in the grill (answers pending): main driver (space/time vs link paths vs freshness); willing to run a counts-only A/B/C experiment in the Revit 2022 session; safety rule; default mode and a switch.
+
 ## Key decisions
 
 - Owner's working mode: agent writes and builds the module specs, one Revit test at the end of v1, a local commit per module, one push before that test.
