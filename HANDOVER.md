@@ -35,6 +35,18 @@ Known **unfixed** Codex findings (accepted for v1, fix after the owner's test):
 3. After the owner's results: README Validation sections, `TESTED_YEARS` (add 2025 if Part F passes), `PARALLEL_VERIFIED` (only if item G2 passes; today the Extractor build 2024.0.x fails with two at once), the question about deleting the old buttons (Q12), and the two findings above.
 4. Nice to have after v1 (owner): Revit Server (`RSN://`) models; an always-enabled "Export status" button (D8 option B); parallel exports (if G2 fails: research per-run isolation around the fixed pipe `Main_Process_to_Client_0_Pipe`).
 
+## Cloud catalog redesign (decided 2026-11-16, grill session; supersedes Q27 and the mapping part of Q29)
+
+Problem: the Export scan marks every `CollaborationCache` file `local_copy` (disabled), and the files are GUID-named.
+- Build `cloud-catalog` now, in v1, as a separate "Cloud" source (not a folder-scan hack). Names/paths/version dates come from the **APS Data Management API**; no model file is opened.
+- Match key: project GUID + model GUID from the cache path `<Account>\<ProjectGUID>\<ModelGUID>.rvt` against `projectGuid`/`modelGuid` in the version extension data (from docs/forums, unverified on the owner's tenant). Never show a GUID as a name; unmatched cache files are "not in selected folders", disabled.
+- Export still runs on a copy from the cache under the real name (cache never written). Stale = cloud version newer than cache file: warn, allow, show both dates. Two same-named items in one run: second is disabled with a note.
+- Selection is Ideate style: Refresh button pulls hubs, projects, folders; user ticks what to include; saved per user. On open, a light re-read of ticked folders' version dates.
+- Auth: 3-legged OAuth + PKCE, localhost callback, no client secret. Client ID is entered once in per-user config (never git); refresh token DPAPI-encrypted in the profile. Metadata reads only.
+- No sign-in/network: message + "Sign in" button; fall back to the open model and its links (`LinkedModelModelId`).
+- **Open risk:** whether a self-registered app works without an ACC admin adding it (the owner has no admin rights). **Probe first:** `specs/cloud-api-probe/` (read-only, prints counts/field names only). Pass: build the full path (spec `SPEC-cloud-catalog.md`, test-first against mocked HTTP, Codex review, Revit 2022 check). Fail (0 hubs / HTTP 403): park the API, ship the fallback.
+- Local commits only; push waits for the end of the Revit test; never `online`/upstream.
+
 ## Key decisions
 
 - Owner's working mode: agent writes and builds the module specs, one Revit test at the end of v1, a local commit per module, one push before that test.

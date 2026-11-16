@@ -34,12 +34,12 @@ Run the whole export from Revit through **one pyRevit button**, with no PowerShe
 | `export-runner` | Run folder, `index.json`, `RevitExtractor.exe` as its own process, queue (max 1 parallel), cancel, success check | `index-builder` |
 | `status-window` | Modeless progress/result window: Open output folder, Open in Analyzer, Cancel export | `export-runner`, `shared-ui` |
 | `export-button` | The one ribbon button (zero-doc only) and its main window: model → views → options → queue | all of the above |
-| `cloud-catalog` | Cloud list from journals + `CollaborationCache`, staging copies under real names with cache dates (Q27, Q29) | `model-reader`, `capabilities` |
+| `cloud-catalog` | Cloud list from the APS Data Management API (names, folders, version dates; hubs/projects/folders ticked by the user, Ideate style), matched to `CollaborationCache` files by project GUID + model GUID from the cache path; staging copies under real names with cache dates. API metadata supersedes the journal-based list of Q27 and the mapping part of Q29 (decided 2026-11-16, `HANDOVER.md`). Gated on the probe `specs/cloud-api-probe/` | `model-reader`, `capabilities` |
 | `ifc-setup-command` | Separate small command with a document open: prepare an IFC setup (Q22) | `shared-ui`, `capabilities` |
 
 Build order: `shared-ui`, `capabilities` → `index-builder`, `model-catalog`, `model-reader`, `export-runner` → `status-window` → `export-button`.
 
-**v1 stops after `export-button`** (owner decision 2026-11-10): local/server models end to end, verified by the owner in Revit 2022. `cloud-catalog` is v1.1 and `ifc-setup-command` is v1.2. Their specs are written when v1 is done.
+**v1 stops after `export-button`** (owner decision 2026-11-10): local/server models end to end, verified by the owner in Revit 2022. `ifc-setup-command` is v1.2. `ifc-setup-command`'s spec is written when v1 is done. **Update 2026-11-16:** `cloud-catalog` moves into v1 once the API probe passes (otherwise it is parked and the open-model-and-links fallback ships); its spec is `SPEC-cloud-catalog.md`.
 
 Out of scope: `Start-RevitExport.ps1` stays as it is, with bug fixes only (Q25). The Analyzer is unchanged.
 
