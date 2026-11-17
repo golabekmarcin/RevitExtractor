@@ -98,7 +98,8 @@ class SettingsTests(unittest.TestCase):
         got = logic.load_settings(Config(), self.DOCS)
         self.assertEqual(got, {"roots": [],
                                "output_parent": os.path.join(self.DOCS, "RevitExtractor"),
-                               "max_parallel": 1, "shared_index_path": ""})
+                               "max_parallel": 1, "shared_index_path": "",
+                               "subfolders": True})
 
     def test_round_trip_through_stub_config(self):
         config = Config()
@@ -133,7 +134,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(got["roots"], [os.path.normpath("D:\\A"), os.path.normpath("D:\\B")])
         saved = logic.settings_to_save(["D:\\A\\Sub", "D:\\A", "D:\\A"], " D:\\O ", "2", " p ")
         self.assertEqual(saved, {"roots": [os.path.normpath("D:\\A")], "output_parent": "D:\\O",
-                                 "max_parallel": 2, "shared_index_path": "p"})
+                                 "max_parallel": 2, "shared_index_path": "p",
+                                 "subfolders": True})
 
     def test_unknown_documents_folder_is_an_error_only_when_needed(self):
         logic.load_settings(Config(output_parent="D:\\Out"), "")      # not needed
@@ -708,7 +710,8 @@ class XamlShapeTests(unittest.TestCase):
                      "none_btn", "roots_lb", "count_text", "error_text", "summary_text",
                      "status_text", "caps_text", "output_text", "shared_path_text", "source_bar",
                      "source_local_rb", "source_cloud_rb", "cloud_panel", "cloud_lv",
-                     "cloud_projects_lb", "cloud_message_text"):
+                     "cloud_projects_lb", "cloud_message_text", "subfolders_cb",
+                     "search_folder_cb"):
             self.assertIn(name, xaml_names(MODELS_XAML), name)
 
     def test_view_window_footer(self):
@@ -919,12 +922,14 @@ class FakeScan(object):
         self.rows = rows
         self.errors = list(errors)
         self.calls = []
+        self.subfolders = []
         self.pulled = 0
         self.finished = 0
         self.closed_early = 0
 
-    def __call__(self, roots, running_year, read_info, cache, errors=None):
+    def __call__(self, roots, running_year, read_info, cache, errors=None, subfolders=True):
         self.calls.append((list(roots), running_year, read_info, cache))
+        self.subfolders.append(subfolders)
 
         def generate():
             try:
@@ -1183,6 +1188,25 @@ class ModelWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(self.ticked(), ["e.rvt"])
         self.assertEqual(before + 1, self.window.models_lv.Items.refreshes)
         self.assertEqual(SharedEventReactive.raised, [])
+
+    def test_search_is_by_file_name_unless_the_folder_box_is_ticked(self):
+        self.open()
+        self.tick()
+        search = legacy.FakeSearchBar.instances[0]
+        search.Text = "n"          # only the folder of e.rvt contains an n
+        self.assertEqual([row.Name for row in self.shown()], [])
+        self.window.search_folder_cb.IsChecked = True
+        self.fire("search_folder_cb")
+        self.assertEqual([row.Name for row in self.shown()], ["e.rvt"])
+
+    def test_subfolders_switch_is_remembered_and_rescans(self):
+        self.open()
+        self.assertTrue(self.window.subfolders_cb.IsChecked)
+        self.assertEqual(self.scan.subfolders, [True])
+        self.window.subfolders_cb.IsChecked = False
+        self.fire("subfolders_cb")
+        self.assertEqual(self.scan.subfolders, [True, False])
+        self.assertIs(self.saved[-1]["subfolders"], False)
 
     def test_folder_and_version_column_filters(self):
         self.open()
@@ -2896,8 +2920,12 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual([row.Name for row in self.window.cloud_lv.ItemsSource],
                          ["Beta-MEP.rvt"])
         search.Text = "przyk"
+        self.assertEqual([row.Name for row in self.window.cloud_lv.ItemsSource], [],
+                         "the project name is not searched by default")
+        self.window.search_folder_cb.IsChecked = True
+        self.fire("search_folder_cb")
         self.assertEqual([row.Name for row in self.window.cloud_lv.ItemsSource],
-                         ["Zażółć-Konstrukcja.rvt"], "the project name is searchable")
+                         ["Zażółć-Konstrukcja.rvt"], "the project name is searchable on request")
 
     def test_counts_and_unnamed_files(self):
         self.open_cloud()

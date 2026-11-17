@@ -24,7 +24,7 @@ except NameError:
     _TEXT_TYPES = (str,)
 
 CONFIG_SECTION = "RevitExtractorExport"
-SETTING_NAMES = ("roots", "output_parent", "max_parallel", "shared_index_path")
+SETTING_NAMES = ("roots", "output_parent", "max_parallel", "shared_index_path", "subfolders")
 _VIEW_ID_KEYS = ("view_ids", "view_unique_ids")
 
 
@@ -74,16 +74,18 @@ def load_settings(config, documents_dir):
         "output_parent": output_parent,
         "max_parallel": _max_parallel(_read(config, "max_parallel")),
         "shared_index_path": _text(_read(config, "shared_index_path")),
+        "subfolders": _read(config, "subfolders") is not False,
     }
 
 
-def settings_to_save(roots, output_parent, max_parallel, shared_index_path):
+def settings_to_save(roots, output_parent, max_parallel, shared_index_path, subfolders=True):
     """The dict to store: normalized roots, trimmed texts, a valid max_parallel. Plain values."""
     return {
         "roots": normalize_roots(roots),
         "output_parent": _text(output_parent),
         "max_parallel": _max_parallel(max_parallel),
         "shared_index_path": _text(shared_index_path),
+        "subfolders": subfolders is not False,
     }
 
 

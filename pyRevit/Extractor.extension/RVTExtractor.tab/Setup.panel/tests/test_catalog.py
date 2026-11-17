@@ -121,6 +121,12 @@ class IterModelFiles(TempTree):
         paths = list(iter_model_files([os.path.join(self.tmp, "sub"), self.tmp, self.tmp]))
         self.assertEqual(self.rel(paths), ["a.rvt", "sub/b.rvt"])
 
+    def test_subfolders_can_be_left_out(self):
+        self.touch("a.rvt")
+        self.touch("sub", "b.rvt")
+        paths = list(iter_model_files([self.tmp], subfolders=False))
+        self.assertEqual(self.rel(paths), ["a.rvt"])
+
     def test_backup_files_need_sibling(self):
         self.touch("Tower.rvt")
         self.touch("Tower.0001.rvt")

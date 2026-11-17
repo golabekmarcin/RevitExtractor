@@ -46,9 +46,12 @@
                     <ListBox Grid.Row="1" x:Name="roots_lb" Height="66" SelectionMode="Single"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
                     <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
+                        <Button x:Name="rescan_btn" Content="{DynamicResource models_rescan}" ToolTip="{DynamicResource models_rescan_tip}" Margin="0,0,0,6"/>
                         <Button x:Name="add_root_btn" Content="{DynamicResource models_add_root}" Margin="0,0,0,6"/>
                         <Button x:Name="remove_root_btn" Content="{DynamicResource models_remove_root}"
-                                ToolTip="{DynamicResource models_remove_root_tip}"/>
+                                ToolTip="{DynamicResource models_remove_root_tip}" Margin="0,0,0,6"/>
+                        <CheckBox x:Name="subfolders_cb" Content="{DynamicResource models_subfolders}"
+                                  ToolTip="{DynamicResource models_subfolders_tip}"/>
                     </StackPanel>
                 </Grid>
                 <StackPanel Grid.Column="2">
@@ -70,7 +73,11 @@
                 <RadioButton x:Name="source_cloud_rb" GroupName="source" Content="{DynamicResource models_source_cloud}"
                              VerticalAlignment="Center"/>
             </StackPanel>
-            <ContentControl x:Name="search_host" Focusable="False" Margin="0,0,0,8"/>
+            <DockPanel Margin="0,0,0,8">
+                <CheckBox DockPanel.Dock="Right" x:Name="search_folder_cb" Content="{DynamicResource search_in_folder}"
+                          ToolTip="{DynamicResource search_in_folder_tip}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                <ContentControl x:Name="search_host" Focusable="False"/>
+            </DockPanel>
             <DockPanel>
                 <Button x:Name="all_btn" Content="{DynamicResource check_visible}" Margin="0,0,8,0"/>
                 <Button x:Name="none_btn" Content="{DynamicResource uncheck_visible}" Margin="0,0,12,0"/>
@@ -150,7 +157,6 @@
         <TextBlock Grid.Row="6" x:Name="error_text" Style="{DynamicResource RxError}" Margin="0,6,0,0" TextWrapping="Wrap"/>
         <Grid Grid.Row="7" Margin="0,8,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <Button x:Name="rescan_btn" Content="{DynamicResource models_rescan}" ToolTip="{DynamicResource models_rescan_tip}" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0">
                 <TextBlock x:Name="summary_text" FontWeight="SemiBold" TextWrapping="Wrap"/>
                 <TextBlock x:Name="status_text" Margin="0,2,0,0" Style="{DynamicResource RxMuted}" TextWrapping="Wrap"/>

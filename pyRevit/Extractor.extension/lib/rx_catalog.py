@@ -71,12 +71,13 @@ def _is_backup_folder(name):
     return lowered == "backup" or lowered.endswith("_backup")
 
 
-def iter_model_files(roots, walk=os.walk, errors=None):
+def iter_model_files(roots, walk=os.walk, errors=None, subfolders=True):
     """Yield .rvt paths under the roots: sorted, deterministic, each path once.
 
     Skips folders named Backup or ending in _backup, and files named <name>.NNNN.rvt when
     <name>.rvt sits in the same folder. A missing or unreadable folder is appended to `errors`
-    (when given) and never raised.
+    (when given) and never raised. With subfolders=False only the files directly in each root
+    are yielded.
     """
     def on_error(exc):
         if errors is not None:
@@ -88,6 +89,8 @@ def iter_model_files(roots, walk=os.walk, errors=None):
         current_root[0] = root
         for folder, dirs, files in walk(root, onerror=on_error):
             dirs[:] = sorted((d for d in dirs if not _is_backup_folder(d)), key=os.path.normcase)
+            if not subfolders:
+                dirs[:] = []
             lowered = set(name.lower() for name in files)
             for name in sorted(files, key=os.path.normcase):
                 if not name.lower().endswith(".rvt"):
@@ -240,7 +243,7 @@ class Cache(object):
             return False
 
 
-def scan(roots, running_year, read_info, cache, stat=os.stat, errors=None):
+def scan(roots, running_year, read_info, cache, stat=os.stat, errors=None, subfolders=True):
     """Yield one Row per model file, one file per pull, so the window can time-slice.
 
     Local copies of centrals are yielded too (state "local_copy", enabled False); the caller
@@ -255,7 +258,7 @@ def scan(roots, running_year, read_info, cache, stat=os.stat, errors=None):
     seen = []
     finished = False
     try:
-        for path in iter_model_files(roots, errors=problems):
+        for path in iter_model_files(roots, errors=problems, subfolders=subfolders):
             seen.append(path)
             try:
                 st = stat(path)

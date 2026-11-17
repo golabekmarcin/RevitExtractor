@@ -154,7 +154,8 @@ class ModelRow(forms.Reactive):
         self.Version = row.version or ""
         self.Note = row.note or ""
         self.Tip = row.path if self.enabled else (row.note or row.path)
-        self.SearchText = " ".join((self.Name, self.Folder, self.Version)).lower()
+        self.SearchText = self.Name.lower()
+        self.SearchWide = " ".join((self.Name, self.Folder)).lower()
         self.job_key = _key(row.path)
         self._checked = False
 
@@ -188,7 +189,8 @@ class CloudModelRow(forms.Reactive):
         self.CacheDate = row.cache_date
         self.Note = row.note or ""
         self.Tip = row.note if row.note else "%s / %s" % (row.project, row.name)
-        self.SearchText = " ".join((row.name, row.project, row.cache_date)).lower()
+        self.SearchText = row.name.lower()
+        self.SearchWide = " ".join((row.name, row.project)).lower()
         self._checked = False
 
     @forms.reactive
@@ -263,6 +265,7 @@ class ModelWindow(forms.WPFWindow):
         self._roots = list(settings.get("roots") or [])
         self._max_parallel = settings.get("max_parallel", 1)
         self._shared_path = settings.get("shared_index_path") or ""
+        self._subfolders = settings.get("subfolders") is not False
         self.output_parent = settings.get("output_parent") or ""
         self.fatal_error = None
         self._generator = None
@@ -295,12 +298,12 @@ class ModelWindow(forms.WPFWindow):
 
         self._rows = ObservableCollection[object]()
         self._search = SearchBar(self.search_host, self._on_filter_changed, regex=True,
-                                 tooltip=tr("Search by file name, folder or Revit version",
-                                            "Szukaj po nazwie pliku, folderze lub wersji Revita"))
+                                 tooltip=tr("Search by file name (tick \"Also search folder\" to include the folder)",
+                                            "Szukaj po nazwie pliku (zaznacz \"Szukaj też w folderze\", aby objąć folder)"))
         # Before any Filter is assigned: the view may run the predicate at once.
         self._filters = ColumnFilterController(
             lambda: self._rows, self._on_filter_changed,
-            base_visible=lambda row: self._search.matches(row.SearchText))
+            base_visible=lambda row: self._search.matches(self._search_text(row)))
         columns = self.models_lv.View.Columns
         self._filters.register(columns[FOLDER_COLUMN], self.Resources["models_col_folder"],
                                "Folder")
@@ -343,6 +346,9 @@ class ModelWindow(forms.WPFWindow):
         self.all_btn.Click += self._on_select_all
         self.none_btn.Click += self._on_unselect_all
         self.rescan_btn.Click += self._on_rescan
+        self.subfolders_cb.IsChecked = self._subfolders
+        self.subfolders_cb.Click += self._on_subfolders
+        self.search_folder_cb.Click += self._on_filter_changed
         self.close_btn.Click += self._on_close
         self.views_btn.Click += self._on_views
         self.export_btn.Click += self._on_export
@@ -402,7 +408,8 @@ class ModelWindow(forms.WPFWindow):
                                 "Lista modeli jest niedostępna."))
             return
         self._generator = self._scan(list(self._roots), self._caps.year, self._read_info,
-                                     self._cache, errors=self._scan_errors)
+                                     self._cache, errors=self._scan_errors,
+                                     subfolders=self._subfolders)
         self._say("local", tr("Reading the model folders…", "Odczytywanie folderów z modelami…"))
         self._timer.Start()
         self._refresh_state()
@@ -500,6 +507,14 @@ class ModelWindow(forms.WPFWindow):
         self._start_scan()
 
     @_guarded
+    def _on_subfolders(self, sender, args):
+        self._subfolders = bool(self.subfolders_cb.IsChecked)
+        self._show_error("")
+        self._persist()
+        if self._loaded and self._roots:
+            self._rescan()
+
+    @_guarded
     def _on_rescan(self, sender, args):
         self._show_error("")
         if self._source == "cloud":
@@ -513,10 +528,14 @@ class ModelWindow(forms.WPFWindow):
     # -- rows
 
     def _visible(self, row):
-        return self._search.matches(row.SearchText) and self._filters.matches(row)
+        return self._search.matches(self._search_text(row)) and self._filters.matches(row)
 
     def _cloud_visible(self, row):
-        return self._search.matches(row.SearchText)
+        return self._search.matches(self._search_text(row))
+
+    def _search_text(self, row):
+        """File name only, or name and folder (project for cloud) when the box is ticked."""
+        return row.SearchWide if self.search_folder_cb.IsChecked else row.SearchText
 
     @staticmethod
     def _ticked_in(rows):
@@ -644,7 +663,7 @@ class ModelWindow(forms.WPFWindow):
     def _persist(self, values=None):
         if values is None:
             values = settings_to_save(self._roots, self.output_parent, self._max_parallel,
-                                      self._shared_path)
+                                      self._shared_path, self._subfolders)
         try:
             self._save_settings(values)
         except Exception as error:
@@ -655,7 +674,7 @@ class ModelWindow(forms.WPFWindow):
 
     def _change_roots(self, roots):
         values = settings_to_save(roots, self.output_parent, self._max_parallel,
-                                  self._shared_path)
+                                  self._shared_path, self._subfolders)
         if [_key(root) for root in values["roots"]] == [_key(root) for root in self._roots]:
             self._set_status(tr("That folder is already in the list (or inside one that is).",
                                 "Ten folder jest już na liście (lub w folderze z listy)."))
