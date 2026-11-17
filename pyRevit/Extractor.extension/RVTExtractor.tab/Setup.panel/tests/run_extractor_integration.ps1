@@ -25,6 +25,9 @@ The process is started with System.Diagnostics.Process from exactly the spec's f
 working directory and environment, the fields rx_runner.DotNetStarter sets. Everything is written
 under -OutputParent (default %TEMP%\rx-integration-<id>); never into the repo or a test-* folder.
 Needs CPython 3 on PATH (or -Python). Exit code 0 = PASS, 1 = FAIL.
+On an early exit or throw the final block ends what this script started with Start-Spec (the
+recorded pid + creation time, checked again; taskkill /T /F on that pid; never by name). Processes
+started by tests\cloud_cli.py (-Cloud) are not tracked here.
 #>
 [CmdletBinding()]
 param(
@@ -174,7 +177,100 @@ function Start-Spec($Spec, [switch]$ShowWindow) {
     }
     $process = [System.Diagnostics.Process]::Start($info)
     if ($null -eq $process) { throw "Process did not start: $($Spec.file)" }
+    Register-Owned $process
     return $process
+}
+
+# --- processes this script started (ended in the final block on an early exit or throw) -------
+# Only these roots and their descendants are ever ended, each after its identity (pid + creation
+# time) is checked again; never by executable name. The Process object keeps a handle open, so
+# Windows does not reuse a root's pid while it is listed here.
+$owned = New-Object System.Collections.Generic.List[object]
+
+function Get-ProcessInfo([int]$ProcessId) {
+    return Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+}
+
+function Register-Owned($Process) {
+    # Creation time from the open handle (also valid after a quick exit), cut to the microsecond
+    # Win32_Process.CreationDate carries.
+    $created = $null
+    try { $ticks = $Process.StartTime.Ticks; $created = New-Object DateTime ($ticks - ($ticks % 10)) } catch { $created = $null }
+    $info = Get-ProcessInfo $Process.Id
+    if ($null -eq $created -and $info) { $created = $info.CreationDate }
+    $owned.Add([pscustomobject]@{ Process = $Process; Pid = $Process.Id; Created = $created
+                                  Path = $(if ($info) { $info.ExecutablePath } else { [string]$Process.StartInfo.FileName }) })
+}
+
+function Test-SameTime($A, $B) {
+    return ($null -ne $A -and $null -ne $B -and [math]::Abs(($A - $B).TotalMilliseconds) -lt 1)
+}
+
+function Test-SameProcess([int]$ProcessId, $Created) {
+    $now = Get-ProcessInfo $ProcessId
+    return ($null -ne $now -and (Test-SameTime $now.CreationDate $Created))
+}
+
+function Get-OwnedTree($Root) {
+    # Descendants of one owned root, from Win32_Process.ParentProcessId. A child must be created
+    # after its parent (a reused parent pid would list strangers) and, when the root has exited,
+    # before the root's exit (orphans of our cmd.exe, nothing started later).
+    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate)
+    $until = $null
+    if ($Root.Process.HasExited) { try { $until = $Root.Process.ExitTime } catch { $until = $null } }
+    $tree = @()
+    $queue = New-Object System.Collections.Generic.Queue[object]
+    $queue.Enqueue([pscustomobject]@{ Pid = $Root.Pid; Created = $Root.Created })
+    $seen = @{ ([string]$Root.Pid) = $true }
+    while ($queue.Count) {
+        $parent = $queue.Dequeue()
+        foreach ($p in $all) {
+            if ($p.ParentProcessId -ne $parent.Pid -or $p.ProcessId -eq $parent.Pid) { continue }
+            if ($seen.ContainsKey([string]$p.ProcessId)) { continue }
+            if ($p.CreationDate -lt $parent.Created) { continue }
+            if ($null -ne $until -and $p.CreationDate -gt $until) { continue }
+            $seen[[string]$p.ProcessId] = $true
+            $member = [pscustomobject]@{ Pid = [int]$p.ProcessId; Created = $p.CreationDate; Name = $p.Name }
+            $tree += $member
+            $queue.Enqueue($member)
+        }
+    }
+    return $tree
+}
+
+function Stop-Owned {
+    # Ends what is still running of the processes this script started; returns what is left.
+    $left = @()
+    foreach ($root in $owned) {
+        if ($null -eq $root.Created) { continue }   # identity never recorded: never ended
+        $tree = @(Get-OwnedTree $root)
+        $rootAlive = (!$root.Process.HasExited) -and (Test-SameProcess $root.Pid $root.Created)
+        if (!$rootAlive -and !$tree) { continue }
+        Write-Host ("Ending what this script started: pid {0} ({1}) and {2} descendant(s)" -f
+            $root.Pid, $root.Path, $tree.Count) -ForegroundColor Yellow
+        if ($rootAlive -and (Test-SameProcess $root.Pid $root.Created)) {
+            $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+            $previous = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { & $taskkill /PID $root.Pid /T /F 2>&1 | Out-Null } finally { $ErrorActionPreference = $previous }
+            [void]$root.Process.WaitForExit(30000)
+        }
+        foreach ($member in $tree) {   # orphans taskkill /T could not reach (root already gone)
+            if (Test-SameProcess $member.Pid $member.Created) {
+                Stop-Process -Id $member.Pid -Force -ErrorAction SilentlyContinue
+            }
+        }
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            $still = @(@($root) + $tree | Where-Object { Test-SameProcess $_.Pid $_.Created })
+            if ($root.Process.HasExited) { $still = @($still | Where-Object { $_.Pid -ne $root.Pid }) }
+            if (!$still) { break }
+            Start-Sleep -Milliseconds 500
+        } while ([DateTime]::UtcNow -lt $deadline)
+        $left += $still
+    }
+    return $left
 }
 
 function New-Run([string]$Model, [string]$Label) {
@@ -512,6 +608,11 @@ try {
 } finally {
     $total.Stop()
     Write-Step 'Checks after the run'
+    # On an early exit or throw, end the processes this script started (and only those).
+    try {
+        $ownedLeft = @(Stop-Owned)
+        if ($ownedLeft) { Add-Failure "still running after the script tried to end them: $(($ownedLeft | ForEach-Object { $_.Pid }) -join ', ')" }
+    } catch { Add-Failure "ending the script's own processes failed: $($_.Exception.Message)" }
     foreach ($path in $hashes.Keys) {
         $after = Get-Hash $path
         if ($after -eq $hashes[$path]) { Write-Host "SHA-256 unchanged: $path ($after)" }

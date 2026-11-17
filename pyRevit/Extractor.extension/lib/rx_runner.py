@@ -467,6 +467,15 @@ class Queue(object):
     session, the .ps1 launcher, a second Revit) keeps the fixed pipe free. A cloud job asks it
     again after its copy, right before the Extractor starts.
 
+    `lock` (optional): acquire() -> bool without waiting, release(). The status window passes a
+    MachineRunLock: only one Extractor may run per computer (fixed IPC pipe), and hold() alone
+    races between two sessions and does not see cmd.exe before RevitExtractor.exe exists. The
+    lock is taken before hold() is asked and before any start, kept while a job of this queue
+    runs (and, with tree_running, until no Extractor process is left), and given back at the
+    end of every poll() that leaves nothing running: after exit, cancel, a failed start, or a
+    hold() that said true. Not taken = held. An acquire() that raises counts as held (fail
+    closed: no lock, no start); release_lock() gives it back at once.
+
     Cloud jobs (Job.stage), all optional and injectable for tests:
     - `stage_clock()`: seconds (float) for the copy budget; read only while a job is staging;
     - `stage_budget`, `stage_chunk`: seconds per poll() and bytes per copy step;
@@ -478,7 +487,7 @@ class Queue(object):
 
     def __init__(self, starter, clock, max_parallel=1, system_root=None, token=None, hold=None,
                  stage_clock=None, stage_budget=STAGE_BUDGET, stage_chunk=STAGE_CHUNK,
-                 free_space=None, tree_running=None, remove=None, copier=None):
+                 free_space=None, tree_running=None, remove=None, copier=None, lock=None):
         if (isinstance(max_parallel, bool) or not isinstance(max_parallel, _INTEGER_TYPES)
                 or max_parallel < 1):
             raise RunnerError(tr("Invalid number of parallel exports: {0}",
@@ -490,6 +499,9 @@ class Queue(object):
         self._system_root = system_root
         self._token = token or new_token
         self._hold = hold
+        self._lock = lock
+        self._locked = False
+        self._lock_started = False  # a job of ours started while this lock was held
         self.held = False
         self._jobs = []
         self._handles = {}
@@ -555,9 +567,10 @@ class Queue(object):
         return removed
 
     def busy(self):
-        """True while a job waits, copies or runs, or staged copies still wait for deletion."""
+        """True while a job waits, copies or runs, staged copies still wait for deletion, or the
+        run lock is still ours (poll() gives it back)."""
         return (any(job.state in (QUEUED, STAGING, RUNNING) for job in self._jobs)
-                or bool(self._cleanups))
+                or bool(self._cleanups) or self._locked)
 
     def _find(self, job_id):
         for job in self._jobs:
@@ -593,22 +606,52 @@ class Queue(object):
         for job_id in self._advance_staging():
             if job_id not in changed:
                 changed.append(job_id)
+        self._release_if_idle()
         return changed
 
     def _is_held(self):
         """Asked only when a start waits (a queued job with a free slot, or a copied cloud job)
-        and none of ours runs (our own Extractor would count)."""
-        if self._hold is None or self._running_count():
+        and none of ours runs (our own Extractor would count; it already has the lock)."""
+        if (self._hold is None and self._lock is None) or self._running_count():
             return False
         waiting = any(job.state == STAGING and job.stage_ready for job in self._jobs)
         if not waiting and self._slots_used() < self._max:
             waiting = any(job.state == QUEUED for job in self._jobs)
         if not waiting:
             return False
+        if self._lock is not None and not self._locked:
+            try:
+                self._locked = bool(self._lock.acquire())
+            except Exception:  # fail closed: without the lock no Extractor is started
+                self._locked = False
+            if not self._locked:
+                return True
+        if self._hold is None:
+            return False
         try:
             return bool(self._hold())
         except Exception:  # fail open: a broken check must not stall the queue for ever
             return False
+
+    def _release_if_idle(self):
+        """Give the run lock back when no job of ours runs and, once one of ours has started under
+        this lock, no Extractor process is left (its client may still be closing)."""
+        if not self._locked or self._running_count():
+            return
+        if self._lock_started and self._tree_alive():
+            return
+        self.release_lock()
+
+    def release_lock(self):
+        """Give the run lock back now (idempotent; never raises)."""
+        if not self._locked:
+            return
+        self._locked = False
+        self._lock_started = False
+        try:
+            self._lock.release()
+        except Exception:
+            pass
 
     def _running_count(self):
         return len([job for job in self._jobs if job.state == RUNNING])
@@ -650,6 +693,7 @@ class Queue(object):
         job.pid = handle.pid
         self._handles[job.id] = handle
         job.state = RUNNING
+        self._lock_started = self._locked
 
     # -- cloud jobs: staging
 
@@ -761,6 +805,7 @@ class Queue(object):
         job.pid = handle.pid
         self._handles[job.id] = handle
         job.state = RUNNING
+        self._lock_started = self._locked
 
     # -- cloud jobs: deleting the staged copies
 
@@ -1009,3 +1054,74 @@ class DotNetStarter(object):
                 except Exception:
                     pass
         return running
+
+
+# One name for every Revit session and Windows user on this computer: the Extractor's IPC pipe
+# (Main_Process_to_Client_0_Pipe) is fixed, so only one Extractor may run per computer.
+RUN_LOCK_NAME = "Global\\RevitExtractor.ExtractorRun"
+_RUN_LOCK_SLOT = "RevitExtractor.ExtractorRun.owner"
+
+
+class MachineRunLock(object):
+    """Queue lock (acquire/release) over a named System.Threading.Mutex; never waits.
+
+    - acquire(): True when this object owns the mutex (also when its last owner died without
+      releasing it: AbandonedMutexException); False when another session or user owns it
+      (a mutex created by another Windows user is not even opened: access denied = False).
+    - A Mutex is re-entrant on its owning thread and every pyRevit engine of one Revit runs on
+      the UI thread, so a marker in the AppDomain keeps a second session in this Revit out.
+    - release() on the thread that acquired it (the status window's DispatcherTimer, the UI
+      thread); the handle is always closed. If Revit ends first, Windows abandons the mutex.
+    """
+
+    def __init__(self, name=RUN_LOCK_NAME):
+        self._name = name
+        self._mutex = None
+
+    def acquire(self):
+        if self._mutex is not None:
+            return True
+        from System import AppDomain, UnauthorizedAccessException
+        from System.Threading import AbandonedMutexException, Mutex
+        domain = AppDomain.CurrentDomain
+        if domain.GetData(_RUN_LOCK_SLOT) is not None:
+            return False
+        try:
+            mutex = Mutex(False, self._name)
+        except UnauthorizedAccessException:
+            return False
+        taken = False
+        try:
+            try:
+                taken = bool(mutex.WaitOne(0))
+            except AbandonedMutexException:
+                taken = True   # ownership passed to this thread
+            if taken:
+                domain.SetData(_RUN_LOCK_SLOT, self._name)
+        except Exception:
+            if taken:
+                try:
+                    mutex.ReleaseMutex()
+                except Exception:
+                    pass
+            mutex.Dispose()
+            raise
+        if not taken:
+            mutex.Dispose()
+            return False
+        self._mutex = mutex
+        return True
+
+    def release(self):
+        mutex = self._mutex
+        if mutex is None:
+            return
+        self._mutex = None
+        try:
+            from System import AppDomain
+            AppDomain.CurrentDomain.SetData(_RUN_LOCK_SLOT, None)
+        finally:
+            try:
+                mutex.ReleaseMutex()
+            finally:
+                mutex.Dispose()

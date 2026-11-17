@@ -882,7 +882,7 @@ def ui_system_stubs(domain=None, timers=None):
         return timer
     listed = types.SimpleNamespace(GetProcessesByName=lambda name: [])
     system = stub_module("System", AppDomain=types.SimpleNamespace(CurrentDomain=domain),
-                         Func=FuncType(), String=str,
+                         Func=FuncType(), String=str, UnauthorizedAccessException=PermissionError,
                          TimeSpan=types.SimpleNamespace(FromSeconds=lambda s: ("seconds", s)))
     return {
         "System": system,
@@ -894,7 +894,25 @@ def ui_system_stubs(domain=None, timers=None):
         "System.Windows.Threading": stub_module("System.Windows.Threading",
                                                 DispatcherTimer=new_timer),
         "System.Diagnostics": stub_module("System.Diagnostics", Process=listed),
+        "System.Threading": stub_module("System.Threading", Mutex=StubMutex,
+                                        AbandonedMutexException=LookupError),
     }
+
+
+class StubMutex(object):
+    """A free machine-wide mutex: WaitOne(0) always takes it."""
+
+    def __init__(self, initially_owned, name):
+        self.name = name
+
+    def WaitOne(self, milliseconds):
+        return True
+
+    def ReleaseMutex(self):
+        pass
+
+    def Dispose(self):
+        pass
 
 
 def load_status_ui():
@@ -1648,6 +1666,11 @@ class OpenSession(unittest.TestCase):
         self.assertEqual(len(self.timers), 1)
         answer = json.loads(handler(json.dumps({"op": "ping"})))
         self.assertEqual((answer["ok"], answer["protocol"]), (True, PROTOCOL))
+
+    def test_queue_takes_the_machine_wide_run_lock(self):
+        handler = self.ui.open_session(1)
+        queue = handler.__self__._listener.queue
+        self.assertIsInstance(queue._lock, rx_runner.MachineRunLock)
 
     def test_parallel_stays_one_until_verified(self):
         handler = self.ui.open_session(4)

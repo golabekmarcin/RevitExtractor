@@ -790,16 +790,21 @@ class Guards(unittest.TestCase):
                 self.assertNotIn(name.split(".")[0], BANNED_TOP, name)
 
     def test_system_diagnostics_only_inside_dotnetstarter(self):
-        starter = [node for node in self.tree.body
-                   if isinstance(node, ast.ClassDef) and node.name == "DotNetStarter"]
-        self.assertEqual(len(starter), 1)
-        inside = set(id(node) for node in ast.walk(starter[0]))
+        # .NET only in DotNetStarter (System.Diagnostics) and MachineRunLock (the run mutex).
+        allowed = {"DotNetStarter": {"System.Diagnostics"},
+                   "MachineRunLock": {"System", "System.Threading"}}
+        owners = {}
+        for node in self.tree.body:
+            if isinstance(node, ast.ClassDef) and node.name in allowed:
+                for child in ast.walk(node):
+                    owners[id(child)] = node.name
+        self.assertEqual(sorted(set(owners.values())), sorted(allowed))
         found = 0
         for node in ast.walk(self.tree):
             for name in imported_names(node):
                 if name.split(".")[0] in BANNED_TOP:
-                    self.assertIn(id(node), inside, name)
-                    self.assertEqual(name, "System.Diagnostics")
+                    self.assertIn(id(node), owners, name)
+                    self.assertIn(name, allowed[owners[id(node)]])
                     found += 1
         self.assertGreater(found, 0)
 
@@ -1068,6 +1073,350 @@ class QueueHoldTest(TempDirTest):
         text = queue.tail(a)
         self.assertTrue(text.endswith("last line\n"))
         self.assertLessEqual(len(text), rx_runner._PROGRESS_TAIL_BYTES)
+
+
+# --- machine-wide run lock (one Extractor per computer: fixed IPC pipe) ----------------------
+
+class LockState(object):
+    """The named mutex every FakeLock of one test shares (one per computer)."""
+
+    def __init__(self):
+        self.owner = None
+
+
+class FakeLock(object):
+    """lock stand-in: acquire() -> bool without waiting, release(); can raise on acquire."""
+
+    def __init__(self, state, error=None):
+        self.state = state
+        self.error = error
+        self.acquires = 0
+        self.releases = 0
+
+    def acquire(self):
+        self.acquires += 1
+        if self.error is not None:
+            raise self.error
+        if self.state.owner is None or self.state.owner is self:
+            self.state.owner = self
+            return True
+        return False
+
+    def release(self):
+        self.releases += 1
+        if self.state.owner is self:
+            self.state.owner = None
+
+    @property
+    def owned(self):
+        return self.state.owner is self
+
+
+class QueueLockTest(TempDirTest):
+    def setUp(self):
+        super(QueueLockTest, self).setUp()
+        self.revit = os.path.join(self.tmp, "Revit")
+        os.makedirs(os.path.join(self.revit, "RevitExtractor"))
+        open(os.path.join(self.revit, "RevitExtractor", "RevitExtractor.exe"), "w").close()
+        self.out = os.path.join(self.tmp, "out")
+        self.starter = FakeStarter()
+        self.tokens = iter("%08x" % n for n in range(1, 1000))
+
+    model = QueueTest.model
+    add = QueueTest.add
+    job = QueueTest.job
+    finish = QueueTest.finish
+
+    def locked_queue(self, lock, starter=None, hold=None, tree_running=None):
+        return Queue(starter or self.starter, FakeClock(), system_root=SYSTEM_ROOT,
+                     token=lambda: next(self.tokens), hold=hold, lock=lock,
+                     tree_running=tree_running)
+
+    def test_second_queue_is_held_while_the_first_holds_the_lock(self):
+        # Two Revit sessions start at the same moment: the second sees "held", even before
+        # any RevitExtractor.exe exists (only cmd.exe so far), and starts nothing.
+        state = LockState()
+        first, second = FakeLock(state), FakeLock(state)
+        other_starter = FakeStarter()
+        q1 = self.locked_queue(first, hold=Hold(False))
+        q2 = self.locked_queue(second, starter=other_starter, hold=Hold(False))
+        a = self.add(q1, "a")
+        b = self.add(q2, "b")
+        q1.poll()
+        self.assertTrue(first.owned)
+        self.assertEqual(self.job(q1, a).state, "running")
+        q2.poll()
+        self.assertIs(q2.held, True)
+        self.assertEqual(other_starter.started, [])
+        self.assertEqual(self.job(q2, b).state, "queued")
+        self.assertIsNone(self.job(q2, b).paths, "no run folder while held")
+        self.finish(q1, a)
+        q1.poll()
+        self.assertEqual(self.job(q1, a).state, "ok")
+        self.assertIsNone(state.owner, "released once the job's tree exited")
+        q2.poll()
+        self.assertIs(q2.held, False)
+        self.assertEqual(other_starter.started_models(), [self.model("b")])
+        self.assertTrue(second.owned)
+
+    def test_lock_is_kept_across_back_to_back_jobs_of_one_queue(self):
+        state = LockState()
+        lock = FakeLock(state)
+        queue = self.locked_queue(lock)
+        a, b = self.add(queue, "a"), self.add(queue, "b")
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()
+        self.assertEqual(self.job(queue, b).state, "running")
+        self.assertTrue(lock.owned)
+        self.assertEqual(lock.releases, 0, "no gap another session could slip into")
+        self.finish(queue, b)
+        queue.poll()
+        self.assertIsNone(state.owner)
+        self.assertFalse(queue.busy())
+
+    def test_lock_released_after_cancel(self):
+        state = LockState()
+        queue = self.locked_queue(FakeLock(state))
+        a = self.add(queue, "a")
+        queue.poll()
+        self.assertTrue(queue.cancel(a))
+        queue.poll()
+        self.assertIsNotNone(state.owner, "kept until the killed tree has exited")
+        self.starter.handle_for(self.model("a")).exited = True
+        self.starter.handle_for(self.model("a")).code = 1
+        queue.poll()
+        self.assertEqual(self.job(queue, a).state, "cancelled")
+        self.assertIsNone(state.owner)
+        self.assertFalse(queue.busy())
+
+    def test_lock_released_after_a_failed_start(self):
+        state = LockState()
+        lock = FakeLock(state)
+        self.starter.fail_models.add(self.model("a"))
+        queue = self.locked_queue(lock)
+        a = self.add(queue, "a")
+        queue.poll()
+        self.assertEqual(self.job(queue, a).state, "failed")
+        self.assertEqual(lock.acquires, 1)
+        self.assertIsNone(state.owner)
+        self.assertFalse(queue.busy())
+        other_starter = FakeStarter()
+        other = self.locked_queue(FakeLock(state), starter=other_starter)
+        self.add(other, "b")
+        other.poll()
+        self.assertEqual(other_starter.started_models(), [self.model("b")])
+
+    def test_lock_released_when_the_run_folder_cannot_be_prepared(self):
+        state = LockState()
+        queue = self.locked_queue(FakeLock(state))
+        a = queue.add(rx_runner.Job(self.model("a"), SAMPLE_INDEX,
+                                    os.path.join(self.tmp, "no-revit"), self.out))
+        queue.poll()
+        self.assertEqual(self.job(queue, a).state, "failed")
+        self.assertIsNone(state.owner)
+
+    def test_raising_hold_does_not_deadlock(self):
+        state = LockState()
+        queue = self.locked_queue(FakeLock(state), hold=Hold(OSError("no process list")))
+        a = self.add(queue, "a")
+        queue.poll()
+        self.assertIs(queue.held, False)
+        self.assertEqual(self.job(queue, a).state, "running")
+        self.finish(queue, a)
+        queue.poll()
+        self.assertIsNone(state.owner)
+        self.assertFalse(queue.busy())
+
+    def test_hold_true_after_taking_the_lock_gives_it_back(self):
+        # A foreign Extractor (the .ps1 launcher) runs: held, and the lock is not kept, so
+        # another session is not blocked by a queue that starts nothing.
+        state = LockState()
+        hold = Hold(True)
+        queue = self.locked_queue(FakeLock(state), hold=hold)
+        self.add(queue, "a")
+        queue.poll()
+        self.assertIs(queue.held, True)
+        self.assertEqual(self.starter.started, [])
+        self.assertIsNone(state.owner)
+        hold.value = False
+        queue.poll()
+        self.assertEqual(len(self.starter.started), 1)
+
+    def test_a_raising_lock_counts_as_held(self):
+        # Fail closed: without the lock no Extractor is started; hold() is not even asked.
+        hold = Hold(False)
+        lock = FakeLock(LockState(), error=RuntimeError("mutex unavailable"))
+        queue = self.locked_queue(lock, hold=hold)
+        a = self.add(queue, "a")
+        queue.poll()
+        self.assertIs(queue.held, True)
+        self.assertEqual(self.starter.started, [])
+        self.assertEqual(hold.calls, 0)
+        self.assertTrue(queue.cancel(a))
+        self.assertFalse(queue.busy())
+
+    def test_lock_is_kept_until_the_tree_has_exited(self):
+        state = LockState()
+        alive = {"value": True}
+        queue = self.locked_queue(FakeLock(state), tree_running=lambda: alive["value"])
+        a = self.add(queue, "a")
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()
+        self.assertEqual(self.job(queue, a).state, "ok")
+        self.assertIsNotNone(state.owner, "a client process may still use the pipe")
+        self.assertTrue(queue.busy(), "keeps polling until the lock is released")
+        alive["value"] = False
+        queue.poll()
+        self.assertIsNone(state.owner)
+        self.assertFalse(queue.busy())
+
+    def test_lock_is_not_asked_without_a_start(self):
+        lock = FakeLock(LockState())
+        queue = self.locked_queue(lock)
+        queue.poll()
+        a = self.add(queue, "a")
+        queue.cancel(a)
+        queue.poll()
+        self.assertEqual(lock.acquires, 0)
+        self.assertEqual(lock.releases, 0)
+
+    def test_close_releases_the_lock(self):
+        state = LockState()
+        queue = self.locked_queue(FakeLock(state), tree_running=lambda: True)
+        a = self.add(queue, "a")
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()
+        self.assertIsNotNone(state.owner)
+        queue.release_lock()
+        self.assertIsNone(state.owner)
+        queue.release_lock()   # idempotent
+
+
+class FakeAbandoned(Exception):
+    pass
+
+
+class FakeUnauthorized(Exception):
+    pass
+
+
+class FakeMutex(object):
+    """System.Threading.Mutex stand-in. `behaviour` picks what WaitOne(0) does."""
+    made = []
+    behaviour = "take"
+    construct_error = None
+
+    def __init__(self, initially_owned, name):
+        if FakeMutex.construct_error is not None:
+            raise FakeMutex.construct_error
+        self.initially_owned = initially_owned
+        self.name = name
+        self.waits = []
+        self.released = 0
+        self.disposed = False
+        FakeMutex.made.append(self)
+
+    def WaitOne(self, milliseconds):
+        self.waits.append(milliseconds)
+        if FakeMutex.behaviour == "abandoned":
+            raise FakeAbandoned("abandoned")
+        return FakeMutex.behaviour == "take"
+
+    def ReleaseMutex(self):
+        self.released += 1
+
+    def Dispose(self):
+        self.disposed = True
+
+
+class FakeLockDomain(object):
+    def __init__(self):
+        self.data = {}
+
+    def GetData(self, key):
+        return self.data.get(key)
+
+    def SetData(self, key, value):
+        self.data[key] = value
+
+
+def stub_threading(domain):
+    threading = types.ModuleType("System.Threading")
+    threading.Mutex = FakeMutex
+    threading.AbandonedMutexException = FakeAbandoned
+    system = types.ModuleType("System")
+    system.Threading = threading
+    system.UnauthorizedAccessException = FakeUnauthorized
+    system.AppDomain = types.SimpleNamespace(CurrentDomain=domain)
+    return {"System": system, "System.Threading": threading}
+
+
+class MachineRunLockTest(unittest.TestCase):
+    def setUp(self):
+        FakeMutex.made = []
+        FakeMutex.behaviour = "take"
+        FakeMutex.construct_error = None
+        self.domain = FakeLockDomain()
+        patcher = patch.dict(sys.modules, stub_threading(self.domain))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_takes_without_waiting_and_releases(self):
+        lock = rx_runner.MachineRunLock()
+        self.assertTrue(lock.acquire())
+        mutex = FakeMutex.made[0]
+        self.assertEqual(mutex.name, rx_runner.RUN_LOCK_NAME)
+        self.assertTrue(mutex.name.startswith("Global\\"))
+        self.assertIs(mutex.initially_owned, False)
+        self.assertEqual(mutex.waits, [0], "never blocks the UI thread")
+        self.assertTrue(lock.acquire(), "already ours")
+        self.assertEqual(len(FakeMutex.made), 1)
+        lock.release()
+        self.assertEqual(mutex.released, 1)
+        self.assertTrue(mutex.disposed)
+        lock.release()
+        self.assertEqual(mutex.released, 1, "release is idempotent")
+
+    def test_owned_elsewhere_is_false_and_closes_the_handle(self):
+        FakeMutex.behaviour = "busy"
+        lock = rx_runner.MachineRunLock()
+        self.assertFalse(lock.acquire())
+        self.assertTrue(FakeMutex.made[0].disposed)
+        self.assertEqual(FakeMutex.made[0].released, 0)
+        lock.release()
+        self.assertEqual(FakeMutex.made[0].released, 0, "never releases what it does not own")
+
+    def test_abandoned_counts_as_acquired(self):
+        FakeMutex.behaviour = "abandoned"
+        lock = rx_runner.MachineRunLock()
+        self.assertTrue(lock.acquire())
+        self.assertFalse(FakeMutex.made[0].disposed)
+        lock.release()
+        self.assertEqual(FakeMutex.made[0].released, 1)
+
+    def test_another_windows_user_holding_it_is_false(self):
+        FakeMutex.construct_error = FakeUnauthorized("access denied")
+        self.assertFalse(rx_runner.MachineRunLock().acquire())
+
+    def test_other_errors_propagate(self):
+        FakeMutex.construct_error = RuntimeError("bad name")
+        with self.assertRaises(RuntimeError):
+            rx_runner.MachineRunLock().acquire()
+
+    def test_a_second_engine_in_this_process_is_refused(self):
+        # A Mutex is re-entrant on its owning thread, and every pyRevit engine runs on Revit's
+        # UI thread: a process-wide marker keeps a second session's lock from re-entering it.
+        first, second = rx_runner.MachineRunLock(), rx_runner.MachineRunLock()
+        self.assertTrue(first.acquire())
+        self.assertFalse(second.acquire())
+        self.assertEqual(len(FakeMutex.made), 1, "the second never touches the mutex")
+        second.release()
+        self.assertEqual(FakeMutex.made[0].released, 0)
+        first.release()
+        self.assertTrue(second.acquire())
 
 
 class CleanPathIsPublic(unittest.TestCase):
