@@ -2256,6 +2256,14 @@ class ScriptTests(unittest.TestCase):
         with patch.object(self.module, "DotNetStarter", Mock(return_value=starter)):
             self.assertFalse(self.module._orphan_extractor_running(FakeDomain()))
 
+    def test_build_is_read_from_a_year_named_utility(self):
+        folder = os.path.join(self.revit_dir, "RevitExtractor")
+        utility = os.path.join(folder, "ExtractorUtility_2025.dll")
+        open(utility, "w").close()
+        self.versions[utility] = "2026.6.7.22"
+        self.run_main()
+        self.assertEqual(FakeModelWindow.made[0].extractor_build, "2026.6.7.22")
+
     def test_unreadable_build_is_left_out(self):
         self.run_main()
         self.assertEqual(FakeModelWindow.made[0].extractor_build, "")

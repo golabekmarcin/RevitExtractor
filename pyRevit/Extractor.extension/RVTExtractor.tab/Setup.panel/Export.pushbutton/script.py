@@ -86,8 +86,18 @@ def _orphan_extractor_running(domain):
 
 
 def _extractor_build(revit_dir):
-    """File version of ExtractorUtility.dll, or "" when it cannot be read."""
-    path = os.path.join(revit_dir, "RevitExtractor", "ExtractorUtility.dll")
+    """File version of ExtractorUtility.dll, or of ExtractorUtility_<year>.dll (the Extractor
+    that ships with Revit 2025 names it that way), or "" when it cannot be read."""
+    folder = os.path.join(revit_dir, "RevitExtractor")
+    path = os.path.join(folder, "ExtractorUtility.dll")
+    if not os.path.isfile(path):
+        try:
+            names = sorted(name for name in os.listdir(folder)
+                           if re.match(r"^ExtractorUtility_\d{4}\.dll$", name))
+        except OSError:
+            names = []
+        if names:
+            path = os.path.join(folder, names[-1])
     return rx_dotnet.file_version(path)
 
 
