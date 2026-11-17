@@ -39,8 +39,10 @@ def _is_under(path_key, root_key):
     return path_key.startswith(prefix)
 
 
-def normalize_roots(values):
+def normalize_roots(values, nested=False):
     """Trimmed, de-duplicated (case-insensitive on Windows), nested roots collapsed.
+
+    With nested=True a root inside another stays (needed when subfolders are not searched).
 
     Keeps the first spelling and the original order of the roots that survive.
     """
@@ -60,7 +62,7 @@ def normalize_roots(values):
         candidates.append((path, key))
     result = []
     for path, key in candidates:
-        if any(other != key and _is_under(key, other) for _, other in candidates):
+        if not nested and any(other != key and _is_under(key, other) for _, other in candidates):
             continue
         result.append(path)
     return result
@@ -85,7 +87,7 @@ def iter_model_files(roots, walk=os.walk, errors=None, subfolders=True):
 
     current_root = [None]
     emitted = set()
-    for root in normalize_roots(roots):
+    for root in normalize_roots(roots, nested=not subfolders):
         current_root[0] = root
         for folder, dirs, files in walk(root, onerror=on_error):
             dirs[:] = sorted((d for d in dirs if not _is_backup_folder(d)), key=os.path.normcase)
@@ -253,7 +255,7 @@ def scan(roots, running_year, read_info, cache, stat=os.stat, errors=None, subfo
     cache is saved once when the generator ends or is closed early; a failed save sets
     cache.last_error and does not stop the scan. An early stop does not prune.
     """
-    roots = normalize_roots(roots)
+    roots = normalize_roots(roots, nested=not subfolders)
     problems = []
     seen = []
     finished = False

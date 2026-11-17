@@ -63,7 +63,8 @@ def load_settings(config, documents_dir):
     """
     roots = _read(config, "roots")
     if isinstance(roots, (list, tuple)):
-        roots = normalize_roots([item for item in roots if isinstance(item, _TEXT_TYPES)])
+        roots = normalize_roots([item for item in roots if isinstance(item, _TEXT_TYPES)],
+                                nested=True)
     else:
         roots = []
     output_parent = _text(_read(config, "output_parent"))
@@ -81,12 +82,18 @@ def load_settings(config, documents_dir):
 def settings_to_save(roots, output_parent, max_parallel, shared_index_path, subfolders=True):
     """The dict to store: normalized roots, trimmed texts, a valid max_parallel. Plain values."""
     return {
-        "roots": normalize_roots(roots),
+        "roots": normalize_roots(roots, nested=True),
         "output_parent": _text(output_parent),
         "max_parallel": _max_parallel(max_parallel),
         "shared_index_path": _text(shared_index_path),
         "subfolders": subfolders is not False,
     }
+
+
+def has_nested_roots(roots):
+    """True when a root lies inside another one (searching subfolders makes it redundant)."""
+    roots = normalize_roots(roots, nested=True)
+    return normalize_roots(roots) != roots
 
 
 def save_settings(config, values):

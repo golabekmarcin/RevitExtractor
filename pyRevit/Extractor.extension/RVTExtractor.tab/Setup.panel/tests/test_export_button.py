@@ -131,8 +131,12 @@ class SettingsTests(unittest.TestCase):
     def test_roots_go_through_normalize_roots(self):
         got = logic.load_settings(
             Config(roots=["  D:\\A  ", "d:\\a", "", None, 3, "D:\\A\\Sub", "D:\\B\\"]), self.DOCS)
-        self.assertEqual(got["roots"], [os.path.normpath("D:\\A"), os.path.normpath("D:\\B")])
-        saved = logic.settings_to_save(["D:\\A\\Sub", "D:\\A", "D:\\A"], " D:\\O ", "2", " p ")
+        # A root inside another stays: it matters when subfolders are not searched.
+        self.assertEqual(got["roots"], [os.path.normpath("D:\\A"), os.path.normpath("D:\\A\\Sub"),
+                                        os.path.normpath("D:\\B")])
+        self.assertTrue(logic.has_nested_roots(got["roots"]))
+        self.assertFalse(logic.has_nested_roots(["D:\\A", "D:\\B"]))
+        saved = logic.settings_to_save(["D:\\A", "D:\\A"], " D:\\O ", "2", " p ")
         self.assertEqual(saved, {"roots": [os.path.normpath("D:\\A")], "output_parent": "D:\\O",
                                  "max_parallel": 2, "shared_index_path": "p",
                                  "subfolders": True})

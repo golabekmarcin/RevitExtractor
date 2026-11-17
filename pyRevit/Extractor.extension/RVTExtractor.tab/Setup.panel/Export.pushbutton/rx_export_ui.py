@@ -34,7 +34,7 @@ import rx_cloud
 from rx_cloud import StageError
 from rx_column_filter_ui import ColumnFilterController
 from rx_export_logic import (link_key, load_shared_index, plan_cloud_job, plan_cloud_jobs,
-                             plan_jobs, settings_to_save, tick_targets, toggled_state)
+                             plan_jobs, settings_to_save, has_nested_roots, tick_targets, toggled_state)
 from rx_export_text import resources
 from rx_i18n import tr
 from rx_index import SetupError, build_index, database_warning, defaults, to_json
@@ -675,7 +675,8 @@ class ModelWindow(forms.WPFWindow):
     def _change_roots(self, roots):
         values = settings_to_save(roots, self.output_parent, self._max_parallel,
                                   self._shared_path, self._subfolders)
-        if [_key(root) for root in values["roots"]] == [_key(root) for root in self._roots]:
+        redundant = self._subfolders and has_nested_roots(values["roots"])
+        if redundant or [_key(root) for root in values["roots"]] == [_key(root) for root in self._roots]:
             self._set_status(tr("That folder is already in the list (or inside one that is).",
                                 "Ten folder jest już na liście (lub w folderze z listy)."))
             return
