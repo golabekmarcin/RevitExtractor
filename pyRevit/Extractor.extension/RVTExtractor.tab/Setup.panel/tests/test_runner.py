@@ -2033,6 +2033,19 @@ class QueueStagingTest(TempDirTest):
         self.assertEqual(job.cleanup, "done")
         self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
 
+    def test_the_backup_folder_revit_left_beside_a_copy_is_removed(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        backup = os.path.join(self.model_dir(job), "Alpha-Architecture_backup")
+        os.makedirs(backup)
+        with open(os.path.join(backup, "Alpha-Architecture.0001.rvt"), "wb") as handle:
+            handle.write(b"x")
+        self.exit(job)
+        queue.poll()
+        self.assertEqual(job.cleanup, "done")
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
+
     def test_clear_finished_does_not_stop_a_pending_clean_up(self):
         queue = self.queue()
         a = queue.add(self.staged_job())

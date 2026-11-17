@@ -20,6 +20,7 @@ from __future__ import unicode_literals
 import datetime
 import os
 import re
+import shutil
 import time
 import uuid
 from collections import namedtuple
@@ -482,12 +483,13 @@ class Queue(object):
     - `free_space(path)`: free bytes for the run folder's drive, or None when unknown;
     - `tree_running()`: True while an Extractor process may still hold a staged copy; the copies
       are deleted only after the job's process has exited and this is false;
-    - `remove(path)`: os.remove; `copier`: rx_cloud_stage.copy_steps.
+    - `remove(path)`: os.remove; `rmtree(path)`: shutil.rmtree, for the <name>_backup folder
+      Revit leaves beside an opened copy; `copier`: rx_cloud_stage.copy_steps.
     """
 
     def __init__(self, starter, clock, max_parallel=1, system_root=None, token=None, hold=None,
                  stage_clock=None, stage_budget=STAGE_BUDGET, stage_chunk=STAGE_CHUNK,
-                 free_space=None, tree_running=None, remove=None, copier=None, lock=None):
+                 free_space=None, tree_running=None, remove=None, copier=None, lock=None, rmtree=None):
         if (isinstance(max_parallel, bool) or not isinstance(max_parallel, _INTEGER_TYPES)
                 or max_parallel < 1):
             raise RunnerError(tr("Invalid number of parallel exports: {0}",
@@ -512,6 +514,7 @@ class Queue(object):
         self._free_space = free_space
         self._tree_running = tree_running
         self._remove = remove or os.remove
+        self._rmtree = rmtree or shutil.rmtree
         self._copier = copier or copy_steps
         self._copies = {}       # job id -> copy generator, while staging
         self._specs = {}        # job id -> LaunchSpec, while staging
@@ -826,10 +829,12 @@ class Queue(object):
             if (not safe_file_name(name) or os.path.dirname(path) != folder
                     or "collaborationcache" in parts or _model_key(path) in sources):
                 continue    # never ours to delete
-            if os.path.islink(path) or not os.path.lexists(path):
+            if os.path.islink(path):
                 continue
             try:
-                self._remove(path)
+                if os.path.lexists(path):
+                    self._remove(path)
+                self._remove_backup_folder(folder, name)
             except Exception:
                 left.add(name)
         if left:
@@ -837,6 +842,16 @@ class Queue(object):
             return False
         self._staged.pop(job.id, None)
         return True
+
+    def _remove_backup_folder(self, folder, name):
+        """Revit writes <copy name without .rvt>_backup beside a copy it opened. Delete that
+        folder only: a real directory (not a link) directly inside <run>\\model."""
+        stem = os.path.splitext(name)[0]
+        path = os.path.join(folder, stem + "_backup")
+        if (not stem or os.path.dirname(path) != folder or os.path.islink(path)
+                or not os.path.isdir(path)):
+            return
+        self._rmtree(path)
 
     def _remove_or_retry(self, job):
         """Delete a finished job's copies now; whatever stays locked is retried on each poll
