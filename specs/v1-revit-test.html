@@ -489,6 +489,23 @@ $m = Join-Path $run.FullName 'model'
   fields: [{ k: 'items', l: 'Items in the model folder', t: 'int' }, { k: 'stage', l: 'stage.json present', t: 'choice', o: YN }, { k: 'procs', l: 'RevitExtractor processes', t: 'int' }, { k: 'free', l: 'Free space on the output drive (GB)', t: 'int' }],
   evidence: 'The values above.', prior: 'Not tested.',
   trouble: ['More than one item left: the copies were still in use when the queue tried to delete them; wait a few minutes and run the block again, then record both counts.']
+},
+
+{ id: 'H8', part: 'H', title: 'Cloud (ACC): export from hard links instead of copies', where: 'PowerShell + Revit (Export window)',
+  purpose: 'Copying took 37 minutes for the smallest model (H4, H5). Check that the Extractor can export a cloud model from NTFS hard links with the real file names (no copy, no extra disk space), that the links of the model are found, and that the cache is not changed.',
+  prereq: ['H1 done; the update script is in your clone (use the fetch and reset steps from P1).', CLOUDRULE, 'One cloud model with a few links, all in the cache (H3 shows the link count). The cache and C:\RX-test must be on the same drive.', 'You need the cache file of the host and of each link: the same files H3 listed. Put their real names in the block; they are typed into your own PowerShell only and never leave the computer.'],
+  steps: ['Edit the block: set the host cache file, the real host name (for example Host.rvt) and one RealName.rvt=cache file entry per link. Run it (-Stage).', 'In the Export window choose **Local**, add the folder C:\RX-test\hardlink\run1 as a model folder, tick the host, and export. Note the time from clicking Export to the end.',
+    'Run block 2 (-Verify). It must say cache untouched.', 'Run block 3 (-Remove). It deletes the links only. Check that the cache file count in H3 block 1 is unchanged.'],
+  cmds: function () { return [{ t: '1. Stage the hard links (edit the three values first)', cwd: 'any', c: P.tests + String.raw`
+& (Join-Path $tests 'hardlink_experiment.ps1') -Stage -Root 'C:\RX-test\hardlink' -CacheHost 'PUT-THE-HOST-CACHE-FILE-HERE' -HostName 'Host.rvt' -Link 'LinkName.rvt=PUT-A-LINK-CACHE-FILE-HERE'` },
+    { t: '2. Verify the cache after the export', cwd: 'any', c: P.tests + String.raw`
+& (Join-Path $tests 'hardlink_experiment.ps1') -Verify -Root 'C:\RX-test\hardlink'` },
+    { t: '3. Remove the links (links only)', cwd: 'any', c: P.tests + String.raw`
+& (Join-Path $tests 'hardlink_experiment.ps1') -Remove -Root 'C:\RX-test\hardlink'` }]; },
+  expect: ['Block 1 says it staged the hard links, and the export starts with no copy step.', 'The export finishes OK; the views of the linked models appear in the federated view.', 'Block 2 says RESULT: cache untouched.'],
+  fields: [{ k: 'staged', l: 'Hard links staged without an error', t: 'choice', o: YN }, { k: 'exported', l: 'Export finished OK', t: 'choice', o: YN }, { k: 'linksok', l: 'Linked models present in the result', t: 'choice', o: YN }, { k: 'untouched', l: 'Block 2: cache untouched', t: 'choice', o: YN }, { k: 'secs', l: 'Seconds from Export to the end', t: 'int' }, F_ERR],
+  evidence: 'The values above and the RESULT line of block 2. No names.', prior: 'Script tested on synthetic files only; never run in Revit.',
+  trouble: ['Block 1 fails with a drive error: the cache is on another drive than C:\RX-test; give -Root a folder on the cache drive.', 'Block 2 says CACHE CHANGED: mark FAIL, run block 3, and do not repeat on this model.', 'The export cannot find the links: record how many, and mark FAIL.']
 }
 ];
 
