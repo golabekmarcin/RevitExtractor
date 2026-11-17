@@ -29,9 +29,20 @@ Without Node.js and the packages the button opens the output folder and the webs
 5. **Export** queues one export per ticked model. The window **stays open**: the ticks are cleared and a line says how many exports were queued, so you can tick more and queue them without reopening the button (the same model may be queued again). If the hand-over fails, the red error line says why and the ticks stay for a retry. Close the window when you are done; closing queues nothing more. **Choose views…** (exactly one model ticked) reads that model in the background (detached, read-only, worksets closed, never saved) and opens the view window: tick 2D views, sheets and 3D views, switch the SQLite database and options, **Save index.json…**, **Back** or **Export**.
 6. The **status window** lists the exports one by one with state, progress and time. Open output folder, Open in Analyzer and Cancel export act on the highlighted row; right-clicking a row selects it and offers Show model in File Explorer and Show export folder in File Explorer. Clear finished removes the finished, failed and cancelled rows from the list; running and waiting exports stay and no files are deleted. While the model window is open the status window keeps updating but does not take clicks (the model window is modal): close the model window to use Cancel export, Clear finished or the row menu. Closing the status window with X minimises it while exports are queued or running. Exports keep running when it is closed or when Revit closes; not-yet-started ones are dropped when Revit closes.
 
+### Cloud (ACC) models
+
+Choose **Cloud (ACC)** in "Models from" to list cloud models that Revit already holds on this computer. Nothing is downloaded and no model is opened to build the list.
+1. Names come from the Revit **journals** (`%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit <year>\Journals`) and are matched to the files in `...\CollaborationCache` by project and model id. So only models **opened on this computer** (directly or as links) appear. A file in the cache without a known name is never listed under its id; the project card counts them ("Cached models without a name: N. Open them once in Revit to add them."). If no journal names a cloud model, a message says so; use **Remember cloud model** (next to this button) with the model open.
+2. **Tick the projects** to list; none is ticked at first, and the choice is saved per user. Rows of other projects are greyed ("Not in the selected projects."). Two models with the same name in one project: only the newer cache copy can be ticked.
+3. Each row shows its **cache date**: the time of the copy in the cache, which is as current as the last time that model was opened on this computer (nothing is claimed about the cloud version). Copies older than 7 days get a note; they can still be exported.
+4. **Export** (and **Choose views…**) first reads the model's Revit links once, in the background, from the cache copy (the result is remembered until the copy changes). Each export then runs from **copies**: the queue copies the model and its links from the cache into the export's `model` folder under their real file names, with a "Copying from the cache" progress in the status window, and the Extractor opens the copy. A link that is not in the cache is exported without, with a note.
+5. The cache is **never written**. When the Extractor has finished, the copies are deleted; `model\stage.json` stays (names, sizes and cache dates). Check free disk space first: the copies and the Extractor's own temporary copy have to fit.
+
+Not tested: folder-level selection (journals carry no folder), journal formats after Revit 2022. See Validation.
+
 Exports run **one at a time**: with the Extractor build tested here, a second Extractor fails on a fixed pipe. Another Extractor already running on the machine makes the queue wait.
 
-Settings (folders, output folder) are kept in your pyRevit config file, which then holds folder paths: never share it. The model list cache is `%APPDATA%\RevitExtractor\catalog-cache.json` and also holds model paths.
+Settings (folders, output folder) are kept in your pyRevit config file, which then holds folder paths: never share it. The model list cache is `%APPDATA%\RevitExtractor\catalog-cache.json` and also holds model paths. The cloud memory is `%APPDATA%\RevitExtractor\cloud-catalog.json` and holds client project and file names: never share or commit it.
 
 All text is English and Polish, following pyRevit's language setting (English by default).
 
@@ -41,5 +52,9 @@ All text is English and Polish, following pyRevit's language setting (English by
 - all unit tests: 554 OK. Both windows run against fake WPF; `validate_xaml.ps1` loads both XAML files in real WPF;
 - `run_extractor_integration.ps1`: a real Extractor run started from the same launch spec the queue uses: PASS (also `-Cancel`); `-Parallel 2` FAIL (fixed pipe);
 - `v1_test_kit.ps1 -Setup` and `-Check` ran against such a run.
+
+2026-11-16, same machine: all unit tests 924 OK (including the Cloud tab on fake WPF and the staged queue); `validate_xaml.ps1` 6 PASS; `run_extractor_integration.ps1 -Cloud` PASS (fake cache tree in `%TEMP%`, staged copy exported by the real Extractor, cache files unchanged, only `stage.json` left); `v1_test_kit.ps1 -Check` prints cloud counts only.
+
+**Not verified for the Cloud tab:** everything inside Revit: real journal lines (checked on Revit 2022 only, by hand, earlier), the background open of a cache file, the link list of a real cloud model, copy time and Revit's responsiveness while copying, link geometry in a federated 3D view, and the Cloud tab in the real window. The checklist is Part H of `specs/v1-revit-test.md`.
 
 **Not verified:** IronPython 2.7 (the tests run on CPython 3), pyRevit, and everything inside Revit: the greying of the button, the pickers, `BasicFileInfo.Extract` from the scan timer, a real background open, the status window and its hand-over between script engines, closing Revit during an export, the Revit 2025 and 2026 rows, and Polish text in the real windows. The checklist for all of that is `specs/v1-revit-test.md`; results will be recorded here.

@@ -11,3 +11,5 @@ cloudcheck*.txt
 cache-test-result*.txt
 journal-lines*.txt
 RX-private/
+# Cloud name memory holds client project and file names - never commit
+cloud-catalog*.json

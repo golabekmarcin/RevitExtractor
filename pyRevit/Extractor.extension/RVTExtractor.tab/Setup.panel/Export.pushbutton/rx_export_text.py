@@ -55,6 +55,18 @@ UI_TEXT = {
     "models_shared_choose": ("Choose…", "Wybierz…"),
     "models_rescan": ("Rescan", "Odśwież listę"),
     "models_rescan_tip": ("Read the model folders again", "Ponownie przeszukaj foldery z modelami"),
+    "models_source": ("Models from", "Modele z"),
+    "models_source_local": ("Local files", "Pliki lokalne"),
+    "models_source_cloud": ("Cloud (ACC)", "Chmura (ACC)"),
+    "cloud_projects_title": ("Cloud projects (tick the projects to list)",
+                             "Projekty w chmurze (zaznacz projekty do wyświetlenia)"),
+    "cloud_projects_hint": ("Models come from this computer's Revit cache and journals, so only "
+                            "models opened here appear. Nothing is downloaded.",
+                            "Modele pochodzą z pamięci podręcznej i dzienników Revita na tym "
+                            "komputerze, więc widać tylko modele otwarte tutaj. Nic nie jest "
+                            "pobierane."),
+    "cloud_col_project": ("Project", "Projekt"),
+    "cloud_col_date": ("Cache date", "Data kopii"),
     "models_views": ("Choose views…", "Wybierz widoki…"),
     "models_views_tip": ("Read the one selected model in the background (worksets closed, "
                          "nothing is saved) and pick its views.",

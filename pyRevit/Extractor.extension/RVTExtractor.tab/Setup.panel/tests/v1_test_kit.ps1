@@ -17,7 +17,11 @@ Pomocnik do jednej sesji testowej wlasciciela (specs/v1-revit-test.md).
       Prints the lines the owner sends back. Never prints a path, a file or model name, or
       anything read from a model: only counts, sizes, times, state words and the
       'Success Jobs' / exit-code lines of console.log. Without a folder it prints only the
-      machine lines (Print Spooler, leftover processes, Extractor builds).
+      machine lines (Print Spooler, leftover processes, Extractor builds) and the cloud counts
+      (journals folder found, journal count, named cloud models, unnamed cached models, cache
+      folder present). The cloud lines hold numbers only: never a model, project or account
+      name, a path or a GUID. Journals and the cache are only read.
+      -LocalAppData / -AppData point at another profile (for a test tree); default is this user's.
 
   ... -Stamp <file>
       Prints the size and last-write time of one file (no name, no path), to compare before
@@ -38,6 +42,8 @@ param(
     [Parameter(ParameterSetName = 'Setup')][switch]$Force,
     [Parameter(ParameterSetName = 'Check', Mandatory)][switch]$Check,
     [Parameter(ParameterSetName = 'Check', Position = 0)][string]$Folder,
+    [Parameter(ParameterSetName = 'Check')][string]$LocalAppData = $env:LOCALAPPDATA,
+    [Parameter(ParameterSetName = 'Check')][string]$AppData = $env:APPDATA,
     [Parameter(ParameterSetName = 'Stamp', Mandatory)][string]$Stamp
 )
 
@@ -162,6 +168,107 @@ function Invoke-Setup {
     Write-Host 'Oczekiwane w oknie Eksport: modele z Samples, Tower.2024 oraz z folderow ze spacjami i polskimi literami sa na liscie; Backup i .0001 pominiete; Not a model wyszarzony.'
 }
 
+# ---------------------------------------------------------------- -Check, cloud counts
+function Read-JournalText([string]$Path) {
+    # Shared read, so the journal of a running Revit can be read too. Returns $null when it cannot.
+    try {
+        $stream = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $bytes = New-Object byte[] $stream.Length
+            $read = 0
+            while ($read -lt $bytes.Length) {
+                $n = $stream.Read($bytes, $read, $bytes.Length - $read)
+                if ($n -le 0) { break }
+                $read += $n
+            }
+        } finally { $stream.Dispose() }
+        if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) { return [Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2) }
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { return [Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3) }
+        return [Text.Encoding]::GetEncoding(28591).GetString($bytes)   # Latin-1: the GUIDs and quotes we match are ASCII
+    } catch { return $null }
+}
+
+function Get-CloudFacts([string]$ProfileFolder, [string]$MemoryFile) {
+    # Counts only. Keys are held in memory as "<project guid>/<model guid>" and never printed.
+    $guid = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    $zero = '00000000-0000-0000-0000-000000000000'
+    $pathRx = New-Object Text.RegularExpressions.Regex(('CLD:\\{1,2}(?<region>[^\\"]+)\\{1,2}\{(?<p>' + $guid + ')\}[^\\"]*\\{1,2}\{(?<m>' + $guid + ')\}(?<file>[^\\"]*)"'))
+    $projRx = New-Object Text.RegularExpressions.Regex(('projectGuid\W{1,6}\{?(?<p>' + $guid + ')'), 'IgnoreCase')
+    $modelRx = New-Object Text.RegularExpressions.Regex(('modelGuid\W{1,6}\{?(?<m>' + $guid + ')'), 'IgnoreCase')
+    $nameRx = New-Object Text.RegularExpressions.Regex('displayName\W{1,6}[^"\s\\]')
+    $facts = [ordered]@{ JournalsFolder = $false; Journals = 0; Unreadable = 0; Named = 0; CacheFolder = $false; Cached = 0; Unnamed = 0 }
+    $named = @{}
+    $journals = Join-Path $ProfileFolder 'Journals'
+    $cache = Join-Path $ProfileFolder 'CollaborationCache'
+    if (Test-Path -LiteralPath $journals -PathType Container) {
+        $facts.JournalsFolder = $true
+        $files = @(Get-ChildItem -LiteralPath $journals -File -Filter 'journal*.txt' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 100)
+        foreach ($file in $files) {
+            $text = Read-JournalText $file.FullName
+            if ($null -eq $text) { $facts.Unreadable++; continue }
+            $facts.Journals++
+            foreach ($line in ($text -split "`n")) {
+                if ($line.Contains('ModelPath Created') -and $line.Contains('CLD:')) {
+                    $m = $pathRx.Match($line)
+                    if (!$m.Success -or $m.Groups['region'].Value -ieq 'GLOBAL' -or $m.Groups['file'].Value.Trim() -eq '') { continue }
+                    $p = $m.Groups['p'].Value.ToLowerInvariant(); $k = $m.Groups['m'].Value.ToLowerInvariant()
+                    if ($p -ne $zero -and $k -ne $zero) { $named["$p/$k"] = $true }
+                } elseif ($line.Contains('ModelBrowserOpenDocumentEvent:open:')) {
+                    $p = $projRx.Match($line); $k = $modelRx.Match($line)
+                    if ($p.Success -and $k.Success -and $nameRx.IsMatch($line)) {
+                        $named[($p.Groups['p'].Value.ToLowerInvariant() + '/' + $k.Groups['m'].Value.ToLowerInvariant())] = $true
+                    }
+                }
+            }
+        }
+    }
+    if ($MemoryFile -and (Test-Path -LiteralPath $MemoryFile -PathType Leaf)) {
+        try {
+            $memory = Get-Content -LiteralPath $MemoryFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($memory.PSObject.Properties['names'] -and $memory.names) {
+                foreach ($property in $memory.names.PSObject.Properties) { $named[$property.Name.ToLowerInvariant()] = $true }
+            }
+        } catch { }
+    }
+    $cached = @{}
+    if (Test-Path -LiteralPath $cache -PathType Container) {
+        $facts.CacheFolder = $true
+        foreach ($account in @(Get-ChildItem -LiteralPath $cache -Directory -ErrorAction SilentlyContinue)) {
+            foreach ($project in @(Get-ChildItem -LiteralPath $account.FullName -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^$guid$" })) {
+                foreach ($place in @($project.FullName, (Join-Path $project.FullName 'LinkedModels'))) {
+                    if (!(Test-Path -LiteralPath $place -PathType Container)) { continue }
+                    foreach ($file in @(Get-ChildItem -LiteralPath $place -File -Filter '*.rvt' -ErrorAction SilentlyContinue | Where-Object { $_.BaseName -match "^$guid$" })) {
+                        $cached[($project.Name.ToLowerInvariant() + '/' + $file.BaseName.ToLowerInvariant())] = $true
+                    }
+                }
+            }
+        }
+    }
+    $facts.Cached = $cached.Count
+    $facts.Unnamed = @($cached.Keys | Where-Object { !$named.ContainsKey($_) }).Count
+    $facts.Named = $named.Count
+    return [pscustomobject]$facts
+}
+
+function Write-CloudFacts {
+    Write-Host "`n== Cloud models / Modele z chmury (counts only / tylko liczby)"
+    $revitRoot = Join-Path $LocalAppData 'Autodesk\Revit'
+    $profiles = @()
+    if (Test-Path -LiteralPath $revitRoot -PathType Container) {
+        $profiles = @(Get-ChildItem -LiteralPath $revitRoot -Directory -Filter 'Autodesk Revit *' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^Autodesk Revit \d{4}$' } | Sort-Object Name)
+    }
+    $memoryFile = Join-Path $AppData 'RevitExtractor\cloud-catalog.json'
+    Write-Host ("Revit profile folders / foldery profilu Revit: {0}; name memory file / plik pamieci nazw: {1}" -f $profiles.Count, [int](Test-Path -LiteralPath $memoryFile -PathType Leaf))
+    foreach ($profile in $profiles) {
+        $year = [regex]::Match($profile.Name, '\d{4}$').Value
+        $f = Get-CloudFacts $profile.FullName $memoryFile
+        Write-Host ("Revit {0}: journals folder {1}, journals {2} (unreadable {3}), named cloud models {4}; cache folder {5}, cached models {6}, unnamed {7}  (1 = yes, 0 = no)" -f
+            $year, [int]$f.JournalsFolder, $f.Journals, $f.Unreadable, $f.Named, [int]$f.CacheFolder, $f.Cached, $f.Unnamed)
+    }
+}
+
 # ---------------------------------------------------------------- -Check
 function Get-RunFacts([IO.DirectoryInfo]$Dir) {
     $r = [ordered]@{}
@@ -212,6 +319,7 @@ function Invoke-Check {
     Write-Host "RevitExtractor processes left / procesy RevitExtractor: $($extractors.Count)"
     Write-Host "Revit.exe processes / procesy Revit.exe: $($revits.Count)"
     foreach ($line in Get-ExtractorBuilds) { Write-Host $line }
+    Write-CloudFacts
     $bad = 0
     if ($Folder) {
         $path = $Folder.Trim('"')

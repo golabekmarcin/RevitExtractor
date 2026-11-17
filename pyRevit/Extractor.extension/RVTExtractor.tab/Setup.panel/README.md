@@ -1,16 +1,17 @@
 # Setup panel / Panel Setup
 
-Three buttons live here. / W tym panelu są trzy przyciski.
+Four buttons live here. / W tym panelu są cztery przyciski.
 
 | Button / Przycisk | Revit | Purpose / Zadanie |
 | --- | --- | --- |
 | [`Export.pushbutton`](Export.pushbutton/README.md) (English · [Polski](Export.pushbutton/README.pl.md)) | 2022 and later / 2022 i nowsze | The one-button export: pick models in your folders, optionally pick views, run the Extractor in the background, with a status window. Works with **no model open**. Needs the extension's `lib/`. **Built and unit-tested, not yet run in Revit.** / Eksport jednym przyciskiem: wybór modeli z folderów, opcjonalnie widoków, uruchomienie Extractora w tle, okno statusu. Działa **bez otwartego modelu**. Wymaga `lib/` rozszerzenia. **Zbudowany i przetestowany jednostkowo, jeszcze nie uruchomiony w Revicie.** |
+| [`RememberCloudModel.pushbutton`](RememberCloudModel.pushbutton/README.md) (English · [Polski](RememberCloudModel.pushbutton/README.pl.md)) | 2022 and later / 2022 i nowsze | Fallback for the Export button's **Cloud (ACC)** list: with a cloud model open, remembers its project and file name and its Revit links in `%APPDATA%\RevitExtractor\cloud-catalog.json` (client names: never share or commit). Read-only on the model; needs the extension's `lib/`. **Built and unit-tested, not yet run in Revit.** / Rezerwa dla listy **Chmura (ACC)** przycisku Eksport: przy otwartym modelu z chmury zapamiętuje nazwę projektu i pliku oraz linki Revit w `%APPDATA%\RevitExtractor\cloud-catalog.json` (nazwy klienta: nie udostępniaj ani nie commituj). Tylko odczyt modelu; wymaga `lib/` rozszerzenia. **Zbudowany i przetestowany jednostkowo, jeszcze nie uruchomiony w Revicie.** |
 | [`ExportSetupLegacy.pushbutton`](ExportSetupLegacy.pushbutton/README.md) | 2022–2025 | Creates `index.json` from the open project. Verified in Revit 2022. / Tworzy `index.json` z otwartego projektu. Sprawdzony w Revit 2022. |
 | `ExportSetup.pushbutton` (below / poniżej) | 2026+ | Creates `index.json` and IFC setups from the open project. Not run in Revit by the agent. / Tworzy `index.json` i setupy IFC z otwartego projektu. |
 
 The two older buttons stay until the owner has verified `Export` in Revit (decision Q12). / Dwa starsze przyciski zostają do czasu, aż właściciel sprawdzi `Export` w Revicie (decyzja Q12).
 
-**Not verified:** IronPython 2.7 and anything inside Revit for `Export`. The Revit-side checklist is `specs/v1-revit-test.md`. / **Niezweryfikowane:** IronPython 2.7 i wszystko wewnątrz Revita dla `Export`. Lista kontrolna po stronie Revita: `specs/v1-revit-test.md`.
+**Not verified:** IronPython 2.7 and anything inside Revit for `Export` and `RememberCloudModel` (including the Cloud source: Part H of the checklist). The Revit-side checklist is `specs/v1-revit-test.md`. / **Niezweryfikowane:** IronPython 2.7 i wszystko wewnątrz Revita dla `Export` i `RememberCloudModel` (w tym źródło Chmura: część H listy). Lista kontrolna po stronie Revita: `specs/v1-revit-test.md`.
 
 Tests: `python -B -m unittest discover -s .\tests -v` from this folder, plus the scripts in `tests\` (`CLAUDE.md`). `tests\v1_test_kit.ps1` prepares and checks the owner's Revit session. / Testy: patrz `CLAUDE.md`; `tests\v1_test_kit.ps1` przygotowuje i sprawdza sesję testową właściciela.
 

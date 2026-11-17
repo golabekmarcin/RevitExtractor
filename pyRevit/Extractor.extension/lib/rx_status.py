@@ -19,8 +19,8 @@ import re
 
 from rx_i18n import tr
 from rx_json import dumps_ascii
-from rx_runner import (CANCELLED, FAILED, OK, QUEUED, RUNNING, Job, LaunchSpec, RunnerError,
-                       clean_path)
+from rx_runner import (CANCELLED, FAILED, OK, QUEUED, RUNNING, STAGING, Job, LaunchSpec,
+                       RunnerError, clean_path)
 
 try:
     _TEXT_TYPES = (basestring,)  # IronPython 2.7
@@ -315,6 +315,33 @@ def _running_text(info):
     return " · ".join(parts)
 
 
+_MB = 2 ** 20
+
+
+def _megabytes(value, up=False):
+    try:
+        number = max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+    return -(-number // _MB) if up else number // _MB
+
+
+def _staging_text(job):
+    return tr("Copying from the cache: {0} of {1} MB",
+              "Kopiowanie z pamięci podręcznej: {0} z {1} MB").format(
+        _megabytes(job.stage_done), _megabytes(job.stage_total, up=True))
+
+
+def _shown_model(job):
+    """(column text, path for "Show model in File Explorer"). A cloud job shows its real file
+    name (never the GUID-named cache file) and points at its staged copy, or at nothing before
+    the copy began: the cache itself is never offered."""
+    if getattr(job, "stage", None) is None:
+        return _file_name(job.model_path), job.model_path
+    name = job.model_name if _is_text(job.model_name) else ""
+    return name, getattr(job, "staged_model", None)
+
+
 def job_view(job, info, now, position, held=False):
     """Plain dict for one row: its texts, and which footer buttons apply.
 
@@ -328,7 +355,7 @@ def job_view(job, info, now, position, held=False):
     if paths is not None:
         folder = paths.output if state == OK else paths.root
         output = paths.output if state == OK else None
-    if state == RUNNING:
+    if state in (RUNNING, STAGING):
         elapsed = _duration(job.started_at, now)
     elif state in (OK, FAILED, CANCELLED):
         elapsed = _duration(job.started_at, job.ended_at)
@@ -343,6 +370,13 @@ def job_view(job, info, now, position, held=False):
         state_text = tr("Queued", "W kolejce")
         progress = (tr("Position {0} in the queue.", "Pozycja w kolejce: {0}.").format(position)
                     if position else tr("Waiting in the queue.", "Czeka w kolejce."))
+    elif state == STAGING and held and getattr(job, "stage_ready", False):
+        state_text = tr("Waiting", "Oczekuje")
+        progress = tr("Copied; waiting: another Extractor is running on this computer.",
+                      "Skopiowano; oczekuje: na tym komputerze działa inny Extractor.")
+    elif state == STAGING:
+        state_text = tr("Copying", "Kopiowanie")
+        progress = _staging_text(job)
     elif state == RUNNING and job.cancel_requested:
         state_text = tr("Cancelling", "Anulowanie")
         progress = tr("Cancelling; the run folder stays.", "Anulowanie; folder eksportu zostaje.")
@@ -366,11 +400,13 @@ def job_view(job, info, now, position, held=False):
         state_text = "%s" % (state,)
         progress = message
 
+    model, model_path = _shown_model(job)
     return {
-        "id": job.id, "state": state, "model": _file_name(job.model_path),
-        "model_path": job.model_path, "state_text": state_text, "progress": progress,
+        "id": job.id, "state": state, "model": model,
+        "model_path": model_path, "state_text": state_text, "progress": progress,
         "started": _clock_text(job.started_at), "time": elapsed,
-        "can_cancel": state == QUEUED or (state == RUNNING and not job.cancel_requested),
+        "can_cancel": state in (QUEUED, STAGING) or (state == RUNNING
+                                                     and not job.cancel_requested),
         "can_open_folder": folder is not None,
         "can_open_analyzer": state == OK and output is not None,
         "folder": folder, "output": output,
@@ -385,7 +421,8 @@ def summary(views):
     for view in views:
         counts[view["state"]] = counts.get(view["state"], 0) + 1
     parts = [tr("Exports: {0}", "Eksporty: {0}").format(len(views))]
-    for state, english, polish in ((RUNNING, "running: {0}", "w toku: {0}"),
+    for state, english, polish in ((STAGING, "copying: {0}", "kopiowanie: {0}"),
+                                   (RUNNING, "running: {0}", "w toku: {0}"),
                                    (QUEUED, "queued: {0}", "w kolejce: {0}"),
                                    (OK, "done: {0}", "gotowe: {0}"),
                                    (FAILED, "failed: {0}", "z błędem: {0}"),
@@ -396,13 +433,22 @@ def summary(views):
 
 
 def queue_hint(views):
-    """D5: shown while any export waits in the queue."""
-    if not any(view["state"] == QUEUED for view in views):
-        return ""
-    return tr("Queued exports start only while Revit is open. If Revit closes, the running "
-              "export finishes and the queued ones are dropped.",
-              "Eksporty z kolejki startują tylko przy otwartym Revicie. Jeśli Revit zostanie "
-              "zamknięty, trwający eksport się dokończy, a oczekujące zostaną pominięte.")
+    """D5: shown while any export waits in the queue or copies from the cache."""
+    parts = []
+    if any(view["state"] == QUEUED for view in views):
+        parts.append(tr("Queued exports start only while Revit is open. If Revit closes, the "
+                        "running export finishes and the queued ones are dropped.",
+                        "Eksporty z kolejki startują tylko przy otwartym Revicie. Jeśli Revit "
+                        "zostanie zamknięty, trwający eksport się dokończy, a oczekujące zostaną "
+                        "pominięte."))
+    if any(view["state"] == STAGING for view in views):
+        parts.append(tr("Copying from the cache needs Revit to stay open. If Revit closes while "
+                        "copying from the cache, that export does not start and its copies stay "
+                        "in its run folder.",
+                        "Kopiowanie z pamięci podręcznej wymaga otwartego Revita. Jeśli Revit "
+                        "zostanie zamknięty podczas kopiowania z pamięci podręcznej, ten eksport "
+                        "się nie uruchomi, a jego kopie zostaną w folderze eksportu."))
+    return " ".join(parts)
 
 
 # --- Open in Analyzer -----------------------------------------------------------------------
@@ -543,10 +589,22 @@ def _job_from(data):
     if not isinstance(data.get("index"), dict):
         bad.append("index")
     bad.extend(name for name in _PATH_FIELDS[1:] if not _is_text(data.get(name)))
+    stage = data.get("stage")
+    if stage is not None and not (isinstance(stage, dict) and isinstance(stage.get("items"), list)
+                                  and all(isinstance(item, dict) for item in stage["items"])):
+        bad.append("stage")
+    for name in ("model_name", "model_key"):
+        if data.get(name) is not None and not _is_text(data.get(name)):
+            bad.append(name)
     if bad:
         raise _RequestError(tr("Missing or invalid field: {0}",
                                "Brak pola lub nieprawidłowe pole: {0}").format(", ".join(bad)))
-    return Job(data["model_path"], data["index"], data["revit_dir"], data["output_parent"])
+    if stage is not None:
+        for item in stage["items"]:
+            clean_path(item.get("src"))  # RunnerError for a missing, relative or unsafe path
+    # Queue.add checks the rest (names, sizes, host first) and copies the stage.
+    return Job(data["model_path"], data["index"], data["revit_dir"], data["output_parent"],
+               stage=stage, model_name=data.get("model_name"), model_key=data.get("model_key"))
 
 
 class SessionCore(object):
@@ -554,7 +612,8 @@ class SessionCore(object):
 
     ops: {"op": "ping"} -> {"ok", "protocol", "busy", "jobs", "since"};
          {"op": "submit", "jobs": [{"model_path", "index", "revit_dir", "output_parent"}]}
-            -> {"ok", "added", "errors"};
+            -> {"ok", "added", "errors"}; a cloud job adds "stage" ({"items": [{src, name, size,
+            mtime}], "notes"}), "model_name" and optionally "model_key";
          {"op": "show"} -> {"ok"}.
     listener (optional): on_submit(ids) and on_show(), the window side. handle() never raises.
     """

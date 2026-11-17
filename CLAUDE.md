@@ -11,7 +11,8 @@ Four parts:
 | Analyzer: browser viewer for export output (SVF 3D, PDF, properties, SQLite) | `Analyzer/` | Node.js 24+ (ESM, `"type": "module"`), browser JS without a bundler |
 | Export launcher (interactive PowerShell, picks Revit version → index → RVT → output folder) | `Analyzer/public/downloads/Start-RevitExport.ps1` | Windows PowerShell 5.1 |
 | pyRevit "Eksport setup" buttons that generate `index.json` | `pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel/` | **IronPython 2.7** inside Revit |
-| pyRevit **Export** button (one-button redesign, v1): model list, view picking, queue, status window. Uses the extension-level `lib/` (`rx_*` modules). Spec: `specs/`. **Built and unit-tested here, not yet run in Revit** | `pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel/Export.pushbutton/` and `pyRevit/Extractor.extension/lib/` | **IronPython 2.7** inside Revit |
+| pyRevit **Export** button (one-button redesign, v1): model list, view picking, queue, status window, and a **Cloud (ACC)** source (names from Revit journals, export from a read-only copy of the `CollaborationCache`; `rx_cloud`, `rx_cloud_stage`). Uses the extension-level `lib/` (`rx_*` modules). Spec: `specs/`. **Built and unit-tested here, not yet run in Revit** | `pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel/Export.pushbutton/` and `pyRevit/Extractor.extension/lib/` | **IronPython 2.7** inside Revit |
+| pyRevit **Remember cloud model** button (fallback for the Cloud source: stores the open cloud model's names and links in `%APPDATA%\RevitExtractor\cloud-catalog.json`). **Built and unit-tested here, not yet run in Revit** | `pyRevit/Extractor.extension/RVTExtractor.tab/Setup.panel/RememberCloudModel.pushbutton/` | **IronPython 2.7** inside Revit |
 
 `extractorScript_v1.ps1` at the root is only a legacy shim that forwards to `Start-RevitExport.ps1`. Put launcher logic in `Start-RevitExport.ps1`.
 
@@ -24,7 +25,7 @@ Current coverage:
 - pyRevit `Export`: 2022 and later, no maximum. The capability table has rows for 2022–2026 only; the rest is unverified against docs. Not yet run in Revit (owner's session: `specs/v1-revit-test.md`). 2026+ IFC/DWG options are marked untested.
 - pyRevit `ExportSetup`: 2026+, with no `max_revit_version`, so it also opens on 2027+. All 58 Revit API members it uses have exact matches in the 2026 docs (checked 2026-11-09). There are no docs for later versions. It is still Polish-only and has no scripted native-parser check, unlike `ExportSetupLegacy`. Its `build_index` still iterates a string selection per character (`"abc"` → `['a','b','c']`) and raises `TypeError` for an unknown scope. `ExportSetupLegacy` fixed both (2026-11-09).
 
-**Cloud (ACC) models: design open** (decided 2026-11-09: probe first, then the pyRevit button will prepare the files).
+**Cloud (ACC) models: built into the Export button as a Cloud source (2026-11-16, `specs/SPEC-cloud-catalog.md`; unit-tested here, never run in Revit; owner's checklist Part H).** Names come from the Revit journals, files from a read-only copy of the cache (see the decision below). The notes that follow are the history of how the design was reached.
 - Shift+click on `ExportSetupLegacy` (`config.py` → `extractor_cloud_probe.py`) prints, read-only:
   - model and link paths, cloud project/model GUIDs;
   - file names in `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit <ver>\CollaborationCache` that contain those GUIDs.
@@ -53,14 +54,20 @@ npm test             # all tests; the server tests need the private Snowdon expo
 
 # pyRevit (run from the repo root)
 python -B -m unittest discover -s .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests -v
+# Verified 2026-11-16: 924 tests OK (Python 3.14, about 21 s; it also prints two timing lines of the cloud scan).
 # WPF load check for every XAML under pyRevit/Extractor.extension/lib and Export.pushbutton (theme merged first).
-# Verified 2026-11-11: 5 PASS. Pass -Root <folder> to check another folder.
+# Verified 2026-11-16: 6 PASS. Pass -Root <folder> to check another folder.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_xaml.ps1
 # Real Extractor run started from lib/rx_runner's launch spec. It writes only to %TEMP%,
 # picks any installed Revit with RevitExtractor, and uses a Dynamo sample by default.
 # Verified 2026-11-10 (Revit 2023 Extractor): normal PASS, -Cancel PASS, -Parallel 2 FAIL
 # (fixed IPC pipe, so runs must be one at a time).
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\run_extractor_integration.ps1
+# -Cloud: a fake Revit profile in %TEMP% (Dynamo sample saved under GUID file names in a fake
+# CollaborationCache, synthetic journal), the real rx_cloud scan and stage plan, then the staged job on
+# rx_runner.Queue with a real Extractor run. PASS = result ok, cache copies' SHA-256 and times unchanged, only
+# model\stage.json left, no leftover process. Verified 2026-11-16 (Revit 2023 Extractor): PASS (13 jobs, 0 failed).
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\run_extractor_integration.ps1 -Cloud
 # Native-parser check for the 2022-2025 button. Auto-picks the first Revit 2022-2025
 # Extractor and handles both parser shapes. Verified 2026-11-09 on Revit 2023 (9/9 pass).
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_native_legacy.ps1
@@ -68,6 +75,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.exte
 # -Setup builds a test folder of copies from two sample RVTs (-Root, default C:\RX-test);
 # -Check [<run or output folder>] prints Print Spooler, leftover processes and per-run results;
 # -Stamp <file> prints size and time. Verified 2026-11-11 against a real run (Revit 2023 Extractor).
+# -Check also prints cloud counts only (journals folder found, journal count, named cloud models, cached
+# and unnamed cached models, cache folder present; never a name, path or GUID). Verified 2026-11-16 on this
+# machine and on a synthetic tree (-LocalAppData / -AppData point it at another profile).
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1 -Setup -Root "$env:TEMP\RX-test"
 # Launcher dry run (no Revit started, no folders created). Needs a local Revit install
 # with RevitExtractor; -ModelPath and -OutputParent are mandatory.
@@ -107,6 +117,7 @@ Use the `revit-api` skill (offline, `%LOCALAPPDATA%\Programs\RevitApiSearch\curr
 
 - **Export data is read-only.** Never write to, copy or modify export folders or `model.sdb` (it is opened `readOnly`; a test checks its SHA-256). The local server binds to `127.0.0.1` only. Nothing uploads model data anywhere.
 - `test-*` folders hold private client exports and are gitignored. Never commit them or paste their contents into public docs beyond the counts already cited.
+- `%APPDATA%\RevitExtractor\cloud-catalog.json` (cloud memory) and Revit journals hold client project and file names, and Revit's `CollaborationCache` is read-only for us: never write, rename or delete there. Tests use synthetic repeated-digit GUIDs and invented names only (a guard test enforces the GUIDs); `.gitignore` excludes `cloud-catalog*.json`.
 - Root `index.json` is a project-specific sample, not the default config. The default index is embedded in `Start-RevitExport.ps1`. Leave `*.backup` files alone.
 - Behaviour inside Revit (button execution, transactions, Undo, real exports) cannot be tested here. Say so in summaries. Never claim it was verified.
 

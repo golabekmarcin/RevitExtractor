@@ -217,6 +217,46 @@ def _control_state(window, names):
     return state
 
 
+def _cloud_sample(kit, caps, settings, base):
+    """The model window on its Cloud source: made-up projects, models and dates (the invented
+    names of the tests, repeated-digit GUIDs), driven by the real code."""
+    import shutil
+    import tempfile
+    folder = tempfile.mkdtemp(prefix="rx-cloud-sample-")
+    try:
+        memory = kit.cloud_memory(folder)
+        memory.set_included([kit.CP1_KEY])
+        files = kit.cloud_cache_files()
+        cloud = {"folders": {"cache": kit.CACHE_ROOT, "journals": base}, "memory": memory,
+                 "scan": kit.FakeCloudScan(files), "scan_cache": lambda root: list(files),
+                 "now": lambda: kit.CNOW}
+        window = kit.EXPORT_UI.ModelWindow(
+            caps, dict(settings, roots=[]), None, object(), None, lambda values: None,
+            extractor_build="2025.3.0.12", scan=kit.FakeScan([]), clock=kit.StepClock(0.0),
+            cloud=cloud)
+        window.show_dialog()
+        window.source_local_rb.IsChecked = False
+        window.source_cloud_rb.IsChecked = True
+        window.source_cloud_rb.Checked.fire(window.source_cloud_rb, None)
+        while kit.TIMERS[-1].IsEnabled:
+            kit.TIMERS[-1].Tick.fire(kit.TIMERS[-1], None)
+        for row in window._cloud_rows:
+            if row.Name == "Alpha-Architecture.rvt":
+                row.set_quietly(True)
+        window._refresh_state()
+        return {
+            "rows": [{"Checked": row.Checked, "Name": row.Name, "Project": row.Project,
+                      "CacheDate": row.CacheDate, "Note": row.Note, "Enabled": row.Enabled,
+                      "Tip": row.Tip} for row in window._cloud_rows],
+            "projects": [{"Checked": project.Checked, "Label": project.Label,
+                          "Tip": project.Tip} for project in window.cloud_projects_lb.ItemsSource],
+            "roots": [],
+            "controls": _control_state(window, kit.xaml_names(kit.MODELS_XAML)),
+        }
+    finally:
+        shutil.rmtree(folder, True)
+
+
 def command_export_sample(args):
     """The Export button's windows driven by their real code (rx_export_ui.py) with the WPF
     fakes of test_export_button.py: made-up models and views, no client data."""
@@ -258,6 +298,8 @@ def command_export_sample(args):
                        "Version": row.Version, "Note": row.Note, "Enabled": row.Enabled,
                        "Tip": row.Tip} for row in models._rows]
 
+        cloud = _cloud_sample(kit, caps, settings, base)
+
         def record(element_id, name, kind):
             return {"id": str(element_id), "uid": "uid-%d" % element_id, "name": name,
                     "kind": kind, "search": " ".join((name, kind, str(element_id))).lower()}
@@ -285,6 +327,7 @@ def command_export_sample(args):
             "resources": kit.load_text_module().resources(),
             "models": {"rows": model_rows, "roots": list(models.roots_lb.ItemsSource),
                        "controls": _control_state(models, kit.xaml_names(kit.MODELS_XAML))},
+            "cloud": cloud,
             "views": {"rows": view_rows,
                       "controls": _control_state(views, kit.xaml_names(kit.VIEWS_XAML))},
         }

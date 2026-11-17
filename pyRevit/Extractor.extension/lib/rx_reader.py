@@ -11,6 +11,7 @@ from __future__ import unicode_literals
 
 import json
 import ntpath
+import re
 
 from rx_capabilities import element_id_value
 from rx_i18n import tr
@@ -103,6 +104,98 @@ def collect_views(doc, DB):
         "views_2d": sorted(rows_2d, key=lambda row: (row["kind"], row["name"].lower())),
         "views_3d": sorted(rows_3d, key=lambda row: row["name"].lower()),
     }
+
+
+# --------------------------------------------------------------------------- cloud links
+
+# Read-only port of the link part of ExportSetupLegacy/extractor_cloud_probe.collect.
+# revit-api 2026-11-16 (spec "API facts"): Element.GetExternalResourceReferences is declared on
+# Element (RevitLinkType inherits it) and raises InvalidOperationException when the element uses
+# no external resource; ExternalResourceReference.GetReferenceInformation returns a
+# (String, String) map. The three Linked* keys are undocumented, observed on Revit 2022 only.
+# Both maps are iterated as KeyValuePairs, the shape the probe read in the owner's Revit 2022
+# session. ExternalFileUtils.GetExternalFileReference throws for cloud links: not used.
+_GUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_MODEL_KEY = "LinkedModelModelId"
+_PROJECT_KEY = "LinkedModelProjectId"
+_REGION_KEY = "LinkedModelRegion"
+
+
+def _guid_text(value):
+    """Lower case, braces stripped; anything that is not a GUID gives ""."""
+    if value is None:
+        return ""
+    try:
+        value = text(value).strip().strip("{}").strip().lower()
+    except Exception:
+        return ""
+    return value if _GUID_RE.match(value) else ""
+
+
+def element_name(element, DB):
+    """element.Name; IronPython often cannot read Name on element types, so fall back to .NET
+    reflection on Element.Name (as ExportSetupLegacy/config.element_name)."""
+    try:
+        return element.Name
+    except Exception:
+        import clr  # IronPython only; imported here so the module loads in CPython tests
+        return clr.GetClrType(DB.Element).GetProperty("Name").GetValue(element, None)
+
+
+def _reference_infos(link_type):
+    """One plain {key: value} dict per external resource of the link, in map order."""
+    try:
+        references = link_type.GetExternalResourceReferences()
+    except Exception:
+        # InvalidOperationException: no external resource (a local link, for instance).
+        return []
+    infos = []
+    for entry in references:
+        try:
+            native = entry.Value.GetReferenceInformation()
+            infos.append(dict((text(pair.Key), text(pair.Value)) for pair in native))
+        except Exception:
+            continue
+    return infos
+
+
+def _link_row(link_type, DB, name_of):
+    try:
+        name = name_of(link_type) if name_of is not None else element_name(link_type, DB)
+        name = text(name) if name is not None else ""
+    except Exception:
+        name = ""
+    nested = False
+    try:
+        nested = _is_bool(link_type.IsNestedLink, True)
+    except Exception:
+        pass
+    # The first resource with a model id; else the first one, so partial ids are still kept.
+    infos = _reference_infos(link_type)
+    chosen = infos[0] if infos else {}
+    for info in infos:
+        if _guid_text(info.get(_MODEL_KEY)):
+            chosen = info
+            break
+    region = chosen.get(_REGION_KEY)
+    return {
+        "name": name,
+        "project_guid": _guid_text(chosen.get(_PROJECT_KEY)),
+        "model_guid": _guid_text(chosen.get(_MODEL_KEY)),
+        "region": text(region).strip() if region is not None else "",
+        "nested": nested,
+    }
+
+
+def collect_cloud_links(doc, DB, name_of=None):
+    """[{"name", "project_guid", "model_guid", "region", "nested"}] for every RevitLinkType,
+    nested links included. Plain text and bool only; reads only. A missing or unreadable id
+    is "" (the link is then not found in the cache). `name_of(element)` replaces the default
+    name reading (Name, then reflection)."""
+    rows = [_link_row(link_type, DB, name_of)
+            for link_type in DB.FilteredElementCollector(doc).OfClass(DB.RevitLinkType)]
+    return sorted(rows, key=lambda row: (row["name"].lower(), row["name"], row["project_guid"],
+                                         row["model_guid"]))
 
 
 # --------------------------------------------------------------------------- open
@@ -208,12 +301,13 @@ def _close(doc):
     return _is_bool(result, True), ""
 
 
-def read_model(app, DB, path, caps, workshared=None):
+def read_model(app, DB, path, caps, workshared=None, links=False):
     """Snapshot {"title", "path", "views_2d", "views_3d", "ifc_setups", "ifc_error"} of the
     model at `path`, read in the background. Raises ReadError.
 
     Call only from the button's command (modal), never from the modeless status window.
     `workshared` comes from the catalog; None (unknown) counts as workshared.
+    `links=True` adds "links" (collect_cloud_links rows); otherwise no link member is read.
     """
     # Guard first: OpenDocumentFile on a file that is already open may hand back the user's
     # own document, and closing that would discard their work. Only a real True passes.
@@ -239,17 +333,20 @@ def read_model(app, DB, path, caps, workshared=None):
     # From here on `doc` is the document this call opened and nothing else. It is closed
     # exactly once, in `finally`; an error raised by the body wins over a close failure.
     closed, close_detail = False, ""
+    link_rows = None
     try:
         views = collect_views(doc, DB)
         ifc_setups, ifc_error = [], ""
         if caps.ifc_setups:
             ifc_setups, ifc_error = _read_ifc_setups(doc, DB)
+        if _is_bool(links, True):
+            link_rows = collect_cloud_links(doc, DB)
     finally:
         closed, close_detail = _close(doc)
     doc = None
     if not closed:
         raise _close_failed(close_detail)
-    return {
+    snapshot = {
         "title": text(ntpath.basename(path)),
         "path": path,
         "views_2d": views["views_2d"],
@@ -257,6 +354,9 @@ def read_model(app, DB, path, caps, workshared=None):
         "ifc_setups": ifc_setups,
         "ifc_error": ifc_error,
     }
+    if link_rows is not None:
+        snapshot["links"] = link_rows
+    return snapshot
 
 
 # --------------------------------------------------------------------------- IFC setups

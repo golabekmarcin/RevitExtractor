@@ -30,9 +30,11 @@ from System.Windows.Input import Cursors, Key, Mouse
 from System.Windows.Threading import DispatcherPriority, DispatcherTimer
 from pyrevit import forms
 
+import rx_cloud
+from rx_cloud import StageError
 from rx_column_filter_ui import ColumnFilterController
-from rx_export_logic import (load_shared_index, plan_jobs, settings_to_save, tick_targets,
-                             toggled_state)
+from rx_export_logic import (link_key, load_shared_index, plan_cloud_job, plan_cloud_jobs,
+                             plan_jobs, settings_to_save, tick_targets, toggled_state)
 from rx_export_text import resources
 from rx_i18n import tr
 from rx_index import SetupError, build_index, database_warning, defaults, to_json
@@ -57,6 +59,8 @@ FOLDER_COLUMN, VERSION_COLUMN = 2, 3   # models_lv: check, name, folder, version
 TYPE_COLUMN = 2                        # views2d_lv: check, name, type, ElementId
 DIMENSIONS = ("2d", "3d")
 SEPARATOR = "    •    "
+MAX_NOTES_SHOWN = 3
+CLOUD_PREFIX = "cloud:"     # rx_cloud.CloudRow keys; a local job key is a normalized path
 # Settings key -> check box. Only the keys in defaults(caps) are read or shown.
 BOOL_CONTROLS = {
     "enable_2d": "enable2d_cb", "enable_3d": "enable3d_cb", "pdb": "pdb_cb",
@@ -151,6 +155,7 @@ class ModelRow(forms.Reactive):
         self.Note = row.note or ""
         self.Tip = row.path if self.enabled else (row.note or row.path)
         self.SearchText = " ".join((self.Name, self.Folder, self.Version)).lower()
+        self.job_key = _key(row.path)
         self._checked = False
 
     @forms.reactive
@@ -166,6 +171,66 @@ class ModelRow(forms.Reactive):
         self._checked = bool(value)
 
 
+class CloudModelRow(forms.Reactive):
+    """One cloud model from the cache catalog (an rx_cloud.CloudRow). Shows the real project and
+    file name and the cache date, never the GUID-named cache file. `cloud` is the plain CloudRow."""
+
+    def __init__(self, row):
+        self.cloud = row
+        self.key = row.key
+        self.job_key = row.key
+        self.cache_path = row.cache_path
+        self.state = row.state
+        self.enabled = row.enabled is True
+        self.Enabled = self.enabled
+        self.Name = row.name
+        self.Project = row.project
+        self.CacheDate = row.cache_date
+        self.Note = row.note or ""
+        self.Tip = row.note if row.note else "%s / %s" % (row.project, row.name)
+        self.SearchText = " ".join((row.name, row.project, row.cache_date)).lower()
+        self._checked = False
+
+    @forms.reactive
+    def Checked(self):
+        return self._checked
+
+    @Checked.setter
+    def Checked(self, value):
+        self._checked = bool(value)
+
+    def set_quietly(self, value):
+        """No PropertyChanged: the caller refreshes the list once afterwards."""
+        self._checked = bool(value)
+
+
+class ProjectRow(forms.Reactive):
+    """One cloud project in the projects card (an rx_cloud.Project): a check box."""
+
+    def __init__(self, project):
+        self.key = project.key
+        if project.unnamed:
+            self.Label = tr("{0} ({1} models, {2} without a name)",
+                            "{0} (modele: {1}, bez nazwy: {2})").format(
+                project.name, project.count, project.unnamed)
+        else:
+            self.Label = tr("{0} ({1} models)", "{0} (modele: {1})").format(
+                project.name, project.count)
+        self.Tip = project.note or self.Label
+        self._checked = bool(project.selected)
+
+    @forms.reactive
+    def Checked(self):
+        return self._checked
+
+    @Checked.setter
+    def Checked(self, value):
+        self._checked = bool(value)
+
+
+ROW_TYPES = (ModelRow, CloudModelRow)
+
+
 class ModelWindow(forms.WPFWindow):
     """Pick models, then Export (one job per ticked model) or Choose views… (one model).
 
@@ -174,10 +239,16 @@ class ModelWindow(forms.WPFWindow):
     [positions in jobs], "warning": text} or raises with the error text. Closing the window hands
     over nothing. After show_dialog(): `output_parent` is the chosen output folder; `fatal_error`
     is set when Revit did not close a model read in the background (the window then closed).
+
+    `cloud` (optional) adds the Cloud source: {"folders": rx_cloud.revit_folders(...), "memory":
+    rx_cloud.Memory}, plus optional "scan", "scan_cache" and "now" for tests. It is scanned
+    time-sliced from the same timer, on the first switch to Cloud. `read(path, workshared,
+    links=False)` also reads the link list of a cloud model. Export and Choose views… act on the
+    source that is shown.
     """
 
     def __init__(self, caps, settings, read_info, cache, read, save_settings, extractor_build="",
-                 scan=None, clock=None, submit=None):
+                 scan=None, clock=None, submit=None, cloud=None):
         self._updating = True
         self._caps = caps
         self._read_info = read_info
@@ -199,6 +270,15 @@ class ModelWindow(forms.WPFWindow):
         self._local_copies = 0
         self._keep = set()
         self._loaded = False
+        self._cloud = cloud
+        self._source = "local"
+        self._cloud_gen = None
+        self._cloud_started = False
+        self._cloud_catalog = None
+        self._cloud_files = None        # the cache files, walked at most once per scan
+        self._cloud_keep = set()        # keys ticked before a rescan, restored when it ends
+        self._host_only = set()         # cloud keys exported without their links (open failed)
+        self._statuses = {"local": "", "cloud": ""}
         # Esc: the search bar clears a filled box first, then Close (IsCancel) closes.
         forms.WPFWindow.__init__(self, MODELS_XAML, handle_esc=False)
         _apply_theme(self)
@@ -234,6 +314,20 @@ class ModelWindow(forms.WPFWindow):
         self.models_lv.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._on_check_click))
         self.models_lv.PreviewKeyDown += self._on_list_key_down
 
+        self._cloud_rows = ObservableCollection[object]()
+        self._cloud_view = CollectionViewSource.GetDefaultView(self._cloud_rows)
+        self._cloud_view.Filter = Predicate[object](self._cloud_visible)
+        self.cloud_lv.ItemsSource = self._cloud_view
+        self.cloud_lv.AddHandler(ButtonBase.ClickEvent, RoutedEventHandler(self._on_check_click))
+        self.cloud_lv.PreviewKeyDown += self._on_list_key_down
+        self.cloud_projects_lb.AddHandler(ButtonBase.ClickEvent,
+                                          RoutedEventHandler(self._on_project_click))
+        self.cloud_message_text.Text = ""
+        self.source_local_rb.IsChecked = True
+        self.source_cloud_rb.IsChecked = False
+        self.source_bar.Visibility = _shown(cloud is not None)
+        self.cloud_panel.Visibility = _shown(False)
+
         self._timer = DispatcherTimer()
         self._timer.Interval = TimeSpan.FromMilliseconds(SCAN_INTERVAL_MS)
         self._timer.Tick += self._on_tick
@@ -244,6 +338,8 @@ class ModelWindow(forms.WPFWindow):
         self.shared_choose_btn.Click += self._on_shared_choose
         self.default_scope_rb.Checked += self._on_scope_changed
         self.shared_scope_rb.Checked += self._on_scope_changed
+        self.source_local_rb.Checked += self._on_source_changed
+        self.source_cloud_rb.Checked += self._on_source_changed
         self.all_btn.Click += self._on_select_all
         self.none_btn.Click += self._on_unselect_all
         self.rescan_btn.Click += self._on_rescan
@@ -284,59 +380,93 @@ class ModelWindow(forms.WPFWindow):
         self._loaded = True
         self._start_scan()
 
+    def _say(self, source, message):
+        """Status line text of one source; shown at once only while that source is shown."""
+        self._statuses[source] = message or ""
+        if source == self._source:
+            self._set_status(message)
+
     def _start_scan(self):
-        self.stop_scan()
+        self._stop_local_scan()
         self._scan_errors = []
         self._local_copies = 0
         if not self._roots:
-            self._set_status(tr("Add a folder with models (Add folder…).",
-                                "Dodaj folder z modelami (Dodaj folder…)."))
+            self._stop_timer_if_idle()
+            self._say("local", tr("Add a folder with models (Add folder…).",
+                                  "Dodaj folder z modelami (Dodaj folder…)."))
             self._refresh_state()
             return
         if self._scan is None:
+            self._stop_timer_if_idle()
             self._show_error(tr("The model list is not available.",
                                 "Lista modeli jest niedostępna."))
             return
         self._generator = self._scan(list(self._roots), self._caps.year, self._read_info,
                                      self._cache, errors=self._scan_errors)
-        self._set_status(tr("Reading the model folders…", "Odczytywanie folderów z modelami…"))
+        self._say("local", tr("Reading the model folders…", "Odczytywanie folderów z modelami…"))
         self._timer.Start()
         self._refresh_state()
 
-    def stop_scan(self):
-        """Stop the timer and close the scan generator, which saves the catalog cache.
-        Safe to call more than once; script.py calls it after the dialog."""
+    def _stop_local_scan(self):
         generator, self._generator = self._generator, None
-        self._timer.Stop()
         if generator is not None:
             try:
                 generator.close()
             except Exception:
                 pass
 
+    def _stop_cloud_scan(self):
+        generator, self._cloud_gen = self._cloud_gen, None
+        if generator is not None:
+            try:
+                generator.close()
+            except Exception:
+                pass
+
+    def _stop_timer_if_idle(self):
+        if self._generator is None and self._cloud_gen is None:
+            self._timer.Stop()
+
+    def _scanning(self):
+        return self._generator is not None or self._cloud_gen is not None
+
+    def stop_scan(self):
+        """Stop the timer and close both scan generators (the local one saves the catalog
+        cache). Safe to call more than once; script.py calls it after the dialog."""
+        self._stop_local_scan()
+        self._stop_cloud_scan()
+        self._timer.Stop()
+
     def _on_tick(self, sender, args):
-        if self._generator is None:
+        if self._generator is None and self._cloud_gen is None:
             self._timer.Stop()
             return
+        local_active = self._generator is not None
+        deadline = self._clock() + SCAN_SLICE_SECONDS
         try:
-            deadline = self._clock() + SCAN_SLICE_SECONDS
-            while self._generator is not None:
-                try:
-                    row = next(self._generator)
-                except StopIteration:
-                    self._generator = None
-                    self._timer.Stop()
-                    self._scan_finished()
-                    break
-                self._add_row(row)
-                if self._clock() >= deadline:
-                    break
+            self._pump_local(deadline)
         except Exception as error:
-            self.stop_scan()
+            self._stop_local_scan()
+            self._stop_timer_if_idle()
             self._show_error(tr("The model list could not be read: {0}",
                                 "Nie udało się odczytać listy modeli: {0}")
                              .format(_error_text(error)))
+        if self._cloud_gen is not None and not (local_active and self._clock() >= deadline):
+            self._pump_cloud(deadline)
         self._refresh_state()
+
+    def _pump_local(self, deadline):
+        while self._generator is not None:
+            try:
+                row = next(self._generator)
+            except StopIteration:
+                self._generator = None
+                self._stop_timer_if_idle()
+                self._scan_finished()
+                break
+            self._add_row(row)
+            if self._clock() >= deadline:
+                break
 
     def _add_row(self, row):
         if row.state == "local_copy":
@@ -355,22 +485,27 @@ class ModelWindow(forms.WPFWindow):
                                "every file again.",
                                "Nie udało się zapisać pamięci podręcznej listy; przy następnym "
                                "uruchomieniu wszystkie pliki zostaną odczytane ponownie.")
-        self._set_status(status)
+        self._say("local", status)
 
     def _rescan(self):
-        keep = set(_key(row.path) for row in self._ticked())
+        keep = set(_key(row.path) for row in self._ticked_in(self._rows))
         if self._generator is not None:
             keep |= self._keep          # ticks of rows the interrupted scan had not reached
         self._keep = keep
-        self._kept_jobs = {}            # the list is rebuilt: a retained views job is dropped
-        self.stop_scan()
+        # The list is rebuilt: a retained views job of a local row is dropped.
+        self._kept_jobs = dict((key, job) for key, job in self._kept_jobs.items()
+                               if key.startswith(CLOUD_PREFIX))
+        self._stop_local_scan()
         self._rows.Clear()
         self._start_scan()
 
     @_guarded
     def _on_rescan(self, sender, args):
         self._show_error("")
-        self._rescan()
+        if self._source == "cloud":
+            self._rescan_cloud()
+        else:
+            self._rescan()
 
     def _on_closed(self, sender, args):
         self.stop_scan()
@@ -380,9 +515,17 @@ class ModelWindow(forms.WPFWindow):
     def _visible(self, row):
         return self._search.matches(row.SearchText) and self._filters.matches(row)
 
+    def _cloud_visible(self, row):
+        return self._search.matches(row.SearchText)
+
+    @staticmethod
+    def _ticked_in(rows):
+        return [row for row in rows if row.enabled and row.Checked]
+
     def _ticked(self):
-        """Ticked rows that may be exported, in list order. A greyed row never counts."""
-        return [row for row in self._rows if row.enabled and row.Checked]
+        """Ticked rows of the shown source that may be exported, in list order. A greyed row
+        never counts."""
+        return self._ticked_in(self._cloud_rows if self._source == "cloud" else self._rows)
 
     def _set_checked(self, list_view, rows, state):
         for row in rows:
@@ -392,7 +535,7 @@ class ModelWindow(forms.WPFWindow):
     @_guarded
     def _on_check_click(self, sender, args):
         row = getattr(args.OriginalSource, "DataContext", None)
-        if not isinstance(row, ModelRow):
+        if not isinstance(row, ROW_TYPES):
             return  # e.g. a column header or its filter button
         if not row.enabled:
             row.set_quietly(False)
@@ -402,7 +545,7 @@ class ModelWindow(forms.WPFWindow):
         # The binding has already updated row.Checked. A checkbox on a row that is part of a
         # multi-row highlight applies to the whole highlight, greyed rows left out.
         targets = [target for target in tick_targets(sender.SelectedItems, row)
-                   if isinstance(target, ModelRow) and target.enabled]
+                   if isinstance(target, ROW_TYPES) and target.enabled]
         if len(targets) > 1:
             self._set_checked(sender, targets, row.Checked)
         self._refresh_state()
@@ -415,43 +558,61 @@ class ModelWindow(forms.WPFWindow):
         # route their keys through the column header into this list.
         source = args.OriginalSource
         if source is not sender and not isinstance(getattr(source, "DataContext", None),
-                                                   ModelRow):
+                                                   ROW_TYPES):
             return
         highlighted = list(sender.SelectedItems)
         if not highlighted:
             return
         # Handled first, so a focused checkbox does not also toggle itself.
         args.Handled = True
-        rows = [row for row in highlighted if isinstance(row, ModelRow) and row.enabled]
+        rows = [row for row in highlighted if isinstance(row, ROW_TYPES) and row.enabled]
         if rows:
             self._set_checked(sender, rows, toggled_state([row.Checked for row in rows]))
         self._refresh_state()
 
+    def _shown_list(self):
+        """(ListView, its collection view) of the shown source."""
+        if self._source == "cloud":
+            return self.cloud_lv, self._cloud_view
+        return self.models_lv, self._view
+
     @_guarded
     def _on_select_all(self, sender, args):
-        self._set_checked(self.models_lv, [row for row in self._view if row.enabled], True)
+        list_view, view = self._shown_list()
+        self._set_checked(list_view, [row for row in view if row.enabled], True)
         self._refresh_state()
 
     @_guarded
     def _on_unselect_all(self, sender, args):
-        self._set_checked(self.models_lv, [row for row in self._view if row.enabled], False)
+        list_view, view = self._shown_list()
+        self._set_checked(list_view, [row for row in view if row.enabled], False)
         self._refresh_state()
 
     def _on_filter_changed(self, *unused):
         if not self._updating:
             self._view.Refresh()
+            self._cloud_view.Refresh()
             self._refresh_state()
 
     def _shared_scope(self):
         return bool(self.shared_scope_rb.IsChecked)
 
-    def _refresh_state(self):
-        rows = list(self._rows)
-        ticked = [row for row in rows if row.enabled and row.Checked]
-        ticked_keys = set(_key(row.path) for row in ticked)
+    def _forget_unticked(self):
+        """A retained views job and a host-alone choice are dropped once the row is unticked."""
+        ticked_keys = set(row.job_key for row in self._ticked_in(self._rows))
+        ticked_keys |= set(row.job_key for row in self._ticked_in(self._cloud_rows))
         for key in list(self._kept_jobs):
             if key not in ticked_keys:
-                del self._kept_jobs[key]    # unticked: the views job is dropped
+                del self._kept_jobs[key]
+        self._host_only &= ticked_keys
+
+    def _refresh_state(self):
+        self._forget_unticked()
+        if self._source == "cloud":
+            self._refresh_cloud_state()
+            return
+        rows = list(self._rows)
+        ticked = [row for row in rows if row.enabled and row.Checked]
         count = tr("Selected: {0} / {1}{2}Shown: {3}{2}Local copies skipped: {4}",
                    "Zaznaczone: {0} / {1}{2}Widoczne: {3}{2}Pominięte kopie lokalne: {4}") \
             .format(len(ticked), len(rows), SEPARATOR, self._view.Count, self._local_copies)
@@ -586,35 +747,42 @@ class ModelWindow(forms.WPFWindow):
         models = self._ticked()
         if not models:
             return
+        if self._source == "cloud":
+            self._export_cloud(models)
+            return
         # A row whose Choose views… hand-over failed sends exactly that job again, so the shared
         # index.json (checked only for the other rows) cannot block that retry.
-        fresh = [row for row in models if _key(row.path) not in self._kept_jobs]
+        fresh = [row for row in models if row.job_key not in self._kept_jobs]
         planned = {}
         if fresh:
             try:
-                shared = None
-                if self._shared_scope():
-                    if not self._shared_path:
-                        raise SetupError(tr("Choose the shared index.json first (Choose…).",
-                                            "Najpierw wybierz wspólny plik index.json (Wybierz…)."))
-                    shared = load_shared_index(self._shared_path)
-                planned = dict(zip([_key(row.path) for row in fresh],
+                shared = self._shared_index_or_none()
+                planned = dict(zip([row.job_key for row in fresh],
                                    plan_jobs(fresh, self._caps, shared)))
             except SetupError as error:
                 self._show_error(_error_text(error))
                 return
-        jobs = [self._kept_jobs.get(_key(row.path)) or planned[_key(row.path)] for row in models]
+        jobs = [self._kept_jobs.get(row.job_key) or planned[row.job_key] for row in models]
         self._queue(jobs, models)
+
+    def _shared_index_or_none(self):
+        """The shared index.json when that scope is chosen, else None. Raises SetupError."""
+        if not self._shared_scope():
+            return None
+        if not self._shared_path:
+            raise SetupError(tr("Choose the shared index.json first (Choose…).",
+                                "Najpierw wybierz wspólny plik index.json (Wybierz…)."))
+        return load_shared_index(self._shared_path)
 
     def _kept_note(self, models, positions):
         """Error-line sentence when a retained views job stays for one of `positions`."""
-        if any(_key(models[position].path) in self._kept_jobs for position in positions):
+        if any(models[position].job_key in self._kept_jobs for position in positions):
             return " " + tr("The selected views are kept; click Export to try again.",
                             "Wybrane widoki zostały zachowane; kliknij Eksportuj, aby spróbować "
                             "ponownie.")
         return ""
 
-    def _queue(self, jobs, models, retain=False):
+    def _queue(self, jobs, models, retain=False, notes=()):
         """Hand `jobs` (one per row in `models`, same order) to the queue and stay open.
 
         The button is off while the hand-over runs, and `_submitting` drops a click that still
@@ -622,7 +790,8 @@ class ModelWindow(forms.WPFWindow):
         the status line. A failure shows the error and keeps every tick so the user can retry;
         with partial errors only the models that failed keep their tick. No modal alert.
         `retain` (the job came from Choose views…) keeps a failed job for the next Export click;
-        a queued job is forgotten.
+        a queued job is forgotten. `notes` (cloud staging notes) are shown on the error line
+        after a hand-over.
         """
         if self._submitting:
             return False
@@ -638,7 +807,7 @@ class ModelWindow(forms.WPFWindow):
             except Exception as error:
                 if retain:
                     for row, job in zip(models, jobs):
-                        self._kept_jobs[_key(row.path)] = job
+                        self._kept_jobs[row.job_key] = job
                 self._show_error((_error_text(error) or type(error).__name__) +
                                  self._kept_note(models, range(len(models))))
                 return False
@@ -649,10 +818,12 @@ class ModelWindow(forms.WPFWindow):
             for position, row in enumerate(models):
                 if position not in failed:
                     row.set_quietly(False)
-                    self._kept_jobs.pop(_key(row.path), None)
+                    self._kept_jobs.pop(row.job_key, None)
+                    self._host_only.discard(row.job_key)
                 elif retain:
-                    self._kept_jobs[_key(row.path)] = jobs[position]
+                    self._kept_jobs[row.job_key] = jobs[position]
             self.models_lv.Items.Refresh()
+            self.cloud_lv.Items.Refresh()
             if not failed:
                 self._reset_scope()
             queued = result.get("queued")
@@ -661,6 +832,9 @@ class ModelWindow(forms.WPFWindow):
             warning = result.get("warning") or ""
             if warning:
                 warning += self._kept_note(models, sorted(failed))
+            note_text = self._notes_text(notes)
+            if note_text:
+                warning = (warning + " " + note_text).strip()
             self._show_error(warning)
             self._set_status(tr("Exports queued: {0}. Close this window or queue more.",
                                 "Dodano eksportów do kolejki: {0}. Zamknij okno albo dodaj "
@@ -699,39 +873,15 @@ class ModelWindow(forms.WPFWindow):
                                 "Zaznacz dokładnie jeden model, aby wybrać jego widoki."))
             return
         row = models[0]
-        resume = self._generator is not None
-        self._timer.Stop()                  # no file is read while the model is open
-        self._show_error("")
-        self._set_status(tr("Reading {0} in the background (worksets closed, nothing is "
-                            "saved). This can take a few minutes…",
-                            "Odczytywanie {0} w tle (zamknięte zestawy robocze, nic nie jest "
-                            "zapisywane). To może potrwać kilka minut…").format(row.Name))
-        self.IsEnabled = False
-        Mouse.OverrideCursor = Cursors.Wait
-        snapshot, failure = None, None
-        try:
-            self._force_render()
-            snapshot = self._read(row.path, row.workshared)
-        except Exception as error:
-            failure = error
-        finally:
-            Mouse.OverrideCursor = None
-            self.IsEnabled = True
-        self._set_status("")
+        if self._source == "cloud":
+            self._views_cloud(row)
+            return
+        resume = self._scanning()
+        snapshot, failure = self._read_in_background(
+            row.Name, lambda: self._read(row.path, row.workshared))
         if failure is not None:
-            kind = getattr(failure, "kind", None)
-            if kind == "close_failed":
-                # The model may still be open in Revit: queue nothing and leave at once.
-                self.fatal_error = _error_text(failure)
-                self.Close()
-                return
-            if kind in ("busy", "open_failed"):
-                self._show_error(_error_text(failure))
-            else:
-                self._show_error(tr("The model could not be read: {0}",
-                                    "Nie udało się odczytać modelu: {0}")
-                                 .format(_error_text(failure)))
-            self._resume(resume)
+            if not self._read_failed(failure):
+                self._resume(resume)
             return
         try:
             view = ViewWindow(snapshot, self._caps, note=row.Note, save_dir=self._save_dir())
@@ -747,9 +897,349 @@ class ModelWindow(forms.WPFWindow):
         self._resume(resume)
         self._refresh_state()
 
+    def _read_in_background(self, name, call):
+        """Run `call` (a background read of one model) with the scan paused, the window off and
+        a wait cursor. Returns (snapshot, failure); failure is the exception, never raised."""
+        self._timer.Stop()                  # no file is read while the model is open
+        self._show_error("")
+        self._set_status(tr("Reading {0} in the background (worksets closed, nothing is "
+                            "saved). This can take a few minutes…",
+                            "Odczytywanie {0} w tle (zamknięte zestawy robocze, nic nie jest "
+                            "zapisywane). To może potrwać kilka minut…").format(name))
+        self.IsEnabled = False
+        Mouse.OverrideCursor = Cursors.Wait
+        snapshot, failure = None, None
+        try:
+            self._force_render()
+            snapshot = call()
+        except Exception as error:
+            failure = error
+        finally:
+            Mouse.OverrideCursor = None
+            self.IsEnabled = True
+        self._set_status("")
+        return snapshot, failure
+
+    def _read_failed(self, failure):
+        """Show a failed Choose views… read. True when the window was closed instead: Revit could
+        not close the model, so it may still be open and nothing may be queued."""
+        kind = getattr(failure, "kind", None)
+        if kind == "close_failed":
+            self.fatal_error = _error_text(failure)
+            self.Close()
+            return True
+        if kind in ("busy", "open_failed"):
+            self._show_error(_error_text(failure))
+        else:
+            self._show_error(tr("The model could not be read: {0}",
+                                "Nie udało się odczytać modelu: {0}")
+                             .format(_error_text(failure)))
+        return False
+
     def _resume(self, resume):
-        if resume and self._generator is not None:
+        if resume and self._scanning():
             self._timer.Start()
+
+    # -- cloud source
+
+    def _cloud_value(self, name, default):
+        value = self._cloud.get(name) if self._cloud else None
+        return value if value is not None else default
+
+    def _cloud_now(self):
+        return self._cloud_value("now", time.time)()
+
+    @_guarded
+    def _on_source_changed(self, sender, args):
+        if self._updating:
+            return
+        wanted = "cloud" if self.source_cloud_rb.IsChecked else "local"
+        if wanted == "cloud" and self._cloud is None:
+            wanted = "local"
+        if wanted == self._source:
+            return
+        self._source = wanted
+        self._show_error("")
+        cloud = wanted == "cloud"
+        self.models_lv.Visibility = _shown(not cloud)
+        self.cloud_panel.Visibility = _shown(cloud)
+        self._set_status(self._statuses[wanted])
+        if cloud and not self._cloud_started:
+            self._start_cloud_scan()
+        self._refresh_state()
+
+    def _start_cloud_scan(self):
+        self._stop_cloud_scan()
+        self._cloud_started = True
+        self._cloud_files = None
+        self._cloud_catalog = None
+        scan = self._cloud_value("scan", rx_cloud.scan)
+        self._cloud_gen = scan(self._cloud["folders"], self._cloud["memory"], self._cloud_now())
+        self._say("cloud", tr("Reading the Revit journals and cache…",
+                              "Odczytywanie dzienników i pamięci podręcznej Revita…"))
+        self._timer.Start()
+        self._refresh_state()
+
+    def _pump_cloud(self, deadline):
+        while self._cloud_gen is not None:
+            try:
+                item = next(self._cloud_gen)
+                if isinstance(item, rx_cloud.Catalog):
+                    self._cloud_scan_finished(item)
+                    continue
+            except StopIteration:
+                self._cloud_gen = None
+                self._stop_timer_if_idle()
+                break
+            except Exception as error:
+                self._stop_cloud_scan()
+                self._stop_timer_if_idle()
+                self._show_error(tr("The cloud model list could not be read: {0}",
+                                    "Nie udało się odczytać listy modeli z chmury: {0}")
+                                 .format(_error_text(error)))
+                break
+            if self._clock() >= deadline:
+                break
+
+    def _show_cloud_rows(self, catalog):
+        """Rebuild the rows; ticks of rows that are still enabled survive, keyed by CloudRow.key."""
+        keep = set(self._cloud_keep) | set(row.key for row in self._ticked_in(self._cloud_rows))
+        self._cloud_rows.Clear()
+        for cloud_row in catalog.rows:
+            row = CloudModelRow(cloud_row)
+            if row.enabled and row.key in keep:
+                row.set_quietly(True)
+            self._cloud_rows.Add(row)
+
+    def _cloud_scan_finished(self, catalog):
+        self._cloud_catalog = catalog
+        self._show_cloud_rows(catalog)
+        self._cloud_keep = set()
+        projects = [ProjectRow(project) for project in catalog.projects]
+        self.cloud_projects_lb.ItemsSource = projects
+        self.cloud_message_text.Text = catalog.message or ""
+        counts = catalog.counts or {}
+        status = tr("Cloud models found: {0}.", "Znalezione modele w chmurze: {0}.") \
+            .format(len(catalog.rows))
+        if not counts.get("cache_files"):
+            status = tr("No cloud models were found in the Revit cache of this computer.",
+                        "Nie znaleziono modeli z chmury w pamięci podręcznej Revita tego "
+                        "komputera.")
+        elif catalog.rows and not any(project.selected for project in catalog.projects):
+            status += " " + tr("Tick a project above to enable its models.",
+                               "Zaznacz powyżej projekt, aby włączyć jego modele.")
+        if counts.get("cache_errors"):
+            status += " " + tr("Part of the cache folder could not be read.",
+                               "Nie udało się odczytać części folderu pamięci podręcznej.")
+        if getattr(self._cloud["memory"], "last_error", None):
+            status += " " + tr("The list of cloud model names could not be saved.",
+                               "Nie udało się zapisać listy nazw modeli z chmury.")
+        self._say("cloud", status)
+
+    def _rescan_cloud(self):
+        keep = set(row.key for row in self._ticked_in(self._cloud_rows))
+        if self._cloud_gen is not None:
+            keep |= self._cloud_keep    # ticks of rows the interrupted scan had not reached
+        self._cloud_keep = keep
+        for key in [key for key in self._kept_jobs if key.startswith(CLOUD_PREFIX)]:
+            del self._kept_jobs[key]
+        self._host_only = set()
+        self._stop_cloud_scan()
+        self._cloud_rows.Clear()
+        self.cloud_projects_lb.ItemsSource = []
+        self.cloud_message_text.Text = ""
+        self._start_cloud_scan()
+
+    def _cache_files(self):
+        """The cache files, walked once per scan (project ticks and link lookups need them)."""
+        if self._cloud_files is None:
+            scan_cache = self._cloud_value("scan_cache", rx_cloud.scan_cache)
+            self._cloud_files = list(scan_cache(self._cloud["folders"]["cache"]))
+        return self._cloud_files
+
+    @_guarded
+    def _on_project_click(self, sender, args):
+        row = getattr(args.OriginalSource, "DataContext", None)
+        if not isinstance(row, ProjectRow) or self._cloud_catalog is None:
+            return
+        memory = self._cloud["memory"]
+        projects = list(self.cloud_projects_lb.ItemsSource or [])
+        shown = set(project.key for project in projects)
+        chosen = set(project.key for project in projects if project.Checked)
+        memory.set_included((set(memory.included) - shown) | chosen)
+        if memory.save():
+            self._show_error("")
+        else:
+            self._show_error(tr("The project selection could not be saved: {0}",
+                                "Nie udało się zapisać wyboru projektów: {0}")
+                             .format(getattr(memory, "last_error", None) or ""))
+        old = self._cloud_catalog
+        catalog = rx_cloud.build_catalog(self._cache_files(), memory, self._cloud_now(),
+                                         counts=old.counts, message=old.message)
+        self._cloud_catalog = catalog
+        self._show_cloud_rows(catalog)
+        self._refresh_state()
+
+    def _refresh_cloud_state(self):
+        rows = list(self._cloud_rows)
+        ticked = self._ticked_in(rows)
+        counts = self._cloud_catalog.counts if self._cloud_catalog is not None else {}
+        self.count_text.Text = tr(
+            "Selected: {0} / {1}{2}Shown: {3}{2}Models without a name: {4}",
+            "Zaznaczone: {0} / {1}{2}Widoczne: {3}{2}Modele bez nazwy: {4}") \
+            .format(len(ticked), len(rows), SEPARATOR, self._cloud_view.Count,
+                    (counts or {}).get("unnamed", 0))
+        self.count_text.ToolTip = None
+        self.views_btn.IsEnabled = len(ticked) == 1
+        self.export_btn.IsEnabled = bool(ticked)
+        if not ticked:
+            self.summary_text.Text = tr("No model selected.", "Nie zaznaczono modelu.")
+            return
+        summary = tr("Models selected: {0}", "Zaznaczone modele: {0}").format(len(ticked))
+        stale = len([row for row in ticked if row.state == "stale"])
+        if stale:
+            summary += SEPARATOR + tr("older cache copies: {0}",
+                                      "starsze kopie z pamięci podręcznej: {0}").format(stale)
+        if self._shared_scope():
+            summary += SEPARATOR + tr("shared index.json", "wspólny index.json")
+        else:
+            summary += SEPARATOR + tr("Extractor default scope", "domyślny zakres Extractora")
+        self.summary_text.Text = summary
+
+    @staticmethod
+    def _notes_text(notes):
+        """The staging notes of a hand-over for the error line: the first few, then a count."""
+        unique = []
+        for note in notes or ():
+            if note not in unique:
+                unique.append(note)
+        if not unique:
+            return ""
+        text_ = " ".join(unique[:MAX_NOTES_SHOWN])
+        if len(unique) > MAX_NOTES_SHOWN:
+            text_ += " " + tr("(and {0} more notes)", "(i jeszcze uwag: {0})").format(
+                len(unique) - MAX_NOTES_SHOWN)
+        return text_
+
+    def _store_links(self, row, links):
+        """A link read succeeded (Export or Choose views): store it, and an earlier failed read
+        no longer sends this row out without its links."""
+        self._host_only.discard(row.job_key)
+        memory = self._cloud["memory"]
+        memory.store_links(link_key(row.cloud), row.cloud.cache_mtime, links)
+        memory.save()           # a failed save only costs the next read; it never raises
+
+    @staticmethod
+    def _links_of(snapshot):
+        links = snapshot.get("links") if isinstance(snapshot, dict) else None
+        return links if isinstance(links, list) else []
+
+    def _read_links(self, rows, link_lists):
+        """Background-read the link list of each cloud row (one open each) into `link_lists`
+        and the memory. False when it stopped: the window was closed, or an open failed (the
+        error line offers the host alone and the row is marked for it)."""
+        resume = self._scanning()
+        for row in rows:
+            snapshot, failure = self._read_in_background(
+                row.Name, lambda row=row: self._read(row.cache_path, None, links=True))
+            if failure is not None:
+                if self._read_failed_links(row, failure):
+                    return False
+                self._resume(resume)
+                return False
+            links = self._links_of(snapshot)
+            self._store_links(row, links)
+            link_lists[row.key] = links
+        self._resume(resume)
+        return True
+
+    def _read_failed_links(self, row, failure):
+        """True when the window was closed (Revit could not close the model). Otherwise the host
+        is marked for export without its links and the error line says how to do that."""
+        if getattr(failure, "kind", None) == "close_failed":
+            self.fatal_error = _error_text(failure)
+            self.Close()
+            return True
+        self._host_only.add(row.job_key)
+        self._show_error(tr("The links of {0} could not be read ({1}). Click Export again to "
+                            "export it without its links.",
+                            "Nie udało się odczytać linków modelu {0} ({1}). Kliknij Eksportuj "
+                            "ponownie, aby wyeksportować go bez linków.")
+                         .format(row.Name, _error_text(failure)))
+        return False
+
+    def _export_cloud(self, models):
+        fresh = [row for row in models if row.job_key not in self._kept_jobs]
+        planned = {}
+        if fresh:
+            memory = self._cloud["memory"]
+            try:
+                shared = self._shared_index_or_none()
+            except SetupError as error:
+                self._show_error(_error_text(error))
+                return
+            link_lists, need = {}, []
+            for row in fresh:
+                if row.job_key in self._host_only:
+                    continue
+                stored = memory.links_for(link_key(row.cloud), row.cloud.cache_mtime)
+                if stored is None:
+                    need.append(row)
+                else:
+                    link_lists[row.key] = stored
+            self._show_error("")
+            if need and not self._read_links(need, link_lists):
+                return
+            try:
+                jobs = plan_cloud_jobs([row.cloud for row in fresh], self._caps,
+                                       self._cache_files(), memory, link_lists,
+                                       set(row.key for row in fresh if row.job_key in
+                                           self._host_only), shared)
+            except (SetupError, StageError) as error:
+                self._show_error(_error_text(error))
+                return
+            planned = dict(zip([row.job_key for row in fresh], jobs))
+        jobs = [self._kept_jobs.get(row.job_key) or planned[row.job_key] for row in models]
+        notes = []
+        for job in jobs:
+            notes.extend((job.get("stage") or {}).get("notes") or [])
+        self._queue(jobs, models, notes=notes)
+
+    def _views_cloud(self, row):
+        """Choose views… for one cloud row: one background read (links included, stored), the
+        slice 1 picker on a copy of the snapshot that shows the real name, then a cloud job."""
+        resume = self._scanning()
+        snapshot, failure = self._read_in_background(
+            row.Name, lambda: self._read(row.cache_path, None, links=True))
+        if failure is not None:
+            if not self._read_failed(failure):
+                self._resume(resume)
+            return
+        links = self._links_of(snapshot)
+        self._store_links(row, links)
+        shown = dict(snapshot)
+        shown["title"] = row.Name
+        shown["path"] = "%s / %s" % (row.Project, row.Name)   # never the GUID-named cache file
+        try:
+            view = ViewWindow(shown, self._caps, note=row.Note, save_dir=self._save_dir())
+            view.show_dialog()
+        except Exception as error:
+            self._show_error(tr("The view window failed: {0}", "Błąd okna widoków: {0}")
+                             .format(_error_text(error)))
+            self._resume(resume)
+            return
+        picked = getattr(view, "job", None)
+        if picked:
+            try:
+                job = plan_cloud_job(row.cloud, picked["index"], self._cache_files(),
+                                     self._cloud["memory"], links)
+            except (SetupError, StageError) as error:
+                self._show_error(_error_text(error))
+                self._resume(resume)
+                return
+            self._queue([job], [row], retain=True, notes=job["stage"]["notes"])
+        self._resume(resume)
+        self._refresh_state()
 
 
 # =============================================================================== view window

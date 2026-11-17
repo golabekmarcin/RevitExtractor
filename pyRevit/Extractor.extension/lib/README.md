@@ -13,9 +13,11 @@ Shared modules for every button of this extension. pyRevit puts this folder on `
 | `rx_capabilities.py` | capabilities | what the running Revit supports, plus `element_id_value` |
 | `rx_index.py` | index-builder | one `build_index` for every Revit version, the same output as the old buttons |
 | `rx_catalog.py` | model-catalog | `.rvt` list under remembered roots, with skip rules, newer/older/unknown and a cache in `%APPDATA%\RevitExtractor\catalog-cache.json`. The cache holds model paths: never commit or share it |
-| `rx_reader.py` | model-reader | background open (detached, worksets closed), view list, exactly one `Close(False)`; it never saves |
+| `rx_reader.py` | model-reader | background open (detached, worksets closed), view list, exactly one `Close(False)`; it never saves. `links=True` also lists a cloud model's Revit links (`collect_cloud_links`) |
 | `rx_status.py`, `rx_status_ui.py`, `rx_status.xaml` | status-window | the export queue's modeless status window: progress from `console.log`, Open output folder, Open in Analyzer, Cancel export. The queue is published in AppDomain data and only JSON text crosses between script engines |
-| `rx_runner.py` | export-runner | run folder, Extractor process through `cmd.exe`, queue (one at a time), cancel with `taskkill /T /F`, success check |
+| `rx_runner.py` | export-runner | run folder, Extractor process through `cmd.exe`, queue (one at a time), cancel with `taskkill /T /F`, success check. A cloud job also has a time-sliced `staging` state that copies the cache files into `<run>\model` before the Extractor starts, and deletes the copies after the process tree has exited (`model\stage.json` stays) |
+| `rx_cloud.py` | cloud-catalog | pure logic of the Cloud source: reads Revit journals (UTF-16, UTF-8, ANSI) for project and file names, scans `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit <year>\CollaborationCache`, joins them by project GUID + model GUID, keeps selection, names and link lists in `%APPDATA%\RevitExtractor\cloud-catalog.json`, and plans which cache files to stage. No Revit, .NET or `clr` import (a test enforces it). **The memory file holds client project and file names: never commit or share it** |
+| `rx_cloud_stage.py` | cloud-catalog | the only file IO of the Cloud source: free-space check and the chunked copy. Sources are opened `rb` only, a destination is never overwritten, and a cache file that changed during the copy fails the job. The cache is never written |
 
 Rules:
 - Every file starts with `rx_`, so it can't clash with another extension's module in a shared IronPython engine.
@@ -41,3 +43,10 @@ Also 2026-11-10, same machine:
 **Not verified:** IronPython 2.7 and anything inside Revit. That includes `BasicFileInfo.Extract`, a real background open, `DotNetStarter` (`ProcessStartInfo` under IronPython), the status window and its hand-over between script engines, closing Revit during an export, and the 2025.3 parser shape. These are all in `specs/v1-revit-test.md` for the owner's test at the end of v1.
 
 2026-11-11, same machine: all unit tests 554 OK; `validate_xaml.ps1` loads every XAML in `lib/` and `Export.pushbutton/`. `Export.pushbutton` is the first button that uses these modules (`../RVTExtractor.tab/Setup.panel/Export.pushbutton/README.md`).
+
+2026-11-16, same machine (cloud-catalog, `rx_cloud`, `rx_cloud_stage`):
+- **unit tests: 924 OK**; `validate_xaml.ps1`: 6 PASS;
+- `run_extractor_integration.ps1 -Cloud` **PASS**: a fake cache tree in `%TEMP%` (the Dynamo sample saved under GUID file names, synthetic journal), staged through `rx_runner.Queue` and exported by the real Extractor (`staging` -> `running` -> `ok`, `Success Jobs: 13, Failed Jobs: 0`); both cache copies kept their SHA-256 and times, and only `model\stage.json` was left after the run. The normal run still PASSes;
+- scan timing (100 synthetic 1 MB journals + 1,000 cache files): 2.9 s in total, slowest step 0.04 s.
+
+**Not verified for the cloud code:** IronPython 2.7, and anything inside Revit. That covers journal lines on any Revit year but 2022, the background open of a cache file, the link list of a real cloud model, copy speed next to a working Revit, link geometry in a federated view, and the Remember cloud model button. These are Part H of `specs/v1-revit-test.md`.

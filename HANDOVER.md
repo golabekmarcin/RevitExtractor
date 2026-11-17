@@ -7,7 +7,7 @@ The full earlier text (decisions Q1-Q29, D1-D13, established facts, verification
 
 ## Goal
 
-One pyRevit button (**Export**) runs the whole Extractor workflow from Revit with no model open: pick models, optionally views, queue, status window. Specs and plans: `specs/` (`SPEC.md` is the map). v1 stops after `export-button`; cloud (ACC, copy from the cache) is v1.1, the IFC command v1.2.
+One pyRevit button (**Export**) runs the whole Extractor workflow from Revit with no model open: pick models, optionally views, queue, status window. Specs and plans: `specs/` (`SPEC.md` is the map). v1 stops after `export-button` plus `cloud-catalog` (ACC models from the cache, moved into v1 on 2026-11-16); the IFC command is v1.2.
 
 ## Current state (2026-11-11)
 
@@ -16,13 +16,14 @@ One pyRevit button (**Export**) runs the whole Extractor workflow from Revit wit
 - **2026-11-12:** Open in Analyzer now shows a Node.js notice (EN/PL, "Don't show this again", flag in `%APPDATA%\RevitExtractor\preferences.json`) when the local Analyzer is unavailable; `Analyzer\Start-Analyzer.cmd` sets `NODE_USE_SYSTEM_CA=1` so a company proxy certificate works. 577 unit tests, 6 XAML PASS, Codex review clean. Not run in Revit: checklist item C14.
 - **Owner's Revit test (2022 + Extractor 2025.3), partial, 2026-11-12:** A1-A3, B1-B7, C1-C11 pass (C6 needed the `dumps_ascii` fix for Polish paths; C3 needed `Start-Analyzer.cmd` for npm). C12 open: after closing Revit the Extractor processes kept running (by design); still need how long they took and the `-Check` result. C13-C16 and Parts D-G not run. Added since: status-window right-click menu (C15), Clear finished (C16).
 - **2026-11-12 to 16, uncommitted until 2026-11-16:** the model window stays open after Export and queues more; Revit 2025 .NET 8 import fix (`lib/rx_dotnet.py`, no-op on 2022-2024); failed views hand-over keeps the job for retry (also under a shared index); the integration script no longer stops when `ExtractorUtility.dll` is missing. 663 unit tests OK, 6 XAML PASS. **None of it has run in Revit** (new checklist items C1/C17/F2/A2).
-- **Live-test guide:** `specs/v1-revit-test.html` is the interactive, offline, single-file replacement for the Markdown checklist (44 tests, structured fields, autosave, Save filled HTML, JSON export/import, review-before-export, synthetic data only). Workflow: `specs/v1-revit-test-two-computers.md`. The `.md` stays for reference. Browser-checked in headless Chrome (41 + 8 checks); import through the real file picker and clipboard copy not checked. Set **Expected baseline** (short commit id) on its Start page before carrying it over.
+- **Live-test guide:** `specs/v1-revit-test.html` is the interactive, offline, single-file replacement for the Markdown checklist (51 tests incl. Part H, structured fields, autosave, Save filled HTML, JSON export/import, review-before-export, synthetic data only). Workflow: `specs/v1-revit-test-two-computers.md`. The `.md` stays for reference. Browser-checked in headless Chrome (41 + 8 checks); import through the real file picker and clipboard copy not checked. Set **Expected baseline** (short commit id) on its Start page before carrying it over.
 - Checks on the main machine (Revit 2023, no pyRevit): **554 unit tests OK**; `validate_xaml.ps1` 5 PASS; `run_extractor_integration.ps1` normal PASS and `-Cancel` PASS (parallel FAIL, fixed pipe); kit `-Setup` and `-Check` run for real.
+- **2026-11-16: `cloud-catalog` is built and unit-tested on `mgo-changes`, local commits, not pushed** (spec `specs/SPEC-cloud-catalog.md`, plan `specs/plan-cloud-catalog.md`): `1f3913d` spec, plan and pure modules (`rx_cloud`); `d89ccd3` link reader in `rx_reader`; `56ef73a` staging plan and read-only cache copy (`rx_cloud_stage`); `78fa003` and `27ce2c7` Remember cloud model button; `cb5ba0a` runner `staging` state and status-window row; `4eb9975` Cloud tab in the Export window. Task 10 and 11 (this docs and test-kit step) are uncommitted. **924 unit tests OK, 6 XAML PASS, `run_extractor_integration.ps1 -Cloud` PASS** (fake cache in `%TEMP%`, real Extractor, Revit 2023 build), `v1_test_kit.ps1 -Check` prints cloud counts only. **Not run in Revit:** everything in checklist Part H.
 - **Never run in Revit or IronPython.** Everything inside Revit is unverified: the greying, pickers, `BasicFileInfo.Extract` from the scan timer, the background open, the status window's hand-over between script engines, closing Revit during an export, Polish text in the real windows. That is the one test: `specs/v1-revit-test.md`.
 
 ## Reviews
 
-**No review is pending.** Codex reviewed up to `f2597a7` (fixes in `7e68ebc`), and on 2026-11-16 the whole uncommitted tree (one P1: Save filled HTML kept the open review dialog and excluded notes; fixed and re-tested). Not re-reviewed after that small fix.
+**No review is pending.** 2026-11-16: Codex reviewed the cloud-catalog work (`e4e57a8`..`4eb9975`): 3 P2 findings (run folder written into the cache before the check; cleanup not retried after a failed copy/launch; host-only flag left set), all fixed test-first in `c0dc4bc`, not re-reviewed. A normal local job whose output folder is under `CollaborationCache` is now refused too (before any write; test added 2026-11-16). Earlier: Codex reviewed up to `f2597a7` (fixes in `7e68ebc`), and on 2026-11-16 the whole uncommitted tree (one P1: Save filled HTML kept the open review dialog and excluded notes; fixed and re-tested). Not re-reviewed after that small fix.
 
 Known **unfixed** Codex findings (accepted for v1, fix after the owner's test):
 - (a) `rx_runner`'s hold check races between two Revit sessions that start exports at the same moment, and it does not see `cmd.exe` before `RevitExtractor.exe` starts. Two Extractors could then start and collide on the fixed pipe.
@@ -31,21 +32,33 @@ Known **unfixed** Codex findings (accepted for v1, fix after the owner's test):
 ## Next steps
 
 1. Done 2026-11-16: committed and pushed `mgo-changes` (owner approved). **Never push to `online` or upstream.**
-2. The owner live-tests with `specs/v1-revit-test.html` (retest C1, C17, A2, F2; finish C12/C13, D6, F3, G1 decision) and returns the sanitized JSON or summary.
+2. The owner live-tests with `specs/v1-revit-test.html` (now also Part H, the Cloud source, with an ACC model) (retest C1, C17, A2, F2; finish C12/C13, D6, F3, G1 decision) and returns the sanitized JSON or summary.
 3. After the owner's results: README Validation sections, `TESTED_YEARS` (add 2025 if Part F passes), `PARALLEL_VERIFIED` (only if item G2 passes; today the Extractor build 2024.0.x fails with two at once), the question about deleting the old buttons (Q12), and the two findings above.
 4. Nice to have after v1 (owner): Revit Server (`RSN://`) models; an always-enabled "Export status" button (D8 option B); parallel exports (if G2 fails: research per-run isolation around the fixed pipe `Main_Process_to_Client_0_Pipe`).
 
-## Cloud catalog redesign (decided 2026-11-16, grill session; supersedes Q27 and the mapping part of Q29)
+## Cloud catalog (decided 2026-11-16, grill session; refines Q27/Q29)
 
 Problem: the Export scan marks every `CollaborationCache` file `local_copy` (disabled), and the files are GUID-named.
-- Build `cloud-catalog` now, in v1, as a separate "Cloud" source (not a folder-scan hack). Names/paths/version dates come from the **APS Data Management API**; no model file is opened.
-- Match key: project GUID + model GUID from the cache path `<Account>\<ProjectGUID>\<ModelGUID>.rvt` against `projectGuid`/`modelGuid` in the version extension data (from docs/forums, unverified on the owner's tenant). Never show a GUID as a name; unmatched cache files are "not in selected folders", disabled.
-- Export still runs on a copy from the cache under the real name (cache never written). Stale = cloud version newer than cache file: warn, allow, show both dates. Two same-named items in one run: second is disabled with a note.
-- Selection is Ideate style: Refresh button pulls hubs, projects, folders; user ticks what to include; saved per user. On open, a light re-read of ticked folders' version dates.
-- Auth: 3-legged OAuth + PKCE, localhost callback, no client secret. Client ID is entered once in per-user config (never git); refresh token DPAPI-encrypted in the profile. Metadata reads only.
-- No sign-in/network: message + "Sign in" button; fall back to the open model and its links (`LinkedModelModelId`).
-- **Open risk:** whether a self-registered app works without an ACC admin adding it (the owner has no admin rights). **Probe first:** `specs/cloud-api-probe/` (read-only, prints counts/field names only). Pass: build the full path (spec `SPEC-cloud-catalog.md`, test-first against mocked HTTP, Codex review, Revit 2022 check). Fail (0 hubs / HTTP 403): park the API, ship the fallback.
+- Build `cloud-catalog` now, in v1, as a separate "Cloud" source (not a folder-scan hack). Spec: `SPEC-cloud-catalog.md`.
+- **Names come from Revit journals** (`CLD:\US\{project GUID}<project name>\{model GUID}<file name>.rvt` lines and `ModelBrowserOpenDocumentEvent` JSON; formats in the archive, section 5 Cloud, checked 2026-11-10 on Revit 2022), matched to cache files by project GUID + model GUID from the cache path `<Account>\<ProjectGUID>\<ModelGUID>.rvt`. No model file is opened. Limit: only models opened on this machine appear (fits the owner's daily use).
+- Never show a GUID as a name; unmatched cache files are "not in selected folders", disabled. User ticks projects/folders to include, saved per user.
+- Export still runs on a copy from the cache under the real name (cache never written). The row shows the **cache date** of the copy that is used (the newer of the root and `LinkedModels` file); a copy older than 7 days gets a note and can still be exported. Two same-named items in the same project: the older one is disabled with a note.
+- **Built as decided** (see the 2026-11-16 bullet in Current state). Defaults the owner accepted: projects ticked by default none; staged copies removed after the run, `stage.json` kept; fallback button yes; a missing link warns and the export goes on.
+- **Open owner questions (answer in Part H):** (1) do journals of Revit after 2022 keep the same `ModelPath Created` and `ModelBrowserOpenDocumentEvent` lines; (2) folders cannot be chosen, because journals carry no folder (H1 lists the browser JSON keys only), so selection is per project; (3) does Revit open a cache file by path in the background without connecting to the cloud, and leave the file unchanged (H3, `-Stamp`); (4) can the journal or cache folder be moved through `Revit.ini` or Options (the kit reports whether the fixed paths exist).
+- No journal data: message, and fall back to the open model and its links (`LinkedModelModelId`).
+- **APS Data Management API route parked (2026-11-16).** Researched and prototyped as a read-only probe (`specs/cloud-api-probe/`, kept for reference). Dropped because a self-registered APS app must be provisioned by an Account Admin of the hub that owns the project; the owner's projects belong to another company, the owner has no admin rights there, and the company email cannot register an APS app. Ideate Automation works only because that hub's admin authorized Ideate's own connector (its Client ID cannot be reused). Revisit only if an admin of the hub agrees: probe first, then API metadata (names, folders, cloud version dates).
 - Local commits only; push waits for the end of the Revit test; never `online`/upstream.
+- `specs/cloud-api-probe/` stays in the repo (owner decision 2026-11-16), parked.
+
+## Parked idea: in-place cloud export instead of copies (2026-11-16)
+
+**Status: parked by the owner.** Cloud export stays in copy mode, consistent with how local models are handled; the owner is live-testing Part H now and will report. The notes below are only a record of the idea; the grill questions were not answered.
+
+Owner question: the built cloud-catalog **copies** the host and its links from `CollaborationCache` into `<run>\model\` under real names (needed because the Extractor resolves links by file name and cache files are GUID-named), then deletes the copies. Owner would rather export from the cache files **in place** (no copies), expecting cloud link paths (Autodesk Docs) to keep working.
+- Facts: the copy approach passed on 2026-11-10 (archive Q29). In-place is **untested**: (1) does the Extractor open a GUID-named cache host directly; (2) do links resolve at all without real names (the Extractor searches folders by file name; it has no Autodesk sign-in, so cloud paths probably do not resolve); (3) does the Extractor ever write to the model file or beside it (that would damage the cache).
+- Candidate designs: A) direct host path, links unresolved; B) staging folder of **NTFS hard links** with real names pointing at the cache files (no copy, no extra space, same volume only; created with ctypes `CreateHardLink` on IronPython 2.7, no admin; removing the link never touches the cache); C) current copy mode (safe, slow, GBs).
+- Proposed rule: in place/hard link only if a test shows size/mtime/SHA-256 of the cache files unchanged and no new files beside them after an export; else keep copy. Fall back to copy automatically when linking fails.
+- Grill questions that were asked, unanswered: main driver (space/time vs link paths vs freshness); willing to run a counts-only A/B/C experiment in the Revit 2022 session; safety rule; default mode and a switch.
 
 ## Key decisions
 

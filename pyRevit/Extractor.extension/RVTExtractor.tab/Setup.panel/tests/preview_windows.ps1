@@ -176,6 +176,17 @@ foreach ($lang in @('en', 'pl')) {
             Version = [string]$_.Version; Note = [string]$_.Note; Enabled = [bool]$_.Enabled; Tip = [string]$_.Tip } })
     Show-AndSave $window "export-models-$lang"
 
+    # The Cloud source of the model window: projects card and cloud rows.
+    $window = New-ThemedWindow 'rx_export_models.xaml' $sample.resources
+    Set-Controls $window $sample.cloud.controls
+    $window.FindName('roots_lb').ItemsSource = @()
+    $window.FindName('cloud_projects_lb').ItemsSource = ConvertTo-Rows @($sample.cloud.projects | ForEach-Object {
+        [pscustomobject]@{ Checked = [bool]$_.Checked; Label = [string]$_.Label; Tip = [string]$_.Tip } })
+    $window.FindName('cloud_lv').ItemsSource = ConvertTo-Rows @($sample.cloud.rows | ForEach-Object {
+        [pscustomobject]@{ Checked = [bool]$_.Checked; Name = [string]$_.Name; Project = [string]$_.Project
+            CacheDate = [string]$_.CacheDate; Note = [string]$_.Note; Enabled = [bool]$_.Enabled; Tip = [string]$_.Tip } })
+    Show-AndSave $window "export-cloud-$lang"
+
     $window = New-ThemedWindow 'rx_export_views.xaml' $sample.resources
     Set-Controls $window $sample.views.controls
     foreach ($dimension in @('2d', '3d')) {

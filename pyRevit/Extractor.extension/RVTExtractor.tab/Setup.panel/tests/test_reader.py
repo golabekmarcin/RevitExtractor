@@ -9,6 +9,7 @@ therefore test failures by construction (proved in StrictStubSelfTests).
 """
 import ast
 import importlib.util
+import re
 import sys
 import types
 import unittest
@@ -118,6 +119,117 @@ class StubSheet(StubView):
         StubView.__init__(self, rec, eid, kind, **changes)
 
 
+RevitLinkTypeClass = type(str("RevitLinkType"), (object,), {})
+ElementClass = type(str("Element"), (object,), {})
+
+
+class StrictMap(Strict):
+    """A .NET IDictionary as IronPython iterates it (KeyValuePair objects, the shape the legacy
+    probe read in the owner's Revit 2022 session). Every member (.Values, .Keys, .get, .Count,
+    indexing by key) is a violation."""
+
+    def __init__(self, rec, label, pairs):
+        Strict.__init__(self, rec, label)
+        object.__setattr__(self, "_pairs", list(pairs))
+
+    def __iter__(self):
+        object.__getattribute__(self, "_rec").log(
+            "iter " + object.__getattribute__(self, "_label"))
+        return iter(object.__getattribute__(self, "_pairs"))
+
+
+def stub_link(rec, index, name="Structure.rvt", nested=False, references=(), refs_error=None,
+              info_error=None, members=None):
+    """RevitLinkType stub. `references`: one reference-information dict per external resource.
+    Outer pairs answer only Value (the ExternalResourceType key is never needed)."""
+    label = "link%d" % index
+
+    def info_map(ref_index, info):
+        def get_information(*args):
+            if args:
+                rec.violate("GetReferenceInformation%r" % (args,))
+            if info_error is not None:
+                raise info_error
+            pairs = [Strict(rec, "%s.info%d.pair" % (label, ref_index),
+                            {"Key": key, "Value": value}) for key, value in info.items()]
+            return StrictMap(rec, "%s.info%d" % (label, ref_index), pairs)
+        return Strict(rec, "%s.reference%d" % (label, ref_index),
+                      {"GetReferenceInformation": get_information})
+
+    def get_references(*args):
+        if args:
+            rec.violate("GetExternalResourceReferences%r" % (args,))
+        if refs_error is not None:
+            raise refs_error
+        pairs = [Strict(rec, "%s.refpair%d" % (label, ref_index),
+                        {"Value": info_map(ref_index, info)})
+                 for ref_index, info in enumerate(references)]
+        return StrictMap(rec, label + ".references", pairs)
+
+    if members is None:
+        members = {"Name": name, "IsNestedLink": nested}
+    members = dict(members)
+    members["GetExternalResourceReferences"] = get_references
+    return Strict(rec, label, members)
+
+
+class NamelessLink(Strict):
+    """IronPython often cannot read Name on element types: the property itself raises."""
+
+    @property
+    def Name(self):
+        object.__getattribute__(self, "_rec").log("nameless.Name")
+        raise Exception("Name")
+
+
+def nameless_link(rec, index, **kwargs):
+    template = stub_link(rec, index, **kwargs)
+    members = dict(object.__getattribute__(template, "_members"))
+    members.pop("Name", None)
+    return NamelessLink(rec, "link%d" % index, members)
+
+
+def clr_stub(test, rec, value="Fallback.rvt", error=None):
+    """clr.GetClrType(DB.Element).GetProperty("Name").GetValue(element, None)."""
+    def get_value(*args):
+        test.assertEqual(len(args), 2)
+        test.assertIsInstance(args[0], NamelessLink)
+        test.assertIsNone(args[1])
+        rec.log("reflection GetValue")
+        return value
+
+    def get_property(*args):
+        test.assertEqual(args, ("Name",))
+        return types.SimpleNamespace(GetValue=get_value)
+
+    def get_clr_type(*args):
+        test.assertEqual(args, (ElementClass,))
+        if error is not None:
+            raise error
+        return types.SimpleNamespace(GetProperty=get_property)
+    module = types.ModuleType("clr")
+    module.GetClrType = get_clr_type
+    return {"clr": module}
+
+
+G1 = "11111111-1111-1111-1111-111111111111"
+G2 = "22222222-2222-2222-2222-222222222222"
+GA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+GB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+
+def link_info(model=None, project=None, region=None, **extra):
+    info = {}
+    if model is not None:
+        info["LinkedModelModelId"] = model
+    if project is not None:
+        info["LinkedModelProjectId"] = project
+    if region is not None:
+        info["LinkedModelRegion"] = region
+    info.update(extra)
+    return info
+
+
 def sample_views(rec):
     return [
         StubView(rec, 10, "FloorPlan", "Level 1"),
@@ -140,7 +252,8 @@ class Host(object):
     """One strict Revit session: app, DB and the document OpenDocumentFile hands back."""
 
     def __init__(self, test, views=None, is_empty=True, open_error=None, close_result=True,
-                 close_error=None, collect_error=None, storage=None):
+                 close_error=None, collect_error=None, storage=None, link_types=None,
+                 link_collect_error=None, element_member=False):
         self.rec = rec = Recorder()
         test.addCleanup(self.assert_clean, test)
         self.views = sample_views(rec) if views is None else views
@@ -168,6 +281,13 @@ class Host(object):
         )
         if storage is not None:
             db_members["ExtensibleStorage"] = storage.namespace(rec)
+        # link_types: None = DB has no RevitLinkType member at all (any touch is a violation).
+        self.link_types = link_types
+        self.link_collect_error = link_collect_error
+        if link_types is not None:
+            db_members["RevitLinkType"] = RevitLinkTypeClass
+        if element_member:
+            db_members["Element"] = ElementClass
         self.DB = Strict(rec, "DB", db_members)
         self.app = Strict(rec, "app", {
             "Documents": Strict(rec, "Documents", {"IsEmpty": is_empty}),
@@ -215,6 +335,11 @@ class Host(object):
             if self.storage is not None and cls == (self.storage.DataStorage,):
                 self.rec.log("OfClass(DataStorage)")
                 return self.storage.storages(self.rec)
+            if self.link_types is not None and cls == (RevitLinkTypeClass,):
+                self.rec.log("OfClass(RevitLinkType)")
+                if self.link_collect_error is not None:
+                    raise self.link_collect_error
+                return list(self.link_types)
             self.rec.violate("OfClass%r" % (cls,))
         return Strict(self.rec, "collector", {"OfClass": of_class})
 
@@ -241,7 +366,7 @@ class Host(object):
     def events(self):
         """Ordered key events (not member reads)."""
         keep = ("Documents.IsEmpty", "convert", "open", "collector", "OfClass(View)",
-                "OfClass(DataStorage)", "Close(False)")
+                "OfClass(DataStorage)", "OfClass(RevitLinkType)", "Close(False)")
         out = []
         for call in self.rec.calls:
             name = call[0] if isinstance(call, tuple) else call
@@ -820,6 +945,254 @@ class IfcSetups(unittest.TestCase):
                 rx_reader._ifc_setups(host.doc, host.DB)
 
 
+# --------------------------------------------------------------------------- cloud links
+
+def link_calls(host):
+    """Every recorded event that touches a link, a link member or the link class."""
+    return [call for call in host.rec.calls
+            if "link" in repr(call).lower() or "reflection" in repr(call)]
+
+
+class CollectCloudLinks(unittest.TestCase):
+    def collect(self, links, name_of=None, modules=None, **host_kwargs):
+        host = Host(self, link_types=links if links is not None else [], **host_kwargs)
+        with patch.dict(sys.modules, modules or {}):
+            rows = rx_reader.collect_cloud_links(host.doc, host.DB, name_of)
+        return rows, host
+
+    def test_rows_from_reference_information_sorted_and_normalised(self):
+        host = Host(self, link_types=[])
+        rec = host.rec
+        host.link_types.extend([
+            stub_link(rec, 0, "Structure.rvt", references=[link_info(
+                "{" + GA.upper() + "}", GB.upper(), "US", ForgeDmItemUrn="urn:synthetic")]),
+            stub_link(rec, 1, "Arch", nested=True, references=[link_info(
+                " " + G1 + " ", "{" + G2 + "}", "EMEA")]),
+        ])
+        rows = rx_reader.collect_cloud_links(host.doc, host.DB)
+        self.assertEqual(rows, [
+            {"name": "Arch", "project_guid": G2, "model_guid": G1, "region": "EMEA",
+             "nested": True},
+            {"name": "Structure.rvt", "project_guid": GB, "model_guid": GA, "region": "US",
+             "nested": False},
+        ])
+        self.assertIn("OfClass(RevitLinkType)", host.events())
+
+    def test_only_allowed_members_are_touched(self):
+        host = Host(self, link_types=[])
+        rec = host.rec
+        host.link_types.extend([
+            stub_link(rec, 0, references=[link_info(G1, G2, "US"), link_info()]),
+            stub_link(rec, 1, refs_error=named_exception("InvalidOperationException")),
+        ])
+        rx_reader.collect_cloud_links(host.doc, host.DB)
+        touched = set()
+        for call in rec.calls:
+            if isinstance(call, str) and call.startswith("link") and "." in call:
+                touched.add(re.sub(r"\d", "", call.split(".", 1)[1]))
+        self.assertTrue(touched <= {"Name", "IsNestedLink", "GetExternalResourceReferences",
+                                    "refpair.Value", "reference.GetReferenceInformation",
+                                    "info.pair.Key", "info.pair.Value"}, touched)
+        self.assertEqual(rec.violations, [])
+
+    def test_missing_keys_are_tolerated(self):
+        host = Host(self, link_types=[])
+        rec = host.rec
+        host.link_types.extend([
+            stub_link(rec, 0, "A.rvt", references=[link_info()]),
+            stub_link(rec, 1, "B.rvt", references=[link_info(model=G1)]),
+            stub_link(rec, 2, "C.rvt", references=[link_info(project=G2, region="US")]),
+            stub_link(rec, 3, "D.rvt", references=[]),
+        ])
+        rows = rx_reader.collect_cloud_links(host.doc, host.DB)
+        self.assertEqual([(r["name"], r["project_guid"], r["model_guid"], r["region"])
+                          for r in rows], [
+            ("A.rvt", "", "", ""), ("B.rvt", "", G1, ""), ("C.rvt", G2, "", "US"),
+            ("D.rvt", "", "", "")])
+
+    def test_no_external_resource_or_unreadable_information_gives_empty_ids(self):
+        host = Host(self, link_types=[])
+        rec = host.rec
+        host.link_types.extend([
+            stub_link(rec, 0, "Local.rvt",
+                      refs_error=named_exception("InvalidOperationException", "no resource")),
+            stub_link(rec, 1, "Odd.rvt", references=[link_info(G1, G2)],
+                      info_error=RuntimeError("copy failed")),
+        ])
+        rows = rx_reader.collect_cloud_links(host.doc, host.DB)
+        self.assertEqual(rows, [
+            {"name": "Local.rvt", "project_guid": "", "model_guid": "", "region": "",
+             "nested": False},
+            {"name": "Odd.rvt", "project_guid": "", "model_guid": "", "region": "",
+             "nested": False}])
+
+    def test_first_reference_with_a_model_id_wins(self):
+        host = Host(self, link_types=[])
+        rec = host.rec
+        host.link_types.extend([
+            stub_link(rec, 0, "A.rvt", references=[
+                link_info(region="US"), link_info(G1, G2, "EMEA"), link_info(GA, GB, "US")]),
+        ])
+        rows = rx_reader.collect_cloud_links(host.doc, host.DB)
+        self.assertEqual((rows[0]["model_guid"], rows[0]["project_guid"], rows[0]["region"]),
+                         (G1, G2, "EMEA"))
+
+    def test_values_that_are_not_guids_become_empty(self):
+        for bad in ("", "{}", "not-a-guid", G1 + "0", "urn:adsk.wipprod:dm.lineage:x", None):
+            with self.subTest(bad=bad):
+                host = Host(self, link_types=[])
+                info = {"LinkedModelModelId": bad, "LinkedModelProjectId": bad}
+                host.link_types.append(stub_link(host.rec, 0, "A.rvt", references=[info]))
+                rows = rx_reader.collect_cloud_links(host.doc, host.DB)
+                self.assertEqual((rows[0]["model_guid"], rows[0]["project_guid"]), ("", ""))
+
+    def test_name_reflection_fallback(self):
+        host = Host(self, link_types=[], element_member=True)
+        host.link_types.append(nameless_link(host.rec, 0, references=[link_info(G1, G2)]))
+        with patch.dict(sys.modules, clr_stub(self, host.rec)):
+            rows = rx_reader.collect_cloud_links(host.doc, host.DB)
+        self.assertEqual(rows[0]["name"], "Fallback.rvt")
+        self.assertIn("reflection GetValue", host.rec.calls)
+        self.assertIn("DB.Element", host.rec.calls)
+
+    def test_unreadable_name_keeps_the_row_with_an_empty_name(self):
+        host = Host(self, link_types=[], element_member=True)
+        host.link_types.append(nameless_link(host.rec, 0, references=[link_info(G1, G2)]))
+        with patch.dict(sys.modules, clr_stub(self, host.rec, error=RuntimeError("no clr"))):
+            rows = rx_reader.collect_cloud_links(host.doc, host.DB)
+        self.assertEqual(rows, [{"name": "", "project_guid": G2, "model_guid": G1,
+                                 "region": "", "nested": False}])
+
+    def test_name_of_argument_replaces_name_reading(self):
+        host = Host(self, link_types=[])
+        # No Name member at all: reading .Name would be a violation.
+        host.link_types.append(stub_link(host.rec, 0, members={"IsNestedLink": False},
+                                         references=[link_info(G1, G2)]))
+        seen = []
+
+        def name_of(element):
+            seen.append(element)
+            return "Given.rvt"
+        rows = rx_reader.collect_cloud_links(host.doc, host.DB, name_of)
+        self.assertEqual(rows[0]["name"], "Given.rvt")
+        self.assertIs(seen[0], host.link_types[0])
+
+    def test_nested_is_a_strict_bool(self):
+        for value, expected in ((True, True), (False, False), (1, False), ("True", False),
+                                (None, False)):
+            with self.subTest(value=value):
+                host = Host(self, link_types=[])
+                host.link_types.append(stub_link(host.rec, 0, nested=value))
+                self.assertIs(rx_reader.collect_cloud_links(host.doc, host.DB)[0]["nested"],
+                              expected)
+
+    def test_rows_hold_plain_text_and_bool_only(self):
+        host = Host(self, link_types=[])
+        host.link_types.append(stub_link(host.rec, 0, "Ł ó.rvt", nested=True,
+                                         references=[link_info(G1, G2, "US")]))
+        rows = rx_reader.collect_cloud_links(host.doc, host.DB)
+        self.assertEqual(set(rows[0]), {"name", "project_guid", "model_guid", "region",
+                                        "nested"})
+        for key, value in rows[0].items():
+            self.assertIs(type(value), bool if key == "nested" else str, key)
+
+    def test_no_links(self):
+        rows, host = self.collect([])
+        self.assertEqual(rows, [])
+
+    def test_collector_error_propagates(self):
+        host = Host(self, link_types=[], link_collect_error=RuntimeError("collector broke"))
+        with self.assertRaises(RuntimeError):
+            rx_reader.collect_cloud_links(host.doc, host.DB)
+
+
+class ReadModelLinks(unittest.TestCase):
+    PATH = "D:\\P\\Host.rvt"
+
+    def host(self, **kwargs):
+        host = Host(self, link_types=[], **kwargs)
+        host.link_types.append(stub_link(host.rec, 0, "Structure.rvt",
+                                         references=[link_info(G1, G2, "US")]))
+        return host
+
+    def test_links_true_adds_links_and_closes_once(self):
+        host = self.host()
+        snapshot = read_model(host.app, host.DB, self.PATH, for_revit(2022), links=True)
+        self.assertEqual(snapshot["links"], [{"name": "Structure.rvt", "project_guid": G2,
+                                              "model_guid": G1, "region": "US",
+                                              "nested": False}])
+        self.assertEqual(set(snapshot), {"title", "path", "views_2d", "views_3d",
+                                         "ifc_setups", "ifc_error", "links"})
+        self.assertEqual(host.events(), ["Documents.IsEmpty", "convert", "open", "collector",
+                                         "OfClass(View)", "collector", "OfClass(RevitLinkType)",
+                                         "Close(False)"])
+        self.assertEqual(host.close_calls, 1)
+
+    def test_links_true_keeps_background_open_rules(self):
+        host = self.host()
+        read_model(host.app, host.DB, self.PATH, for_revit(2022), links=True)
+        sets = [c for c in host.rec.calls if isinstance(c, tuple) and c[0] == "set"]
+        self.assertIn(("set", "options.DetachFromCentralOption", "DetachAndPreserveWorksets"),
+                      sets)
+        self.assertIn(("SetOpenWorksetsConfiguration", "CloseAllWorksets"), host.rec.calls)
+
+    def test_links_false_touches_no_link_member(self):
+        for kwargs in ({}, {"links": False}):
+            with self.subTest(kwargs=kwargs):
+                host = self.host()
+                snapshot = read_model(host.app, host.DB, self.PATH, for_revit(2022), **kwargs)
+                self.assertNotIn("links", snapshot)
+                self.assertEqual(link_calls(host), [])
+                self.assertNotIn("DB.RevitLinkType", host.rec.calls)
+                self.assertEqual(host.close_calls, 1)
+
+    def test_links_false_without_link_class_in_db(self):
+        host = Host(self)  # DB has no RevitLinkType member: any touch is a violation
+        snapshot = read_model(host.app, host.DB, self.PATH, for_revit(2022), links=False)
+        self.assertNotIn("links", snapshot)
+
+    def test_link_error_still_closes_once_and_first_error_wins(self):
+        for close_kwargs in ({}, {"close_result": False}, {"close_error": RuntimeError("c")}):
+            with self.subTest(close=close_kwargs):
+                error = RuntimeError("link collector broke")
+                host = self.host(link_collect_error=error, **close_kwargs)
+                with self.assertRaises(RuntimeError) as ctx:
+                    read_model(host.app, host.DB, self.PATH, for_revit(2022), links=True)
+                self.assertIs(ctx.exception, error)
+                self.assertEqual(host.close_calls, 1)
+                self.assertEqual(host.events()[-1], "Close(False)")
+
+    def test_links_true_close_failure_is_close_failed(self):
+        host = self.host(close_result=False)
+        with self.assertRaises(ReadError) as ctx:
+            read_model(host.app, host.DB, self.PATH, for_revit(2022), links=True)
+        self.assertEqual(ctx.exception.kind, "close_failed")
+        self.assertEqual(host.close_calls, 1)
+
+    def test_busy_guard_opens_nothing_with_links(self):
+        host = self.host(is_empty=False)
+        with self.assertRaises(ReadError) as ctx:
+            read_model(host.app, host.DB, self.PATH, for_revit(2022), links=True)
+        self.assertEqual(ctx.exception.kind, "busy")
+        self.assertEqual(host.events(), ["Documents.IsEmpty"])
+
+    def test_links_snapshot_is_plain_data(self):
+        host = self.host()
+        snapshot = read_model(host.app, host.DB, self.PATH, for_revit(2022), links=True)
+
+        def walk(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    self.assertIs(type(key), str)
+                    walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+            else:
+                self.assertIn(type(value), (str, bool))
+        walk(snapshot)
+
+
 # --------------------------------------------------------------------------- source rules
 
 class SourceRules(unittest.TestCase):
@@ -868,6 +1241,16 @@ class SourceRules(unittest.TestCase):
                          else [node.module or ""])
                 for name in names:
                     self.assertNotIn(name.split(".")[0], {"pathlib", "typing", "enum"}, name)
+
+    def test_cloud_links_avoid_file_reference_api(self):
+        # ExternalFileUtils.GetExternalFileReference throws for cloud links on 2022 (spec).
+        banned = {"ExternalFileUtils", "GetExternalFileReference", "GetLinkedFileStatus",
+                  "ExternalResourceType", "Values", "Keys"}
+        for node in ast.walk(self.TREE):
+            if isinstance(node, ast.Attribute):
+                self.assertNotIn(node.attr, banned)
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, banned)
 
     def test_uses_shared_element_id_value(self):
         self.assertIn("from rx_capabilities import element_id_value", self.SOURCE)

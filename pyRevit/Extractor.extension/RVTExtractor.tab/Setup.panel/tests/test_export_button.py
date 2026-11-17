@@ -342,8 +342,8 @@ class LogicFileGuards(unittest.TestCase):
         self.assertFalse(imported_roots(self.PATH) & banned)
 
     def test_only_lib_and_stdlib_imports(self):
-        allowed = {"__future__", "copy", "io", "json", "rx_catalog", "rx_i18n", "rx_index",
-                   "rx_runner"}
+        allowed = {"__future__", "copy", "io", "json", "rx_catalog", "rx_cloud", "rx_i18n",
+                   "rx_index", "rx_runner"}
         self.assertFalse(imported_roots(self.PATH) - allowed)
 
     def test_ironpython_syntax_rules(self):
@@ -706,7 +706,9 @@ class XamlShapeTests(unittest.TestCase):
         for name in ("views_btn", "rescan_btn", "add_root_btn", "remove_root_btn", "output_btn",
                      "default_scope_rb", "shared_scope_rb", "shared_choose_btn", "all_btn",
                      "none_btn", "roots_lb", "count_text", "error_text", "summary_text",
-                     "status_text", "caps_text", "output_text", "shared_path_text"):
+                     "status_text", "caps_text", "output_text", "shared_path_text", "source_bar",
+                     "source_local_rb", "source_cloud_rb", "cloud_panel", "cloud_lv",
+                     "cloud_projects_lb", "cloud_message_text"):
             self.assertIn(name, xaml_names(MODELS_XAML), name)
 
     def test_view_window_footer(self):
@@ -953,13 +955,15 @@ def forms_alerts():
     return FORMS.alert.call_count
 
 
-@unittest.skipIf(EXPORT_UI is None, "rx_export_ui.py not built yet")
-class ModelWindowTests(unittest.TestCase):
+class ModelWindowHarness(object):
+    """Set-up and helpers of the model window tests; the cloud tests reuse them."""
+
     def setUp(self):
         reset_fakes()
         self.tmp = tempfile.mkdtemp(prefix="rxexp-ui-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.reads = []
+        self.read_links = []
         self.read_answer = None
         self.read_error = None
         self.saved = []
@@ -970,9 +974,10 @@ class ModelWindowTests(unittest.TestCase):
         self.submit_error = None
         self.submit_hook = None
 
-    def read(self, path, workshared):
+    def read(self, path, workshared, links=False):
         self.reads.append((path, workshared, TIMERS[-1].IsEnabled, MOUSE.OverrideCursor,
                            self.window.IsEnabled))
+        self.read_links.append(links)
         if self.read_error is not None:
             raise self.read_error
         return self.read_answer
@@ -990,14 +995,14 @@ class ModelWindowTests(unittest.TestCase):
         return {"queued": len(jobs), "failed": [], "warning": ""}
 
     def open(self, rows=None, roots=(ROOT_M, ROOT_N), step=0.0, shared="", build="2025.3.0.12",
-             caps=CAPS_2022, show=True):
+             caps=CAPS_2022, show=True, cloud=None):
         self.scan = FakeScan(sample_rows() if rows is None else rows)
         settings = {"roots": list(roots), "output_parent": os.path.join("D:\\", "Out"),
                     "max_parallel": 1, "shared_index_path": shared}
         self.window = EXPORT_UI.ModelWindow(caps, settings, self.read_info, self.cache, self.read,
                                             self.saved.append, extractor_build=build,
                                             scan=self.scan, clock=StepClock(step),
-                                            submit=self.submit)
+                                            submit=self.submit, cloud=cloud)
         if show:
             self.window.show_dialog()
         return self.window
@@ -1029,6 +1034,9 @@ class ModelWindowTests(unittest.TestCase):
         control = getattr(self.window, name)
         control.Click.fire(control, None)
 
+
+@unittest.skipIf(EXPORT_UI is None, "rx_export_ui.py not built yet")
+class ModelWindowTests(ModelWindowHarness, unittest.TestCase):
     # -- setup and header
 
     def test_window_basics(self):
@@ -1994,7 +2002,8 @@ class FakeModelWindow(object):
     ops_source = None
 
     def __init__(self, caps, settings, read_info, cache, read, save_settings, extractor_build="",
-                 scan=None, submit=None):
+                 scan=None, submit=None, cloud=None):
+        self.cloud = cloud
         self.caps, self.settings, self.read_info = caps, settings, read_info
         self.cache, self.read, self.save_settings = cache, read, save_settings
         self.extractor_build = extractor_build
@@ -2356,6 +2365,896 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("xaml broke", self.alerts[0][0])
         self.assertEqual(FakeModelWindow.made[0].stopped, 1)
         self.assertEqual(self.sessions, [])
+
+    # -- cloud wiring (specs/SPEC-cloud-catalog.md, Task 8)
+
+    def local_appdata(self):
+        return os.path.join(self.tmp, "Local")
+
+    def run_with_env(self, **env):
+        with patch.dict(os.environ, env, clear=False):
+            self.run_main()
+
+    def test_the_window_gets_the_cloud_source(self):
+        self.run_with_env(LOCALAPPDATA=self.local_appdata())
+        cloud = FakeModelWindow.made[0].cloud
+        self.assertEqual(cloud["folders"], rx_cloud.revit_folders(self.local_appdata(), 2022))
+        self.assertEqual(cloud["memory"].file_path,
+                         os.path.join(self.appdata, "RevitExtractor", "cloud-catalog.json"))
+        self.assertIsInstance(cloud["memory"], Memory)
+
+    def test_the_cloud_memory_is_loaded(self):
+        folder = os.path.join(self.appdata, "RevitExtractor")
+        os.makedirs(folder)
+        memory = cloud_memory(folder)
+        memory.set_included([CP1_KEY])
+        self.assertTrue(memory.save())
+        self.run_with_env(LOCALAPPDATA=self.local_appdata())
+        loaded = FakeModelWindow.made[0].cloud["memory"]
+        self.assertEqual(loaded.included, {CP1_KEY})
+        self.assertEqual(loaded.model_name(CP1, CM3), "Alpha-Architecture.rvt")
+
+    def test_no_local_appdata_means_no_cloud_source(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("LOCALAPPDATA", None)
+            self.run_main()
+        self.assertIsNone(FakeModelWindow.made[0].cloud)
+        self.assertEqual(self.alerts, [])
+
+    def test_read_forwards_links_only_when_asked(self):
+        self.run_with_env(LOCALAPPDATA=self.local_appdata())
+        window = FakeModelWindow.made[0]
+        with patch.object(rx_reader, "read_model", Mock(return_value="snap")) as read_model:
+            window.read("C:\\cache\\x.rvt", None, links=True)
+            read_model.assert_called_once_with(self.app, self.db, "C:\\cache\\x.rvt",
+                                               window.caps, None, links=True)
+            read_model.reset_mock()
+            window.read("C:\\cache\\x.rvt", None)
+            read_model.assert_called_once_with(self.app, self.db, "C:\\cache\\x.rvt",
+                                               window.caps, None)
+
+    def cloud_job(self):
+        stage = {"items": [{"src": os.path.join(CACHE_ROOT, CACC, CP1, CM3 + ".rvt"),
+                            "name": "Alpha-Architecture.rvt", "size": 11, "mtime": CNOW - CDAY}],
+                 "notes": []}
+        return {"model_path": stage["items"][0]["src"], "model_name": "Alpha-Architecture.rvt",
+                "model_key": "cloud:%s/%s" % (CP1, CM3), "index": build_index(CAPS_2022),
+                "stage": stage}
+
+    def test_the_hand_over_passes_stage_model_name_and_model_key(self):
+        job = self.cloud_job()
+        self.queue([job, self.job("b.rvt")])
+        self.run_main()
+        submit = [r for r in self.handler.requests if r["op"] == "submit"][0]
+        self.assertTrue(plain(submit))
+        cloud, local = submit["jobs"]
+        self.assertEqual(cloud["stage"], job["stage"])
+        self.assertEqual(cloud["model_name"], "Alpha-Architecture.rvt")
+        self.assertEqual(cloud["model_key"], job["model_key"])
+        self.assertEqual(cloud["model_path"], job["model_path"])
+        self.assertEqual(sorted(local), ["index", "model_path", "output_parent", "revit_dir"],
+                         "a local job is unchanged")
+
+    def test_a_cloud_job_request_is_read_back_by_the_session(self):
+        import rx_status
+        job = self.cloud_job()
+        self.queue([job])
+        self.run_main()
+        submit = [r for r in self.handler.requests if r["op"] == "submit"][0]
+        parsed = rx_status._job_from(submit["jobs"][0])
+        self.assertEqual(parsed.model_name, "Alpha-Architecture.rvt")
+        self.assertEqual(parsed.model_key, job["model_key"])
+        self.assertEqual(parsed.stage["items"][0]["src"], job["model_path"])
+
+
+# ===== 7. Cloud source (specs/SPEC-cloud-catalog.md criteria 10 and 12) ========================
+# Synthetic data only: repeated-digit GUIDs and the invented names of test_cloud.py.
+
+import rx_cloud  # noqa: E402
+import rx_runner  # noqa: E402
+from rx_cloud import CacheFile, Memory, Sighting  # noqa: E402
+
+CP1 = "11111111-1111-1111-1111-111111111111"
+CP2 = "22222222-2222-2222-2222-222222222222"
+CM3, CM4, CM5, CM6, CM9 = ("%s-%s-%s-%s-%s" % (c * 8, c * 4, c * 4, c * 4, c * 12) for c in "34569")
+CACC = "99999999"
+CNOW = 1800000000.0
+CDAY = 86400.0
+GUID_ANYWHERE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                           r"[0-9a-fA-F]{12}")
+CACHE_ROOT = os.path.join("C:\\", "cache-root")
+CP1_KEY = rx_cloud.project_key(CACC, CP1)
+CP2_KEY = rx_cloud.project_key(CACC, CP2)
+
+
+def cloud_file(project, model, mtime=CNOW - CDAY, size=10, place="root"):
+    sub = "LinkedModels" if place == "linked" else ""
+    return CacheFile(CACC, project, model, place,
+                     os.path.join(CACHE_ROOT, CACC, project, sub, model + ".rvt"), size, mtime)
+
+
+def cloud_cache_files():
+    return [
+        cloud_file(CP1, CM3, mtime=CNOW - CDAY, size=11),          # ok
+        cloud_file(CP1, CM4, mtime=CNOW - 30 * CDAY, size=12),     # stale
+        cloud_file(CP1, CM5),                                      # no name known: counted only
+        cloud_file(CP2, CM6, size=13),                             # other project
+    ]
+
+
+def cloud_memory(folder, names=True):
+    memory = Memory(os.path.join(folder, "cloud-catalog.json"))
+    if names:
+        memory.merge([
+            Sighting(CP1, "Demo Tower", CM3, "Alpha-Architecture.rvt", "journal"),
+            Sighting(CP1, "Demo Tower", CM4, "Beta-MEP.rvt", "journal"),
+            Sighting(CP2, "Przykładowy Budynek Ż", CM6, "Zażółć-Konstrukcja.rvt", "journal"),
+        ], CNOW)
+    return memory
+
+
+class FakeCloudScan(object):
+    """rx_cloud.scan stand-in: a real generator (two steps, then the real Catalog)."""
+
+    def __init__(self, files, steps=2, fail=None):
+        self.files = files
+        self.steps = steps
+        self.fail = fail
+        self.calls = []
+        self.finished = 0
+        self.closed_early = 0
+        self.pulled = 0
+
+    def __call__(self, folders, memory, now):
+        self.calls.append((folders, memory, now))
+
+        def generate():
+            try:
+                for unused in range(self.steps):
+                    self.pulled += 1
+                    yield None
+                if self.fail is not None:
+                    raise self.fail
+                yield rx_cloud.build_catalog(
+                    self.files, memory, now, counts={"sightings": 3 if memory.names else 0},
+                    message="" if memory.names else rx_cloud._no_journal_message())
+                self.finished += 1
+            except GeneratorExit:
+                self.closed_early += 1
+                raise
+        return generate()
+
+
+def displayed_texts(window):
+    """Every text the Cloud source shows, for the no-GUID check."""
+    found = [window.count_text.Text, window.summary_text.Text, window.status_text.Text,
+             window.error_text.Text, window.cloud_message_text.Text]
+    for row in window._cloud_rows:
+        found += [row.Name, row.Project, row.CacheDate, row.Note, row.Tip, row.SearchText]
+    for row in window.cloud_projects_lb.ItemsSource or []:
+        found += [row.Label, row.Tip]
+    return found
+
+
+# --- logic: plan_cloud_jobs ---------------------------------------------------------------------
+
+class CloudPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="rxexp-cloud-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.memory = cloud_memory(self.tmp)
+        self.memory.set_included([CP1_KEY, CP2_KEY])
+        self.files = cloud_cache_files()
+        self.catalog = rx_cloud.build_catalog(self.files, self.memory, CNOW)
+        self.rows = dict((row.name, row) for row in self.catalog.rows)
+        self.alpha = self.rows["Alpha-Architecture.rvt"]
+        self.beta = self.rows["Beta-MEP.rvt"]
+        self.zazolc = self.rows["Zażółć-Konstrukcja.rvt"]
+
+    def link(self, name, project, model):
+        return {"name": name, "project_guid": project, "model_guid": model, "region": "US",
+                "nested": False}
+
+    def test_a_job_has_the_cache_path_the_real_name_the_key_and_a_stage(self):
+        jobs = logic.plan_cloud_jobs([self.alpha], CAPS_2022, self.files, self.memory,
+                                     {self.alpha.key: [self.link("Beta-MEP", CP1, CM4)]})
+        self.assertEqual(len(jobs), 1)
+        job = jobs[0]
+        self.assertEqual(sorted(job), ["index", "model_key", "model_name", "model_path", "stage"])
+        self.assertEqual(job["model_path"], self.alpha.cache_path)
+        self.assertEqual(job["model_name"], "Alpha-Architecture.rvt")
+        self.assertEqual(job["model_key"], self.alpha.key)
+        self.assertEqual(job["index"], build_index(CAPS_2022))
+        items = job["stage"]["items"]
+        self.assertEqual([item["name"] for item in items],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"], "host first, .rvt added")
+        self.assertEqual(items[0], {"src": self.alpha.cache_path, "name": "Alpha-Architecture.rvt",
+                                    "size": 11, "mtime": CNOW - CDAY})
+        self.assertEqual(items[1]["src"], self.beta.cache_path)
+        self.assertEqual(job["stage"]["notes"], [])
+        self.assertTrue(plain(job), "plain values only: the job goes to the session as JSON")
+        json.dumps(job)
+
+    def test_the_stage_is_accepted_by_the_runner(self):
+        job = logic.plan_cloud_jobs([self.alpha], CAPS_2022, self.files, self.memory,
+                                    {self.alpha.key: [self.link("Beta-MEP", CP1, CM4)]})[0]
+        runner_job = rx_runner.Job(job["model_path"], job["index"], "C:\\Revit", "D:\\Out",
+                                   stage=job["stage"], model_name=job["model_name"],
+                                   model_key=job["model_key"])
+        checked = rx_runner._checked_stage(runner_job)
+        self.assertEqual([item["name"] for item in checked["items"]],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+
+    def test_one_job_per_row_in_order_each_with_its_own_index(self):
+        jobs = logic.plan_cloud_jobs([self.zazolc, self.alpha], CAPS_2026, self.files,
+                                     self.memory)
+        self.assertEqual([job["model_name"] for job in jobs],
+                         ["Zażółć-Konstrukcja.rvt", "Alpha-Architecture.rvt"])
+        self.assertEqual(jobs[0]["index"], build_index(CAPS_2026))
+        self.assertIsNot(jobs[0]["index"], jobs[1]["index"])
+
+    def test_the_link_list_comes_from_the_memory_when_not_given(self):
+        self.memory.store_links(logic.link_key(self.alpha), self.alpha.cache_mtime,
+                                [self.link("Beta-MEP", CP1, CM4)])
+        job = logic.plan_cloud_jobs([self.alpha], CAPS_2022, self.files, self.memory)[0]
+        self.assertEqual(len(job["stage"]["items"]), 2)
+
+    def test_a_missing_link_becomes_a_note_and_the_export_goes_on(self):
+        job = logic.plan_cloud_jobs([self.alpha], CAPS_2022, self.files, self.memory,
+                                    {self.alpha.key: [self.link("Missing-Link", CP1, CM9)]})[0]
+        self.assertEqual(len(job["stage"]["items"]), 1)
+        self.assertEqual(len(job["stage"]["notes"]), 1)
+        self.assertIn("Missing-Link.rvt", job["stage"]["notes"][0])
+
+    def test_host_only_stages_the_host_alone_with_a_note_in_both_languages(self):
+        self.memory.store_links(logic.link_key(self.alpha), self.alpha.cache_mtime,
+                                [self.link("Beta-MEP", CP1, CM4)])
+        args = ([self.alpha], CAPS_2022, self.files, self.memory)
+        english = logic.plan_cloud_jobs(*args, host_only={self.alpha.key})[0]
+        with InPolish():
+            polish_job = logic.plan_cloud_jobs(*args, host_only={self.alpha.key})[0]
+        self.assertEqual(len(english["stage"]["items"]), 1)
+        self.assertEqual(len(english["stage"]["notes"]), 1)
+        self.assertNotEqual(english["stage"]["notes"], polish_job["stage"]["notes"])
+
+    def test_no_job_text_carries_a_guid(self):
+        jobs = logic.plan_cloud_jobs(
+            [self.alpha], CAPS_2022, self.files, self.memory,
+            {self.alpha.key: [self.link("Missing-Link", CP1, CM9), self.link("", CP1, CM5)]})
+        job = jobs[0]
+        texts = [job["model_name"]] + [item["name"] for item in job["stage"]["items"]] + \
+            job["stage"]["notes"]
+        for text in texts:
+            self.assertIsNone(GUID_ANYWHERE.search(text), text)
+
+    def test_a_greyed_row_no_row_or_a_bad_name_is_refused(self):
+        greyed = self.alpha._replace(enabled=False, state="not_selected")
+        with self.assertRaises(SetupError):
+            logic.plan_cloud_jobs([greyed], CAPS_2022, self.files, self.memory)
+        for rows in ([], None):
+            with self.assertRaises(SetupError):
+                logic.plan_cloud_jobs(rows, CAPS_2022, self.files, self.memory)
+        with self.assertRaises(rx_cloud.StageError):
+            logic.plan_cloud_jobs([self.alpha._replace(name="a:b.rvt")], CAPS_2022, self.files,
+                                  self.memory)
+
+    def test_shared_index_is_copied_and_view_ids_need_one_model(self):
+        shared = launcher_default_index()
+        jobs = logic.plan_cloud_jobs([self.alpha, self.zazolc], CAPS_2022, self.files,
+                                     self.memory, shared_index=shared)
+        self.assertEqual([job["index"] for job in jobs], [shared, shared])
+        self.assertIsNot(jobs[0]["index"], shared)
+        views = with_views("view_ids")
+        with self.assertRaises(SetupError):
+            logic.plan_cloud_jobs([self.alpha, self.zazolc], CAPS_2022, self.files,
+                                  self.memory, shared_index=views)
+        one = logic.plan_cloud_jobs([self.alpha], CAPS_2022, self.files, self.memory,
+                                    shared_index=views)
+        self.assertEqual(one[0]["index"], views)
+
+
+# --- the Cloud source in the model window -------------------------------------------------------
+
+@unittest.skipIf(EXPORT_UI is None, "rx_export_ui.py not built yet")
+class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
+    def setUp(self):
+        ModelWindowHarness.setUp(self)
+        self.memory = cloud_memory(self.tmp)
+        self.files = cloud_cache_files()
+        self.cscan = FakeCloudScan(self.files)
+        self.walks = []
+
+    def cloud(self, memory=None, scan=None):
+        def scan_cache(root):
+            self.walks.append(root)
+            return list(self.files)
+        return {"folders": {"cache": CACHE_ROOT, "journals": os.path.join("C:\\", "journals")},
+                "memory": memory or self.memory, "scan": scan or self.cscan,
+                "scan_cache": scan_cache, "now": lambda: CNOW}
+
+    def open_cloud(self, included=(CP1_KEY,), switch=True, **kwargs):
+        if included:
+            self.memory.set_included(included)
+        kwargs.setdefault("roots", ())
+        window = self.open(rows=[], cloud=self.cloud(), **kwargs)
+        if switch:
+            self.switch("cloud")
+            self.pump()
+        return window
+
+    def switch(self, source):
+        window = self.window
+        window.source_cloud_rb.IsChecked = source == "cloud"
+        window.source_local_rb.IsChecked = source == "local"
+        control = window.source_cloud_rb if source == "cloud" else window.source_local_rb
+        control.Checked.fire(control, None)
+
+    def pump(self, limit=50):
+        for unused in range(limit):
+            if not TIMERS[-1].IsEnabled:
+                return
+            self.tick()
+        self.fail("the scan never finished")
+
+    def crows(self):
+        return list(self.window._cloud_rows)
+
+    def cby(self, name):
+        return [row for row in self.crows() if row.Name == name][0]
+
+    def cticked(self):
+        return [row.Name for row in self.crows() if row.Checked]
+
+    def cclick(self, row):
+        row.Checked = not row.Checked
+        list_view = self.window.cloud_lv
+        event, handler = list_view.routed[0]
+        handler(list_view, Args(source=legacy.Source(row)))
+
+    def projects(self):
+        return list(self.window.cloud_projects_lb.ItemsSource or [])
+
+    def pclick(self, label_part):
+        row = [p for p in self.projects() if label_part in p.Label][0]
+        row.Checked = not row.Checked
+        box = self.window.cloud_projects_lb
+        event, handler = box.routed[0]
+        handler(box, Args(source=legacy.Source(row)))
+        return row
+
+    def link(self, name, project, model):
+        return {"name": name, "project_guid": project, "model_guid": model, "region": "US",
+                "nested": False}
+
+    # -- the source switch
+
+    def test_without_cloud_the_switch_is_hidden_and_nothing_is_scanned(self):
+        self.open(rows=[], roots=())
+        self.assertEqual(self.window.source_bar.Visibility, "Collapsed")
+        self.assertEqual(self.window.cloud_panel.Visibility, "Collapsed")
+        self.assertEqual(self.cscan.calls, [])
+
+    def test_the_cloud_source_starts_hidden_and_scans_on_the_first_switch(self):
+        self.open_cloud(switch=False)
+        self.assertEqual(self.window.source_bar.Visibility, "Visible")
+        self.assertTrue(self.window.source_local_rb.IsChecked)
+        self.assertEqual(self.window.cloud_panel.Visibility, "Collapsed")
+        self.assertEqual(self.window.models_lv.Visibility, "Visible")
+        self.assertEqual(self.cscan.calls, [], "a user who never opens Cloud pays nothing")
+        self.switch("cloud")
+        self.assertEqual(self.window.cloud_panel.Visibility, "Visible")
+        self.assertEqual(self.window.models_lv.Visibility, "Collapsed")
+        self.assertEqual(len(self.cscan.calls), 1)
+        folders, memory, now = self.cscan.calls[0]
+        self.assertEqual(folders["cache"], CACHE_ROOT)
+        self.assertIs(memory, self.memory)
+        self.assertEqual(now, CNOW)
+        self.assertTrue(TIMERS[-1].IsEnabled)
+        self.switch("local")
+        self.switch("cloud")
+        self.assertEqual(len(self.cscan.calls), 1, "switching back and forth never rescans")
+        self.assertEqual(self.window.models_lv.Visibility, "Collapsed")
+
+    def test_the_cloud_scan_is_time_sliced_one_step_per_tick(self):
+        self.open_cloud(step=1.0, switch=False)
+        self.switch("cloud")
+        self.tick()
+        self.assertEqual(self.cscan.pulled, 1)
+        self.assertEqual(self.crows(), [])
+        self.assertTrue(TIMERS[-1].IsEnabled)
+        self.tick()
+        self.assertEqual(self.cscan.pulled, 2)
+        self.assertEqual(self.crows(), [])
+        self.tick()
+        self.assertEqual(self.cscan.finished, 1)
+        self.assertEqual(len(self.crows()), 3)
+        self.assertFalse(TIMERS[-1].IsEnabled, "the timer stops when both scans have ended")
+
+    def test_the_local_and_cloud_scans_share_the_timer(self):
+        self.open(rows=sample_rows(), cloud=self.cloud(), step=0.0)
+        self.assertTrue(TIMERS[-1].IsEnabled)
+        self.switch("cloud")
+        self.tick()
+        self.assertEqual(self.scan.finished, 1)
+        self.assertEqual(self.cscan.finished, 1)
+        self.assertFalse(TIMERS[-1].IsEnabled)
+        self.assertEqual(len(self.rows()), 5, "the local list is kept")
+
+    # -- rows, projects and states
+
+    def test_rows_show_project_name_cache_date_state_and_note(self):
+        self.open_cloud()
+        alpha, beta, zazolc = self.cby("Alpha-Architecture.rvt"), self.cby("Beta-MEP.rvt"), \
+            self.cby("Zażółć-Konstrukcja.rvt")
+        self.assertEqual((alpha.Project, alpha.Name), ("Demo Tower", "Alpha-Architecture.rvt"))
+        self.assertRegex(alpha.CacheDate, r"^\d{4}-\d{2}-\d{2}$")
+        self.assertEqual((alpha.state, alpha.Enabled, alpha.Note), ("ok", True, ""))
+        self.assertEqual((beta.state, beta.Enabled), ("stale", True))
+        self.assertIn("Cache copy from", beta.Note, "stale: a warning, still enabled")
+        self.assertEqual((zazolc.state, zazolc.Enabled), ("not_selected", False))
+        self.assertIn("Not in the selected projects", zazolc.Note)
+        self.assertIn("Not in the selected projects", zazolc.Tip)
+        self.assertIn("Alpha-Architecture.rvt", alpha.Tip)
+        self.assertEqual(self.window.cloud_lv.ItemsSource.Count, 3)
+
+    def test_duplicate_rows_are_disabled(self):
+        self.memory.merge([Sighting(CP1, "Demo Tower", CM5, "Alpha-Architecture.rvt", "journal")],
+                          CNOW)
+        self.files[2] = cloud_file(CP1, CM5, mtime=CNOW - 3 * CDAY)
+        self.open_cloud()
+        older = [row for row in self.crows() if row.state == "duplicate"]
+        self.assertEqual(len(older), 1)
+        self.assertFalse(older[0].Enabled)
+        self.assertIn("same name", older[0].Note)
+
+    def test_nothing_is_ticked_by_default_and_the_projects_card_lists_each_project(self):
+        self.open_cloud(included=())
+        self.assertEqual(self.memory.included, set())
+        self.assertEqual([row.Checked for row in self.projects()], [False, False])
+        labels = [row.Label for row in self.projects()]
+        self.assertIn("Demo Tower", labels[0])
+        self.assertIn("Przykładowy Budynek Ż", labels[1])
+        self.assertEqual([row.state for row in self.crows()], ["not_selected"] * 3)
+        self.assertFalse(self.window.export_btn.IsEnabled)
+
+    def test_ticking_a_project_enables_its_rows_and_saves_the_selection(self):
+        self.open_cloud(included=())
+        row = self.pclick("Demo Tower")
+        self.assertTrue(row.Checked)
+        self.assertEqual(self.memory.included, {CP1_KEY})
+        self.assertEqual(self.walks, [CACHE_ROOT], "the cache is walked once, not per click")
+        self.assertEqual([r.state for r in self.crows()], ["ok", "stale", "not_selected"])
+        saved = json.loads(Path(self.memory.file_path).read_text(encoding="utf-8"))
+        self.assertEqual(saved["included"], [CP1_KEY])
+        self.pclick("Przykładowy")
+        self.assertEqual(self.memory.included, {CP1_KEY, CP2_KEY})
+        self.assertEqual(self.walks, [CACHE_ROOT])
+        self.assertEqual(self.window.error_text.Text, "")
+
+    def test_unticking_a_project_greys_its_rows_and_drops_their_ticks(self):
+        self.open_cloud()
+        self.cclick(self.cby("Alpha-Architecture.rvt"))
+        self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt"])
+        self.pclick("Demo Tower")
+        self.assertEqual(self.memory.included, set())
+        self.assertEqual(self.cticked(), [])
+        self.assertFalse(self.cby("Alpha-Architecture.rvt").Enabled)
+
+    def test_a_failed_save_of_the_selection_is_shown_not_raised(self):
+        self.open_cloud(included=())
+        real_save = Memory.save
+
+        def failing_save(memory):
+            memory.last_error = "OSError"
+            return False
+        with patch.object(Memory, "save", failing_save):
+            self.pclick("Demo Tower")
+        self.assertIn("could not be saved", self.window.error_text.Text)
+        self.assertEqual(self.memory.included, {CP1_KEY}, "the selection works for this session")
+        self.assertIsNotNone(real_save)
+
+    def test_disabled_rows_cannot_be_ticked_by_click_space_or_select_all(self):
+        self.open_cloud()
+        self.cclick(self.cby("Zażółć-Konstrukcja.rvt"))
+        self.assertEqual(self.cticked(), [])
+        list_view = self.window.cloud_lv
+        list_view.SelectedItems = self.crows()
+        args = Args("Space", legacy.Source(self.crows()[0]))
+        list_view.PreviewKeyDown.fire(list_view, args)
+        self.assertTrue(args.Handled)
+        self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.fire("none_btn")
+        self.assertEqual(self.cticked(), [])
+        SharedEventReactive.raised = []
+        self.fire("all_btn")
+        self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(SharedEventReactive.raised, [], "no row notifies: one refresh instead")
+
+    def test_search_filters_the_cloud_rows(self):
+        self.open_cloud()
+        search = legacy.FakeSearchBar.instances[0]
+        search.Text = "beta"
+        self.assertEqual([row.Name for row in self.window.cloud_lv.ItemsSource],
+                         ["Beta-MEP.rvt"])
+        search.Text = "przyk"
+        self.assertEqual([row.Name for row in self.window.cloud_lv.ItemsSource],
+                         ["Zażółć-Konstrukcja.rvt"], "the project name is searchable")
+
+    def test_counts_and_unnamed_files(self):
+        self.open_cloud()
+        self.assertIn("Selected: 0 / 3", self.window.count_text.Text)
+        self.assertIn("Shown: 3", self.window.count_text.Text)
+        self.assertIn("without a name: 1", self.window.count_text.Text)
+        demo = [p for p in self.projects() if "Demo Tower" in p.Label][0]
+        self.assertIn("Cached models without a name: 1", demo.Tip)
+
+    def test_no_displayed_text_is_or_contains_a_guid(self):
+        self.open_cloud()
+        self.cclick(self.cby("Alpha-Architecture.rvt"))
+        for text in displayed_texts(self.window):
+            self.assertIsNone(GUID_ANYWHERE.search(text), text)
+        with patch.dict(sys.modules, polish_modules()):
+            self.window._refresh_state()
+            for text in displayed_texts(self.window):
+                self.assertIsNone(GUID_ANYWHERE.search(text), text)
+
+    def test_the_no_journal_message_is_shown_with_the_memory_fallback(self):
+        memory = cloud_memory(self.tmp, names=False)
+        window = self.open(rows=[], roots=(), cloud=self.cloud(memory=memory))
+        self.switch("cloud")
+        self.pump()
+        self.assertIn("No cloud model names were found", window.cloud_message_text.Text)
+        self.assertIn("Remember cloud model", window.cloud_message_text.Text)
+        self.assertEqual(self.crows(), [], "unnamed files are never listed")
+        self.assertIn("without a name: 4", window.count_text.Text)
+
+    def test_the_message_is_gone_when_names_exist_and_polish_follows_the_language(self):
+        self.open_cloud()
+        self.assertEqual(self.window.cloud_message_text.Text, "")
+        memory = cloud_memory(self.tmp, names=False)
+        with patch.dict(sys.modules, polish_modules()):
+            window = self.open(rows=[], roots=(), cloud=self.cloud(memory=memory))
+            self.switch("cloud")
+            self.pump()
+            self.assertIn("Zapamiętaj model z chmury", window.cloud_message_text.Text)
+            self.assertIn("bez nazwy: 4", window.count_text.Text)
+            self.assertEqual(window.Resources["models_source_cloud"], "Chmura (ACC)")
+
+    def test_the_cloud_scan_failing_is_shown_not_raised(self):
+        self.cscan = FakeCloudScan(self.files, fail=RuntimeError("boom"))
+        self.open_cloud()
+        self.assertIn("boom", self.window.error_text.Text)
+        self.assertFalse(TIMERS[-1].IsEnabled)
+        self.assertEqual(self.crows(), [])
+
+    def test_a_missing_cache_gives_a_plain_status_not_an_error(self):
+        self.files = []
+        self.cscan = FakeCloudScan(self.files)
+        self.open_cloud()
+        self.assertEqual(self.crows(), [])
+        self.assertEqual(self.window.error_text.Text, "")
+        self.assertIn("No cloud models", self.window.status_text.Text)
+
+    # -- rescan and close
+
+    def test_rescan_in_the_cloud_source_rescans_cloud_and_keeps_ticks_by_key(self):
+        self.open_cloud()
+        self.cclick(self.cby("Beta-MEP.rvt"))
+        self.fire("rescan_btn")
+        self.assertEqual(len(self.cscan.calls), 2)
+        self.pump()
+        self.assertEqual(self.cticked(), ["Beta-MEP.rvt"])
+        self.assertEqual(self.scan.calls, [], "the local list was not rescanned")
+
+    def test_rescan_closes_the_running_cloud_generator(self):
+        self.open_cloud(step=1.0, switch=False)
+        self.switch("cloud")
+        self.tick()
+        self.fire("rescan_btn")
+        self.assertEqual(self.cscan.closed_early, 1)
+        self.assertEqual(len(self.cscan.calls), 2)
+
+    def test_closing_the_window_closes_the_cloud_generator_and_stops_the_timer(self):
+        self.open_cloud(step=1.0, switch=False)
+        self.switch("cloud")
+        self.tick()
+        self.window.Close()
+        self.assertEqual(self.cscan.closed_early, 1)
+        self.assertFalse(TIMERS[-1].IsEnabled)
+        self.tick()
+        self.assertEqual(self.cscan.pulled, 1)
+
+    def test_the_local_rescan_leaves_the_cloud_list_alone(self):
+        self.open(rows=sample_rows(), cloud=self.cloud())
+        self.switch("cloud")
+        self.pump()
+        self.switch("local")
+        self.fire("rescan_btn")
+        self.assertEqual(len(self.cscan.calls), 1)
+        self.assertEqual(len(self.crows()), 3)
+
+    # -- Export
+
+    def tick_cloud(self, *names):
+        for name in names:
+            self.cclick(self.cby(name))
+
+    def test_export_uses_the_stored_link_list_and_hands_over_a_cloud_job(self):
+        self.open_cloud()
+        alpha = self.cby("Alpha-Architecture.rvt")
+        self.memory.store_links(logic.link_key(alpha.cloud), alpha.cloud.cache_mtime,
+                                [self.link("Beta-MEP", CP1, CM4)])
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(self.reads, [], "stored links: nothing is opened")
+        call = self.submitted[0]
+        job = call["jobs"][0]
+        self.assertEqual(job["model_path"], alpha.cloud.cache_path)
+        self.assertEqual(job["model_name"], "Alpha-Architecture.rvt")
+        self.assertEqual(job["model_key"], alpha.key)
+        self.assertEqual([item["name"] for item in job["stage"]["items"]],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(job["index"], build_index(CAPS_2022))
+        self.assertTrue(plain(job))
+        self.assertEqual(call["output_parent"], os.path.join("D:\\", "Out"))
+        self.assertFalse(self.window.closed)
+        self.assertEqual(self.cticked(), [], "queued: the tick is cleared")
+        self.assertIn("queued", self.window.status_text.Text)
+
+    def test_export_without_stored_links_reads_the_host_once_in_the_background(self):
+        self.read_answer = {"title": "x", "path": "x", "views_2d": [], "views_3d": [],
+                            "links": [self.link("Beta-MEP", CP1, CM4),
+                                      self.link("Missing-Link", CP1, CM9)]}
+        self.open_cloud()
+        alpha = self.cby("Alpha-Architecture.rvt")
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        path, workshared, timer_on, cursor, enabled = self.reads[0]
+        self.assertEqual(path, alpha.cloud.cache_path)
+        self.assertIsNone(workshared)
+        self.assertEqual(self.read_links, [True])
+        self.assertFalse(timer_on)
+        self.assertEqual((cursor, enabled), ("Wait", False))
+        self.assertIsNone(MOUSE.OverrideCursor)
+        self.assertTrue(self.window.IsEnabled)
+        job = self.submitted[0]["jobs"][0]
+        self.assertEqual([item["name"] for item in job["stage"]["items"]],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(len(job["stage"]["notes"]), 1)
+        self.assertIn("Missing-Link.rvt", self.window.error_text.Text, "notes are surfaced")
+        stored = self.memory.links_for(logic.link_key(alpha.cloud), alpha.cloud.cache_mtime)
+        self.assertEqual([link["name"] for link in stored], ["Beta-MEP", "Missing-Link"])
+        saved = json.loads(Path(self.memory.file_path).read_text(encoding="utf-8"))
+        self.assertIn(logic.link_key(alpha.cloud), saved["links"])
+        # The second export of the same model reads nothing again.
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(len(self.reads), 1)
+        self.assertEqual(len(self.submitted), 2)
+
+    def test_two_hosts_without_links_are_read_one_after_the_other(self):
+        self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt", "Beta-MEP.rvt")
+        self.fire("export_btn")
+        self.assertEqual(len(self.reads), 2)
+        self.assertEqual([job["model_name"] for job in self.submitted[0]["jobs"]],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertIsNone(MOUSE.OverrideCursor)
+
+    def test_a_failed_background_open_offers_the_host_alone_and_never_crashes(self):
+        self.read_error = rx_reader.ReadError("open_failed", "Revit could not open the model.")
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(self.submitted, [], "nothing is queued yet")
+        message = self.window.error_text.Text
+        self.assertIn("Alpha-Architecture.rvt", message)
+        self.assertIn("Revit could not open the model.", message)
+        self.assertIn("without its links", message)
+        self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt"], "the tick is kept")
+        self.assertFalse(self.window.closed)
+        self.assertTrue(self.window.IsEnabled)
+        self.assertIsNone(MOUSE.OverrideCursor)
+        # Export again: the host alone, with a note, and no second attempt to open it.
+        self.fire("export_btn")
+        self.assertEqual(len(self.reads), 1)
+        job = self.submitted[0]["jobs"][0]
+        self.assertEqual(len(job["stage"]["items"]), 1)
+        self.assertEqual(job["stage"]["items"][0]["name"], "Alpha-Architecture.rvt")
+        self.assertEqual(len(job["stage"]["notes"]), 1)
+        self.assertEqual(self.cticked(), [])
+
+    def test_a_failed_open_message_follows_the_language(self):
+        self.read_error = RuntimeError("boom")
+        with patch.dict(sys.modules, polish_modules()):
+            self.open_cloud()
+            self.tick_cloud("Alpha-Architecture.rvt")
+            self.fire("export_btn")
+            self.assertIn("bez linków", self.window.error_text.Text)
+
+    def test_unticking_forgets_the_host_alone_choice(self):
+        self.read_error = RuntimeError("boom")
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(self.window._host_only, {self.cby("Alpha-Architecture.rvt").key})
+        self.cclick(self.cby("Alpha-Architecture.rvt"))      # unticked
+        self.window._refresh_state()
+        self.assertEqual(self.window._host_only, set())
+
+    def test_close_failed_during_the_links_read_closes_the_window(self):
+        self.read_error = rx_reader.ReadError("close_failed", "Revit did not close the model.")
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertTrue(self.window.closed)
+        self.assertEqual(self.window.fatal_error, "Revit did not close the model.")
+        self.assertEqual(self.submitted, [])
+        self.assertFalse(TIMERS[-1].IsEnabled)
+
+    def test_a_greyed_cloud_row_is_never_read_or_exported(self):
+        self.open_cloud()
+        row = self.cby("Zażółć-Konstrukcja.rvt")
+        row.set_quietly(True)
+        self.window._refresh_state()
+        self.fire("export_btn")
+        self.fire("views_btn")
+        self.assertEqual(self.reads, [])
+        self.assertEqual(self.submitted, [])
+
+    def test_export_queues_only_the_shown_source(self):
+        self.open(rows=sample_rows(), cloud=self.cloud(), step=0.0)
+        self.tick()
+        self.memory.set_included([CP1_KEY])
+        self.click(self.by_name("a.rvt"))
+        self.switch("cloud")
+        self.pump()
+        alpha = self.cby("Alpha-Architecture.rvt")
+        self.memory.store_links(logic.link_key(alpha.cloud), alpha.cloud.cache_mtime, [])
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual([job["model_name"] for job in self.submitted[0]["jobs"]],
+                         ["Alpha-Architecture.rvt"])
+        self.assertEqual(self.ticked(), ["a.rvt"], "the local tick stays")
+        self.switch("local")
+        self.fire("export_btn")
+        self.assertEqual([job["model_path"] for job in self.submitted[1]["jobs"]],
+                         [os.path.join(ROOT_M, "a.rvt")])
+
+    def test_a_shared_index_is_used_for_cloud_rows(self):
+        path = os.path.join(self.tmp, "shared.json")
+        shared = launcher_default_index()
+        Path(path).write_text(json.dumps(shared), encoding="utf-8")
+        self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
+        self.open_cloud(shared=path)
+        self.window.shared_scope_rb.IsChecked = True
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(self.submitted[0]["jobs"][0]["index"], shared)
+
+    def test_the_summary_counts_stale_copies_and_names_the_scope(self):
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt", "Beta-MEP.rvt")
+        summary = self.window.summary_text.Text
+        self.assertIn("Models selected: 2", summary)
+        self.assertIn("older cache copies: 1", summary)
+        self.assertIn("Extractor default scope", summary)
+        self.assertTrue(self.window.export_btn.IsEnabled)
+        self.assertFalse(self.window.views_btn.IsEnabled, "views need exactly one model")
+
+    # -- Choose views...
+
+    def views_window(self, made, job_index=None, job=True):
+        class ViewStub(object):
+            def __init__(inner, snapshot, caps, note="", save_dir=""):
+                made.append((snapshot, note))
+                inner.job = {"model_path": snapshot["path"],
+                             "index": job_index or {"x": 1}} if job else None
+
+            def show_dialog(inner):
+                pass
+        return ViewStub
+
+    def test_choose_views_reads_with_links_stores_them_and_never_shows_a_guid(self):
+        self.read_answer = {"title": CM3 + ".rvt", "path": os.path.join(CACHE_ROOT, CM3 + ".rvt"),
+                            "views_2d": [], "views_3d": [], "ifc_setups": [], "ifc_error": "",
+                            "links": [self.link("Beta-MEP", CP1, CM4)]}
+        made = []
+        self.open_cloud()
+        alpha = self.cby("Alpha-Architecture.rvt")
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(EXPORT_UI, "ViewWindow", self.views_window(made)):
+            self.fire("views_btn")
+        self.assertEqual(self.read_links, [True])
+        self.assertEqual(self.reads[0][0], alpha.cloud.cache_path)
+        snapshot, note = made[0]
+        self.assertEqual(snapshot["title"], "Alpha-Architecture.rvt")
+        self.assertIn("Alpha-Architecture.rvt", snapshot["path"])
+        for text in (snapshot["title"], snapshot["path"], note):
+            self.assertIsNone(GUID_ANYWHERE.search(text), text)
+        stored = self.memory.links_for(logic.link_key(alpha.cloud), alpha.cloud.cache_mtime)
+        self.assertEqual([link["name"] for link in stored], ["Beta-MEP"])
+        job = self.submitted[0]["jobs"][0]
+        self.assertEqual(job["index"], {"x": 1}, "the index of the view picker")
+        self.assertEqual(job["model_path"], alpha.cloud.cache_path)
+        self.assertEqual(job["model_name"], "Alpha-Architecture.rvt")
+        self.assertEqual([item["name"] for item in job["stage"]["items"]],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertFalse(self.window.closed)
+        self.assertEqual(self.cticked(), [])
+        self.assertEqual(self.read_answer["title"], CM3 + ".rvt", "the read result is not edited")
+
+    def test_back_from_the_view_picker_queues_nothing(self):
+        self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
+        made = []
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(EXPORT_UI, "ViewWindow", self.views_window(made, job=False)):
+            self.fire("views_btn")
+        self.assertEqual(self.submitted, [])
+        self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt"])
+
+    def test_a_failed_views_read_of_a_cloud_row_is_shown(self):
+        self.read_error = rx_reader.ReadError("open_failed", "Revit could not open the model.")
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(EXPORT_UI, "ViewWindow", Mock(side_effect=AssertionError("opened"))):
+            self.fire("views_btn")
+        self.assertEqual(self.window.error_text.Text, "Revit could not open the model.")
+        self.assertEqual(self.submitted, [])
+        self.assertIsNone(MOUSE.OverrideCursor)
+
+    def test_a_later_successful_links_read_clears_the_host_alone_choice(self):
+        """Export fails to read the links (host alone offered), then Choose views reads them
+        and the user goes back without queuing: the next Export stages the links too."""
+        self.read_error = RuntimeError("boom")
+        self.open_cloud()
+        alpha = self.cby("Alpha-Architecture.rvt")
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(self.window._host_only, {alpha.key})
+        self.read_error = None
+        self.read_answer = {"views_2d": [], "views_3d": [], "links": [
+            self.link("Beta-MEP", CP1, CM4)]}
+        with patch.object(EXPORT_UI, "ViewWindow", self.views_window([], job=False)):
+            self.fire("views_btn")
+        self.assertEqual(self.submitted, [], "back from the picker: nothing queued")
+        self.assertEqual(self.window._host_only, set(), "the links were read after all")
+        self.fire("export_btn")
+        self.assertEqual(len(self.reads), 2, "the stored links need no third read")
+        job = self.submitted[0]["jobs"][0]
+        self.assertEqual([item["name"] for item in job["stage"]["items"]],
+                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(job["stage"]["notes"], [], "no 'links not read' note")
+
+    def test_a_failed_views_hand_over_keeps_the_cloud_job_for_the_next_export(self):
+        self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
+        self.submit_error = RuntimeError("session unreachable")
+        made = []
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(EXPORT_UI, "ViewWindow", self.views_window(made, {"views": 1})):
+            self.fire("views_btn")
+        self.assertIn("session unreachable", self.window.error_text.Text)
+        self.assertIn("views are kept", self.window.error_text.Text)
+        self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt"])
+        self.submit_error = None
+        self.fire("export_btn")
+        self.assertEqual(len(self.reads), 1, "the kept job needs no new read")
+        retry = self.submitted[-1]["jobs"][0]
+        self.assertEqual(retry["index"], {"views": 1})
+        self.assertEqual(retry["model_name"], "Alpha-Architecture.rvt")
+        self.assertEqual(self.cticked(), [])
+
+    def test_the_cloud_texts_exist_in_both_languages(self):
+        text = load_text_module()
+        for key in ("models_source", "models_source_local", "models_source_cloud",
+                    "cloud_projects_title", "cloud_projects_hint", "cloud_col_project",
+                    "cloud_col_date"):
+            english, polish_text = text.UI_TEXT[key]
+            self.assertTrue(english and polish_text and english != polish_text, key)
+            self.assertNotRegex(english + polish_text, r"20\d\d", key)
 
 
 if __name__ == "__main__":
