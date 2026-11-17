@@ -2209,6 +2209,25 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(window.shown, 1)
         self.assertEqual(window.stopped, 1, "the scan timer is stopped after the dialog")
 
+    def test_an_extractor_from_an_earlier_session_is_announced(self):
+        with patch.object(self.module, "_orphan_extractor_running", Mock(return_value=True)):
+            self.run_main()
+        self.assertEqual(len(self.alerts), 1)
+        self.assertIn("earlier Revit session", self.alerts[0][0])
+        self.assertEqual(len(FakeModelWindow.made), 1, "the window still opens")
+
+    def test_orphan_check_needs_no_session_and_a_running_extractor(self):
+        running = Mock(return_value=True)
+        starter = types.SimpleNamespace(extractor_running=running)
+        with patch.object(self.module, "DotNetStarter", Mock(return_value=starter)):
+            self.assertTrue(self.module._orphan_extractor_running(self.domain))
+            self.domain = FakeDomain(self.handler)
+            self.assertFalse(self.module._orphan_extractor_running(self.domain),
+                             "a session of this Revit shows its own rows")
+        running.side_effect = RuntimeError("no System")
+        with patch.object(self.module, "DotNetStarter", Mock(return_value=starter)):
+            self.assertFalse(self.module._orphan_extractor_running(FakeDomain()))
+
     def test_unreadable_build_is_left_out(self):
         self.run_main()
         self.assertEqual(FakeModelWindow.made[0].extractor_build, "")

@@ -29,7 +29,7 @@ from rx_export_logic import CONFIG_SECTION, load_settings, save_settings
 from rx_export_ui import ModelWindow
 from rx_i18n import tr
 from rx_json import dumps_ascii
-from rx_runner import extractor_exe
+from rx_runner import DotNetStarter, extractor_exe
 from rx_status import find_session
 from rx_status_ui import open_session
 
@@ -71,6 +71,18 @@ def _show_session():
             handler(json.dumps({"op": "show"}))
     except Exception:
         pass
+
+
+def _orphan_extractor_running(domain):
+    """True when a RevitExtractor.exe runs but this Revit has no export session: a run from an
+    earlier Revit session (closing Revit leaves it going). Only lists processes; any failure
+    counts as false."""
+    try:
+        if find_session(domain) is not None:
+            return False
+        return bool(DotNetStarter().extractor_running())
+    except Exception:
+        return False
 
 
 def _extractor_build(revit_dir):
@@ -160,6 +172,13 @@ def main():
                   "Nie znaleziono Revit Extractora tego Revita.\n\n{0}")
                .format(_error_text(error)))
         return
+
+    if _orphan_extractor_running(AppDomain.CurrentDomain):
+        _alert(tr("An export from an earlier Revit session is still running on this computer. "
+                  "It is not listed in the status window. Exports you queue now will start when "
+                  "it has finished.",
+                  "Eksport z wcześniejszej sesji Revita nadal działa na tym komputerze. Nie ma "
+                  "go w oknie statusu. Eksporty dodane teraz ruszą po jego zakończeniu."))
 
     config = script.get_config(CONFIG_SECTION)
     appdata = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
