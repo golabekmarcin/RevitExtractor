@@ -1,0 +1,834 @@
+{
+  "schema": "rx-v1-live-test",
+  "schemaVersion": 1,
+  "guideVersion": "1.1.0",
+  "guideBaseline": "branch mgo-changes; the exact commit is the Expected baseline set on the Start page",
+  "exportedAt": "2026-11-17T17:14:29.822Z",
+  "session": {
+    "role": "Revit 2022 machine",
+    "revitYear": "2022",
+    "extractorBuild": "",
+    "pyrevit": "3.11.2",
+    "expectedBaseline": "2d39549"
+  },
+  "current": "H7",
+  "updatedAt": "2026-11-17T17:13:24.814Z",
+  "tests": {
+    "P1": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {
+        "hash": "2d39549",
+        "py": "3.11.2",
+        "node": "26"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T09:57:27.892Z",
+      "completedAt": "2026-11-16T09:57:27.892Z"
+    },
+    "P2": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "samples": "yes"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T09:59:03.210Z",
+      "completedAt": "2026-11-16T09:59:03.210Z"
+    },
+    "P3": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "spool": "Automatic",
+        "left": "0",
+        "revit": "0",
+        "build": "2025.3.0.12"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T20:59:06.864Z",
+      "completedAt": "2026-11-16T20:59:06.864Z"
+    },
+    "G1": {
+      "status": "INCONCLUSIVE",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "pass": "22",
+        "fail": "0",
+        "skip": "0",
+        "exit": "1",
+        "err": "NativeCommandError"
+      },
+      "note": "powershell.exe : newest-all-options property GenerateExtendedPropertyDB: expected True, got False\nAt line:1 char:1\n\nvalidate_native_legacy.ps1:234 char:17\n+                 throw \"${label}: expected $expected, got $actual\"",
+      "noteApproved": true,
+      "updatedAt": "2026-11-16T23:58:45.294Z",
+      "completedAt": null
+    },
+    "G2": {
+      "status": "FAIL",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "outcome": "both failed",
+        "failn": "4"
+      },
+      "note": "  ExtractorUtility.dll FileVersion: (file not found in this Extractor folder)\n  RevitExtractor.exe ProductVersion: 2026.6.7.22+b1bdf3a3\nRESULT: FAIL (4)\n  - A alone: failed - The Extractor ended with exit code -1073741831. Check console.log, stderr.log, logs and journals in the run folder.\n  - B alone: failed - The Extractor ended with exit code -1073741831. Check console.log, stderr.log, logs and journals in the run folder.\n  - A parallel: failed - The Extractor ended with exit code -1073741831. Check console.log, stderr.log, logs and journals in the run folder.\n  - B parallel: failed - The Extractor ended with exit code -1073741831. Check console.log, stderr.log, logs and journals in the run folder.",
+      "noteApproved": true,
+      "updatedAt": "2026-11-16T21:10:12.313Z",
+      "completedAt": "2026-11-16T21:10:12.313Z"
+    },
+    "A1": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:10:56.998Z",
+      "completedAt": "2026-11-16T21:10:56.998Z"
+    },
+    "A2": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:13:50.993Z",
+      "completedAt": "2026-11-16T21:13:50.993Z"
+    },
+    "A3": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:14:19.206Z",
+      "completedAt": "2026-11-16T21:14:19.206Z"
+    },
+    "B1": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:14:59.246Z",
+      "completedAt": "2026-11-16T21:14:59.246Z"
+    },
+    "B2": {
+      "status": "INCONCLUSIVE",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "By default serach should be limited to file name, but it should be optional to search by folder column as well. Other thing is that Rescan should be moved above Add folder..., I am also not sure about including subfolders is good idea, or it should be easily switched by UI.",
+      "noteApproved": true,
+      "updatedAt": "2026-11-16T21:17:28.066Z",
+      "completedAt": null
+    },
+    "B3": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:18:06.799Z",
+      "completedAt": "2026-11-16T21:18:06.799Z"
+    },
+    "B4": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:19:06.729Z",
+      "completedAt": "2026-11-16T21:19:06.729Z"
+    },
+    "B5": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:20:43.404Z",
+      "completedAt": "2026-11-16T21:20:43.404Z"
+    },
+    "B6": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:21:05.900Z",
+      "completedAt": "2026-11-16T21:21:05.900Z"
+    },
+    "B7": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "dlg": "no"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:21:30.623Z",
+      "completedAt": "2026-11-16T21:21:30.623Z"
+    },
+    "C1": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:23:28.172Z",
+      "completedAt": "2026-11-16T21:23:28.172Z"
+    },
+    "C2": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:43:49.729Z",
+      "completedAt": "2026-11-16T21:43:49.729Z"
+    },
+    "C3": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "mode": "local Analyzer"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:47:37.192Z",
+      "completedAt": "2026-11-16T21:46:18.478Z"
+    },
+    "C4": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:52:30.667Z",
+      "completedAt": "2026-11-16T21:52:30.667Z"
+    },
+    "C5": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T21:57:10.900Z",
+      "completedAt": "2026-11-16T21:57:10.900Z"
+    },
+    "C6": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T22:02:10.431Z",
+      "completedAt": "2026-11-16T22:02:10.431Z"
+    },
+    "C7": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T22:03:09.235Z",
+      "completedAt": "2026-11-16T22:03:09.235Z"
+    },
+    "C8": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T22:14:29.745Z",
+      "completedAt": "2026-11-16T22:14:29.745Z"
+    },
+    "C9": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "left": "0",
+        "run1": "NOT STARTED"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T22:18:46.450Z",
+      "completedAt": "2026-11-16T22:18:46.450Z"
+    },
+    "C10": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T22:20:39.420Z",
+      "completedAt": "2026-11-16T22:20:39.420Z"
+    },
+    "C11": {
+      "status": "INCONCLUSIVE",
+      "checks": {
+        "ran": true,
+        "e1": true
+      },
+      "fields": {
+        "unusual": "yes"
+      },
+      "note": "This file is open for editing by another user.\nIf you open the file, you cannot save changes\nuntil the user closes it. In this case, your changes\nwill overwrite the user's changes.",
+      "noteApproved": true,
+      "updatedAt": "2026-11-16T22:23:38.537Z",
+      "completedAt": null
+    },
+    "C12": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {
+        "mins": "35",
+        "left": "0",
+        "run1": "OK",
+        "run2": "NOT STARTED"
+      },
+      "note": "After opening the Revit and re-running the Export did not show that another export is running until I started another export which I had to cancel. It would be bring back what is running, what was queued obviously will be lost.",
+      "noteApproved": true,
+      "updatedAt": "2026-11-16T23:00:51.952Z",
+      "completedAt": "2026-11-16T23:00:51.952Z"
+    },
+    "C13": {
+      "status": "INCONCLUSIVE",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "left": "0",
+        "spool": "Automatic",
+        "run1": "NOT STARTED",
+        "run2": "no such run"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:02:20.407Z",
+      "completedAt": null
+    },
+    "C14": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true,
+        "e4": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:07:56.735Z",
+      "completedAt": "2026-11-16T23:07:56.735Z"
+    },
+    "C15": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true,
+        "e4": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:11:50.374Z",
+      "completedAt": "2026-11-16T23:11:50.374Z"
+    },
+    "C16": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:12:33.980Z",
+      "completedAt": "2026-11-16T23:12:33.980Z"
+    },
+    "C17": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true,
+        "e4": true
+      },
+      "fields": {
+        "unusual": "no"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:15:59.297Z",
+      "completedAt": "2026-11-16T23:15:59.297Z"
+    },
+    "D1": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "files": "60",
+        "cold": "1",
+        "warm": "1"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:20:07.965Z",
+      "completedAt": "2026-11-16T23:20:07.965Z"
+    },
+    "D2": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:36:15.401Z",
+      "completedAt": "2026-11-16T23:36:15.401Z"
+    },
+    "D3": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true,
+        "e3": true
+      },
+      "fields": {
+        "secs": "1",
+        "dlg": "no"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:28:07.251Z",
+      "completedAt": "2026-11-16T23:28:07.251Z"
+    },
+    "D4": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "secs": "150"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:34:35.093Z",
+      "completedAt": "2026-11-16T23:34:35.093Z"
+    },
+    "D5": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:39:34.168Z",
+      "completedAt": "2026-11-16T23:39:34.168Z"
+    },
+    "D6": {
+      "status": "FAIL",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "secs": "300"
+      },
+      "note": "{\"StatusReportMsg\":{\"Code\":\"ERROR\",\"ErrorCode\":-1073741831,\"Message\":\"System.AggregateException: One or more errors occurred. (An error occurred trying to start process 'C:\\\\Program Files\\\\Autodesk\\\\Revit 2025\\\\RevitExtractor\\\\RevitExtractor_Client.exe' with working directory 'C:\\\\Program Files\\\\Autodesk\\\\Revit 2025'. The system cannot find the file specified.)\\r\\n ---> System.ComponentModel.Win32Exception (2): An error occurred trying to start process 'C:\\\\Program Files\\\\Autodesk\\\\Revit 2025\\\\RevitExtractor\\\\RevitExtractor_Client.exe' with working directory 'C:\\\\Program Files\\\\Autodesk\\\\Revit 2025'. The system cannot find the file specified.\\r\\n   at System.Diagnostics.Process.StartWithCreateProcess(ProcessStartInfo startInfo)\\r\\n   at System.Diagnostics.Process.Start(ProcessStartInfo startInfo)\\r\\n   at Autodesk.RevitExtractor.IPCWorker.<>c__DisplayClass35_0.<StartClient>b__0()\\r\\n   at System.Threading.Tasks.Task`1.InnerInvoke()\\r\\n   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)\\r\\n--- End of stack trace from previous location ---\\r\\n   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)\\r\\n   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)\\r\\n   --- End of inner exception stack trace ---\\r\\n   at System.Threading.Tasks.Task.WaitAllCore(Task[] tasks, Int32 millisecondsTimeout, CancellationToken cancellationToken)\\r\\n   at System.Threading.Tasks.Task.WaitAll(Task[] tasks)\\r\\n   at Autodesk.RevitExtractor.IPCWorker.StartClients(WindowsJob windowsJob)\\r\\n   at Autodesk.RevitExtractor.IPCWorker.Run()\\r\\n   at Autodesk.RevitExtractor.RCEClientCommunicator.Run()\",\"StackTrace\":null,\"Progress\":-1,\"FilePath\":null,\"FileProps\":{},\"IsCollecToBDP\":false,\"BDPMessageType\":\"\",\"ClientType\":null}}\n",
+      "noteApproved": true,
+      "updatedAt": "2026-11-16T23:51:32.281Z",
+      "completedAt": "2026-11-16T23:51:32.281Z"
+    },
+    "D7": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:53:23.422Z",
+      "completedAt": "2026-11-16T23:53:23.422Z"
+    },
+    "D8": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true
+      },
+      "fields": {
+        "read": "yes"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:55:29.138Z",
+      "completedAt": "2026-11-16T23:55:29.138Z"
+    },
+    "E1": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {},
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-16T23:55:41.008Z",
+      "completedAt": "2026-11-16T23:55:41.008Z"
+    },
+    "F1": {
+      "status": "INCONCLUSIVE",
+      "checks": {
+        "ran": true,
+        "e0": true
+      },
+      "fields": {
+        "pass": "22",
+        "fail": "0",
+        "skip": "0",
+        "exit": "1",
+        "err": "NativeCommandError"
+      },
+      "note": "powershell.exe : newest-all-options property GenerateExtendedPropertyDB: expected True, got False\nAt line:1 char:1\n+ powershell.exe -NoProfile -ExecutionPolicy Bypass -File\n\nvalidate_native_legacy.ps1:234 char:17\n+                 throw \"${label}: expected $expected, got $actual\"",
+      "noteApproved": true,
+      "updatedAt": "2026-11-16T23:57:55.644Z",
+      "completedAt": null
+    },
+    "F2": {
+      "status": "FAIL",
+      "checks": {
+        "ran": true,
+        "e0": true
+      },
+      "fields": {
+        "exc": "System.AggregateException"
+      },
+      "note": "\"Code\":\"ERROR\",\"ErrorCode\":-1073741831",
+      "noteApproved": true,
+      "updatedAt": "2026-11-17T00:03:26.762Z",
+      "completedAt": "2026-11-17T00:03:26.762Z"
+    },
+    "F3": {
+      "status": "FAIL",
+      "checks": {
+        "ran": true
+      },
+      "fields": {
+        "err": "System.AggregateException"
+      },
+      "note": "\"Code\":\"ERROR\",\"ErrorCode\":-1073741831",
+      "noteApproved": true,
+      "updatedAt": "2026-11-17T00:18:00.261Z",
+      "completedAt": "2026-11-17T00:09:01.125Z"
+    },
+    "H1": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e2": true,
+        "e1": true
+      },
+      "fields": {
+        "jfolder": "yes",
+        "journals": "57",
+        "named": "92",
+        "unnamed": "47",
+        "rows": "2",
+        "pl": "no such name",
+        "guid": "no",
+        "folderkey": "yes"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-17T16:00:39.280Z",
+      "completedAt": "2026-11-17T16:00:39.280Z"
+    },
+    "H2": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "listed": "yes",
+        "unread": "0"
+      },
+      "note": "Listing the cloud models for the project is relateviley slow.",
+      "noteApproved": true,
+      "updatedAt": "2026-11-17T17:10:08.832Z",
+      "completedAt": "2026-11-17T16:10:29.032Z"
+    },
+    "H3": {
+      "status": "INCONCLUSIVE",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {
+        "dialog": "yes",
+        "changed": "0",
+        "open": "no",
+        "secs": "60",
+        "links": "0"
+      },
+      "note": "Links found, I did not found this information anywhere.",
+      "noteApproved": true,
+      "updatedAt": "2026-11-17T16:18:23.123Z",
+      "completedAt": null
+    },
+    "H4": {
+      "status": "INCONCLUSIVE",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {
+        "state": "NOT STARTED",
+        "ok": "46",
+        "failed": "0",
+        "fed": "yes"
+      },
+      "note": "Copy the files took way too long. I think we need to drop copy locally models and open them directly. The smallest model that was used for export from ACC on current project took 37minutes including copy, open and export 23 sheets. For local models we can do it but it has to be done using robocopy. Also I am missing setting up the file name from the export I got Sheet Number - Sheet Name but I'd like to have it as Sheet Number only for example or other custom properties that are available for the sheet/view",
+      "noteApproved": true,
+      "updatedAt": "2026-11-17T17:03:40.074Z",
+      "completedAt": null
+    },
+    "H5": {
+      "status": "INCONCLUSIVE",
+      "checks": {
+        "ran": true,
+        "e0": true
+      },
+      "fields": {
+        "secs": "1200",
+        "mb": "4000",
+        "freeze": "fully"
+      },
+      "note": "Copy the files took way too long. I think we need to drop copy locally models and open them directly. The smallest model that was used for export from ACC on current project took 37minutes including copy, open and export 23 sheets. For local models we can do it but it has to be done using robocopy. Also I am missing setting up the file name from the export I got Sheet Number - Sheet Name but I'd like to have it as Sheet Number only for example or other custom properties that are available for the sheet/view",
+      "noteApproved": true,
+      "updatedAt": "2026-11-17T17:05:16.628Z",
+      "completedAt": null
+    },
+    "H6": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true,
+        "e2": true
+      },
+      "fields": {
+        "noncloud": "yes",
+        "links": "20",
+        "undo": "no",
+        "listed": "yes"
+      },
+      "note": "",
+      "noteApproved": false,
+      "updatedAt": "2026-11-17T17:10:46.279Z",
+      "completedAt": "2026-11-17T17:10:46.279Z"
+    },
+    "H7": {
+      "status": "PASS",
+      "checks": {
+        "ran": true,
+        "e0": true,
+        "e1": true
+      },
+      "fields": {
+        "items": "15",
+        "stage": "yes",
+        "procs": "0",
+        "free": "635"
+      },
+      "note": "I am left with backup folders <Filename>_backup",
+      "noteApproved": true,
+      "updatedAt": "2026-11-17T17:13:23.003Z",
+      "completedAt": "2026-11-17T17:12:51.358Z"
+    }
+  },
+  "summary": {
+    "total": 51,
+    "passed": 39,
+    "failed": 4,
+    "blocked": [],
+    "inconclusive": [
+      "G1",
+      "B2",
+      "C11",
+      "C13",
+      "F1",
+      "H3",
+      "H4",
+      "H5"
+    ],
+    "remaining": [
+      "G1",
+      "B2",
+      "C11",
+      "C13",
+      "F1",
+      "H3",
+      "H4",
+      "H5"
+    ],
+    "completionPercent": 84,
+    "nextTest": "G1"
+  }
+}
