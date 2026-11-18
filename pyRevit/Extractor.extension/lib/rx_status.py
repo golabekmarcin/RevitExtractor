@@ -47,6 +47,7 @@ UI_TEXT = {
     "status_col_model": ("Model", "Plik modelu"),
     "status_col_state": ("State", "Stan"),
     "status_col_progress": ("Progress / result", "Postęp / wynik"),
+    "status_detail": ("Details of the highlighted export", "Szczegóły wyróżnionego eksportu"),
     "status_col_started": ("Started", "Start"),
     "status_col_time": ("Time", "Czas"),
     "status_cancel": ("Cancel export", "Anuluj eksport"),

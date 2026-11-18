@@ -133,10 +133,11 @@ def clean_path(value):
 # --- run folder -----------------------------------------------------------------------------
 
 def default_output_parent(documents_dir):
-    """<Documents>\\RevitExtractor, as the launcher."""
+    """<base>\\RevitExtractor, where the Export button passes the user profile folder (the
+    Documents folder is often synced by OneDrive). The parameter keeps its old name."""
     if not isinstance(documents_dir, _TEXT_TYPES) or not documents_dir.strip():
-        raise RunnerError(tr("The Documents folder is unknown.",
-                             "Nie znaleziono folderu Dokumenty."))
+        raise RunnerError(tr("The user profile folder is unknown.",
+                             "Nie znaleziono folderu użytkownika."))
     return os.path.join(documents_dir, "RevitExtractor")
 
 
@@ -399,7 +400,9 @@ def _write_stage_record(folder, job):
               "items": [{"name": item["name"], "size": item["size"],
                          "cache_date": _cache_date(item["mtime"]),
                          "mode": job.stage_modes.get(item["name"])}   # linked | copied | None
-                        for item in job.stage["items"]]}
+                        for item in job.stage["items"]],
+              # how the clean-up of the staged files ended; error = exception type and code only
+              "cleanup": job.cleanup, "cleanup_error": job.cleanup_error}
     data = dumps_ascii(record, indent=2, sort_keys=True).encode("ascii")
     with open(os.path.join(folder, STAGE_RECORD), "wb") as handle:
         handle.write(data)
@@ -440,6 +443,7 @@ class Job(object):
         self.stage_ready = False    # every item copied and checked; waiting for the launch
         self.stage_modes = {}       # item name -> "linked" | "copied", as each item finishes
         self.cleanup = None         # None | "pending" | "done" | "incomplete"
+        self.cleanup_error = None   # type name and error code of the last failed delete
 
     def as_dict(self):
         return {
@@ -456,7 +460,7 @@ class Job(object):
             "staged_model": self.staged_model, "stage_done": self.stage_done,
             "stage_total": self.stage_total, "stage_ready": self.stage_ready,
             "stage_modes": dict(self.stage_modes),
-            "cleanup": self.cleanup,
+            "cleanup": self.cleanup, "cleanup_error": self.cleanup_error,
         }
 
 
@@ -870,8 +874,9 @@ class Queue(object):
                 if os.path.lexists(path):
                     self._remove(path)
                 self._remove_backup_folder(folder, name)
-            except Exception:
+            except Exception as error:
                 left.add(name)
+                job.cleanup_error = _short_error(error)
         if left:
             self._staged[job.id] = left
             return False
@@ -888,11 +893,19 @@ class Queue(object):
             return
         self._rmtree(path)
 
+    def _record_cleanup(self, job):
+        """stage.json gets the final clean-up state, so a leftover can be explained afterwards."""
+        try:
+            _write_stage_record(os.path.join(job.paths.root, STAGE_FOLDER), job)
+        except Exception:
+            pass
+
     def _remove_or_retry(self, job):
         """Delete a finished job's copies now; whatever stays locked is retried on each poll
         (busy() stays True) until CLEANUP_SECONDS, then reported with the folder."""
         if self._remove_copies(job):
             job.cleanup = "done"
+            self._record_cleanup(job)
         else:
             job.cleanup = "pending"
             self._cleanups.append(job)
@@ -914,8 +927,10 @@ class Queue(object):
         for job in list(self._cleanups):
             if not alive and self._remove_copies(job):
                 job.cleanup = "done"
+                self._record_cleanup(job)
             elif _seconds(now - self._cleanup_since[job.id]) >= CLEANUP_SECONDS:
                 job.cleanup = "incomplete"
+                self._record_cleanup(job)
                 folder = os.path.join(job.paths.root, STAGE_FOLDER)
                 job.result = _with_message(job.result, tr(
                     "Some copies from the cache could not be deleted; delete them by hand "
@@ -1020,6 +1035,12 @@ class Queue(object):
     def progress(self, job_id):
         """Last meaningful console line of a started job (read-only), or ""."""
         return progress_line(self.tail(job_id))
+
+
+def _short_error(error):
+    """Exception type and its OS error code, nothing else (a message can hold a path)."""
+    code = getattr(error, "winerror", None) or getattr(error, "errno", None)
+    return type(error).__name__ + ("(%s)" % code if code else "")
 
 
 def _seconds(delta):

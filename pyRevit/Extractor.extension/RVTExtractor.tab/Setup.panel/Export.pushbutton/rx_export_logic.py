@@ -9,6 +9,7 @@ from __future__ import unicode_literals
 import copy
 import io
 import json
+import os
 
 from rx_catalog import normalize_roots
 from rx_cloud import model_key, plan_stage
@@ -54,12 +55,35 @@ def _max_parallel(value):
     return number if number >= 1 else 1
 
 
+_ONEDRIVE_VARIABLES = ("OneDrive", "OneDriveCommercial", "OneDriveConsumer")
+
+
+def inside_onedrive(path, environ=None):
+    """True when `path` lies in a OneDrive folder: under a folder named by the OneDrive
+    environment variables, or under any folder whose name starts with "OneDrive" (company
+    accounts are named "OneDrive - <company>"). Pure text; touches no disk."""
+    if not isinstance(path, _TEXT_TYPES) or not path.strip():
+        return False
+    environ = os.environ if environ is None else environ
+    here = os.path.normcase(os.path.normpath(path))
+    for name in _ONEDRIVE_VARIABLES:
+        root = environ.get(name)
+        if root and isinstance(root, _TEXT_TYPES) and root.strip():
+            root = os.path.normcase(os.path.normpath(root))
+            if here == root or here.startswith(root.rstrip("\\/") + os.sep):
+                return True
+    parts = here.replace("/", os.sep).split(os.sep)
+    return any(part.startswith("onedrive") for part in parts[1:])
+
+
 def load_settings(config, documents_dir):
     """Settings from a config object (pyRevit's section or a stub); bad or missing values fall back.
 
     Returns {"roots": [...], "output_parent": text, "max_parallel": int >= 1,
     "shared_index_path": text ("" = none)}. Raises RunnerError (from rx_runner) only when the
-    output folder fell back and the Documents folder is unknown.
+    output folder fell back and the base folder is unknown. `documents_dir` is the folder the
+    default <base>\\RevitExtractor is made in: script.py passes the user profile folder, outside
+    OneDrive (Documents is often synced by it).
     """
     roots = _read(config, "roots")
     if isinstance(roots, (list, tuple)):

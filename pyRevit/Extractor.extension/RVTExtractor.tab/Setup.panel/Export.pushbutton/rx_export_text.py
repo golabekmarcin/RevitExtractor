@@ -37,7 +37,12 @@ UI_TEXT = {
     "models_remove_root": ("Remove", "Usuń"),
     "models_remove_root_tip": ("Remove the highlighted folder from the list. No file is deleted.",
                                "Usuń podświetlony folder z listy. Żaden plik nie zostanie usunięty."),
-    "models_output": ("Output folder", "Folder wyników"),
+    "models_output": ("Save to", "Zapisz w"),
+    "models_output_onedrive": (
+        "This folder is synced by OneDrive. Large exports slow it down and can fill your cloud space; "
+        "consider a folder outside OneDrive.",
+        "Ten folder jest synchronizowany przez OneDrive. Duże eksporty go spowalniają i mogą zapełnić "
+        "miejsce w chmurze; rozważ folder poza OneDrive."),
     "models_change_output": ("Change…", "Zmień…"),
     "models_output_hint": ("Every export gets its own new folder here.",
                            "Każdy eksport dostaje tu własny, nowy folder."),

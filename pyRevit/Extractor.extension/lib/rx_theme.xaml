@@ -14,7 +14,7 @@
     <SolidColorBrush x:Key="RxControlBorder" Color="#FFD2D2D7"/>
     <SolidColorBrush x:Key="RxText" Color="#FF1D1D1F"/>
     <SolidColorBrush x:Key="RxMutedText" Color="#FF6E6E73"/>
-    <SolidColorBrush x:Key="RxPlaceholderText" Color="#FFA1A1A6"/>
+    <SolidColorBrush x:Key="RxPlaceholderText" Color="#FF767680"/>
     <SolidColorBrush x:Key="RxAccent" Color="#FF0A64D8"/>
     <SolidColorBrush x:Key="RxAccentTint" Color="#FFE6EFFC"/>
     <SolidColorBrush x:Key="RxHoverTint" Color="#FFF7F9FC"/>

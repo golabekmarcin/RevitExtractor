@@ -8,9 +8,45 @@
         MinWidth="860" MinHeight="600" WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
     <Window.Resources>
+        <!-- A long view name ends in an ellipsis; the tooltip has all of it. -->
+        <DataTemplate x:Key="NameTemplate">
+            <TextBlock Text="{Binding Name}" ToolTip="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+        </DataTemplate>
+        <!-- Tabs in the theme's look: no grey boxes, an accent line under the selected tab. -->
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{DynamicResource RxMutedText}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0,0,0,2"/>
+            <Setter Property="Padding" Value="14,7"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource RxAccent}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource RxHoverTint}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
         <DataTemplate x:Key="CheckTemplate">
             <CheckBox IsChecked="{Binding Checked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                      Margin="6,2" ToolTip="{DynamicResource check_tooltip}"/>
+                      Margin="6,2" ToolTip="{DynamicResource check_tooltip}"
+                      AutomationProperties.Name="{Binding Name}"/>
         </DataTemplate>
     </Window.Resources>
     <Grid Margin="16">
@@ -55,7 +91,7 @@
                                   VirtualizingStackPanel.VirtualizationMode="Recycling">
                             <ListView.View><GridView>
                                 <GridViewColumn Header="✓" Width="44" CellTemplate="{StaticResource CheckTemplate}"/>
-                                <GridViewColumn Header="{DynamicResource col_name_2d}" Width="500" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="{DynamicResource col_name_2d}" Width="500" CellTemplate="{StaticResource NameTemplate}"/>
                                 <!-- Index 2: rx_export_ui.py puts the Type filter on this header. -->
                                 <GridViewColumn Header="{DynamicResource col_type}" Width="210" DisplayMemberBinding="{Binding Kind}"/>
                                 <GridViewColumn Header="ElementId" Width="110" DisplayMemberBinding="{Binding ElementId}"/>
@@ -85,7 +121,7 @@
                                   VirtualizingStackPanel.VirtualizationMode="Recycling">
                             <ListView.View><GridView>
                                 <GridViewColumn Header="✓" Width="44" CellTemplate="{StaticResource CheckTemplate}"/>
-                                <GridViewColumn Header="{DynamicResource col_name_3d}" Width="710" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="{DynamicResource col_name_3d}" Width="710" CellTemplate="{StaticResource NameTemplate}"/>
                                 <GridViewColumn Header="ElementId" Width="110" DisplayMemberBinding="{Binding ElementId}"/>
                             </GridView></ListView.View>
                         </ListView>

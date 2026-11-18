@@ -33,7 +33,7 @@ from pyrevit import forms
 import rx_cloud
 from rx_cloud import StageError
 from rx_column_filter_ui import ColumnFilterController
-from rx_export_logic import (link_key, load_shared_index, plan_cloud_job, plan_cloud_jobs,
+from rx_export_logic import (inside_onedrive, link_key, load_shared_index, plan_cloud_job, plan_cloud_jobs,
                              plan_jobs, settings_to_save, has_nested_roots, tick_targets, toggled_state)
 from rx_export_text import resources
 from rx_i18n import tr
@@ -212,11 +212,11 @@ class ProjectRow(forms.Reactive):
     def __init__(self, project):
         self.key = project.key
         if project.unnamed:
-            self.Label = tr("{0} ({1} models, {2} without a name)",
+            self.Label = tr("{0} (models: {1}, without a name: {2})",
                             "{0} (modele: {1}, bez nazwy: {2})").format(
                 project.name, project.count, project.unnamed)
         else:
-            self.Label = tr("{0} ({1} models)", "{0} (modele: {1})").format(
+            self.Label = tr("{0} (models: {1})", "{0} (modele: {1})").format(
                 project.name, project.count)
         self.Tip = project.note or self.Label
         self._checked = bool(project.selected)
@@ -290,7 +290,8 @@ class ModelWindow(forms.WPFWindow):
         if extractor_build:
             header = header + "   ·   Extractor " + extractor_build
         self.caps_text.Text = header
-        self.roots_lb.ItemsSource = list(self._roots)
+        self._show_roots()
+        self.folders_exp.IsExpanded = not self._roots   # folders are set up once; then out of the way
         self._show_output()
         self._show_shared_path()
         self.default_scope_rb.IsChecked = True
@@ -330,6 +331,7 @@ class ModelWindow(forms.WPFWindow):
         self.source_cloud_rb.IsChecked = False
         self.source_bar.Visibility = _shown(cloud is not None)
         self.cloud_panel.Visibility = _shown(False)
+        self.cloud_header.Visibility = _shown(False)
 
         self._timer = DispatcherTimer()
         self._timer.Interval = TimeSpan.FromMilliseconds(SCAN_INTERVAL_MS)
@@ -369,6 +371,23 @@ class ModelWindow(forms.WPFWindow):
     def _show_output(self):
         self.output_text.Text = self.output_parent
         self.output_text.ToolTip = self.output_parent or None
+        self.output_warn_text.Visibility = _shown(inside_onedrive(self.output_parent))
+
+    def _show_roots(self):
+        """The folder list, and its one-line summary beside the collapsed "Model folders"."""
+        self.roots_lb.ItemsSource = list(self._roots)
+        summary = ", ".join(self._roots) if self._roots else tr(
+            "none yet: open this section and add a folder",
+            "brak: rozwiń tę sekcję i dodaj folder")
+        self.folders_summary_text.Text = summary
+        self.folders_summary_text.ToolTip = summary
+
+    def _own(self, window):
+        """Make this window the owner of a child window, so the child stays above it."""
+        try:
+            window.Owner = self
+        except Exception:   # a window that cannot be owned still works, only less tidily
+            pass
 
     def _show_shared_path(self):
         if self._shared_path:
@@ -530,7 +549,14 @@ class ModelWindow(forms.WPFWindow):
     def _visible(self, row):
         return self._search.matches(self._search_text(row)) and self._filters.matches(row)
 
+    def _project_chosen(self):
+        catalog = self._cloud_catalog
+        return catalog is not None and any(project.selected for project in catalog.projects)
+
     def _cloud_visible(self, row):
+        # once a project is ticked, models of the other projects are hidden, not greyed
+        if row.state == "not_selected" and self._project_chosen():
+            return False
         return self._search.matches(self._search_text(row))
 
     def _search_text(self, row):
@@ -681,7 +707,7 @@ class ModelWindow(forms.WPFWindow):
                                 "Ten folder jest już na liście (lub w folderze z listy)."))
             return
         self._roots = values["roots"]
-        self.roots_lb.ItemsSource = list(self._roots)
+        self._show_roots()
         self._show_error("")
         self._persist(values)
         if self._loaded:
@@ -905,6 +931,7 @@ class ModelWindow(forms.WPFWindow):
             return
         try:
             view = ViewWindow(snapshot, self._caps, note=row.Note, save_dir=self._save_dir())
+            self._own(view)
             view.show_dialog()
         except Exception as error:
             self._show_error(tr("The view window failed: {0}", "Błąd okna widoków: {0}")
@@ -937,6 +964,10 @@ class ModelWindow(forms.WPFWindow):
         finally:
             Mouse.OverrideCursor = None
             self.IsEnabled = True
+            try:
+                self.Activate()    # a disabled window loses focus; take it back
+            except Exception:
+                pass
         self._set_status("")
         return snapshot, failure
 
@@ -983,6 +1014,8 @@ class ModelWindow(forms.WPFWindow):
         cloud = wanted == "cloud"
         self.models_lv.Visibility = _shown(not cloud)
         self.cloud_panel.Visibility = _shown(cloud)
+        self.cloud_header.Visibility = _shown(cloud)   # projects card, like the folders section
+        self.folders_exp.Visibility = _shown(not cloud)   # folders belong to local files only
         self._set_status(self._statuses[wanted])
         if cloud and not self._cloud_started:
             self._start_cloud_scan()
@@ -1242,6 +1275,7 @@ class ModelWindow(forms.WPFWindow):
         shown["path"] = "%s / %s" % (row.Project, row.Name)   # never the GUID-named cache file
         try:
             view = ViewWindow(shown, self._caps, note=row.Note, save_dir=self._save_dir())
+            self._own(view)
             view.show_dialog()
         except Exception as error:
             self._show_error(tr("The view window failed: {0}", "Błąd okna widoków: {0}")

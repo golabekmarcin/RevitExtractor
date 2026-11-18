@@ -290,8 +290,14 @@ class StatusWindow(_WINDOW_BASE):
         if control.Text != text:
             control.Text = text
 
-    def show_error(self, text):
+    def show_error(self, text, warning=False):
+        """The message line. `warning`: amber, for something that went on anyway (the export
+        itself succeeded); red is kept for real failures."""
         self._set_text(self.error_text, text or "")
+        try:
+            self.error_text.Foreground = self.FindResource("RxChangedText" if warning else "RxErrorText")
+        except Exception:   # no theme (a test, or not merged yet): the style default stays
+            pass
 
     def _selected_row(self):
         row = self.jobs_lv.SelectedItem
@@ -303,6 +309,8 @@ class StatusWindow(_WINDOW_BASE):
 
     def _update_buttons(self):
         view = self.selected_view() or {}
+        row = self._selected_row()
+        self._set_text(self.detail_text, row.Progress if row is not None else "")
         self.cancel_btn.IsEnabled = bool(view.get("can_cancel"))
         self.open_folder_btn.IsEnabled = bool(view.get("can_open_folder"))
         self.open_analyzer_btn.IsEnabled = bool(view.get("can_open_analyzer"))
@@ -604,7 +612,8 @@ class Session(object):
                      "were opened instead.",
                      "Lokalny Analyzer jest niedostępny: {0} Zamiast niego otwarto folder output "
                      "i stronę internetową.").format(plan[1])
-        self.window.show_error(" ".join([message] + problems))
+        # the export itself succeeded: a plain fallback is a warning, a failed open is an error
+        self.window.show_error(" ".join([message] + problems), warning=not problems)
 
     def _explain_fallback(self, reason):
         """The Node.js notice, unless the user hid it. Never raises: the fallback goes on."""

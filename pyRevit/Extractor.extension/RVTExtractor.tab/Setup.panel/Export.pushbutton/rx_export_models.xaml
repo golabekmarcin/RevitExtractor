@@ -8,45 +8,94 @@
         MinWidth="860" MinHeight="600" WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
     <Window.Resources>
+        <!-- Source switch: a segmented control (a track with a raised selected segment). -->
+        <Style x:Key="SegmentRadio" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource RxMutedText}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="18,4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border CornerRadius="6" Padding="{TemplateBinding Padding}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource RxCardBackground}"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource RxControlBorder}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource RxText}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource RxAccent}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
         <DataTemplate x:Key="ProjectTemplate">
             <CheckBox IsChecked="{Binding Checked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                       Content="{Binding Label}" ToolTip="{Binding Tip}" Margin="2,1"/>
         </DataTemplate>
+        <!-- A note longer than its column ends in an ellipsis; the row tooltip shows all of it. -->
+        <DataTemplate x:Key="NoteTemplate">
+            <TextBlock Text="{Binding Note}" TextTrimming="CharacterEllipsis"/>
+        </DataTemplate>
         <DataTemplate x:Key="CheckTemplate">
             <CheckBox IsChecked="{Binding Checked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                      Margin="6,2" ToolTip="{DynamicResource check_tooltip}"/>
+                      Margin="6,2" ToolTip="{DynamicResource check_tooltip}"
+                      AutomationProperties.Name="{Binding Name}"/>
         </DataTemplate>
     </Window.Resources>
     <Grid Margin="16">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 0 title -->
+            <RowDefinition Height="Auto"/>   <!-- 1 source switch -->
+            <RowDefinition Height="Auto"/>   <!-- 2 model folders (local source only) -->
+            <RowDefinition Height="Auto"/>   <!-- 3 search and list tools -->
+            <RowDefinition Height="*"/>      <!-- 4 the list -->
+            <RowDefinition Height="Auto"/>   <!-- 5 counts -->
+            <RowDefinition Height="Auto"/>   <!-- 6 what to export -->
+            <RowDefinition Height="Auto"/>   <!-- 7 error -->
+            <RowDefinition Height="Auto"/>   <!-- 8 save to + buttons -->
         </Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
             <TextBlock Text="{DynamicResource models_header}" Style="{DynamicResource RxWindowTitle}"/>
             <TextBlock x:Name="caps_text" Style="{DynamicResource RxMuted}" Margin="0,4,0,0"/>
         </StackPanel>
-        <Border Grid.Row="1" Style="{DynamicResource RxCard}" Padding="12,8">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="3*"/>
-                    <ColumnDefinition Width="24"/>
-                    <ColumnDefinition Width="2*"/>
-                </Grid.ColumnDefinitions>
-                <Grid Grid.Column="0">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Grid.Row="1" x:Name="source_bar" Orientation="Horizontal" Margin="0,0,0,10" Visibility="Collapsed">
+            <TextBlock Text="{DynamicResource models_source}" VerticalAlignment="Center" Margin="0,0,12,0"
+                       Style="{DynamicResource RxMuted}"/>
+            <Border Background="{DynamicResource RxBorder}" CornerRadius="8" Padding="2">
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="source_local_rb" GroupName="source" Style="{StaticResource SegmentRadio}"
+                                 Content="{DynamicResource models_source_local}"/>
+                    <RadioButton x:Name="source_cloud_rb" GroupName="source" Style="{StaticResource SegmentRadio}"
+                                 Content="{DynamicResource models_source_cloud}"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+        <Expander Grid.Row="2" x:Name="folders_exp" Margin="0,0,0,10">
+            <Expander.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{DynamicResource models_roots}" Style="{DynamicResource RxSectionTitle}" Margin="0"/>
+                    <TextBlock x:Name="folders_summary_text" Style="{DynamicResource RxMuted}" Margin="10,0,0,0"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="640"/>
+                </StackPanel>
+            </Expander.Header>
+            <Border Style="{DynamicResource RxCard}" Padding="12,8" Margin="0,6,0,0">
+                <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <TextBlock Grid.ColumnSpan="2" Text="{DynamicResource models_roots}" Style="{DynamicResource RxSectionTitle}"/>
-                    <ListBox Grid.Row="1" x:Name="roots_lb" Height="66" SelectionMode="Single"
+                    <ListBox x:Name="roots_lb" Height="66" SelectionMode="Single"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
-                    <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
-                        <Button x:Name="rescan_btn" Content="{DynamicResource models_rescan}" ToolTip="{DynamicResource models_rescan_tip}" Margin="0,0,0,6"/>
+                    <StackPanel Grid.Column="1" Margin="8,0,0,0">
                         <Button x:Name="add_root_btn" Content="{DynamicResource models_add_root}" Margin="0,0,0,6"/>
                         <Button x:Name="remove_root_btn" Content="{DynamicResource models_remove_root}"
                                 ToolTip="{DynamicResource models_remove_root_tip}" Margin="0,0,0,6"/>
@@ -54,38 +103,48 @@
                                   ToolTip="{DynamicResource models_subfolders_tip}"/>
                     </StackPanel>
                 </Grid>
-                <StackPanel Grid.Column="2">
-                    <TextBlock Text="{DynamicResource models_output}" Style="{DynamicResource RxSectionTitle}"/>
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" x:Name="output_btn" Content="{DynamicResource models_change_output}" Margin="8,0,0,0"/>
-                        <TextBlock x:Name="output_text" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                    </DockPanel>
-                    <TextBlock Text="{DynamicResource models_output_hint}" Style="{DynamicResource RxMuted}" FontSize="11"
+            </Border>
+        </Expander>
+        <StackPanel Grid.Row="2" x:Name="cloud_header" Visibility="Collapsed">
+            <Border Style="{DynamicResource RxCard}" Padding="12,8" Margin="0,0,0,8">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource cloud_projects_title}" Style="{DynamicResource RxSectionTitle}"/>
+                    <ListBox x:Name="cloud_projects_lb" MaxHeight="84" ItemTemplate="{StaticResource ProjectTemplate}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                    <TextBlock Text="{DynamicResource cloud_projects_hint}" Style="{DynamicResource RxMuted}" FontSize="11"
                                Margin="0,4,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
-            </Grid>
-        </Border>
-        <StackPanel Grid.Row="2" Margin="0,10,0,8">
-            <StackPanel x:Name="source_bar" Orientation="Horizontal" Margin="0,0,0,8" Visibility="Collapsed">
-                <TextBlock Text="{DynamicResource models_source}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                <RadioButton x:Name="source_local_rb" GroupName="source" Content="{DynamicResource models_source_local}"
-                             VerticalAlignment="Center" Margin="0,0,22,0"/>
-                <RadioButton x:Name="source_cloud_rb" GroupName="source" Content="{DynamicResource models_source_cloud}"
-                             VerticalAlignment="Center"/>
-            </StackPanel>
+            </Border>
+            <TextBlock x:Name="cloud_message_text" Margin="0,0,0,6" TextWrapping="Wrap">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Foreground" Value="{DynamicResource RxMutedText}"/>
+                        <Style.Triggers>
+                            <Trigger Property="Text" Value="">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+        </StackPanel>
+        <StackPanel Grid.Row="3" Margin="0,0,0,8">
             <DockPanel Margin="0,0,0,8">
                 <CheckBox DockPanel.Dock="Right" x:Name="search_folder_cb" Content="{DynamicResource search_in_folder}"
-                          ToolTip="{DynamicResource search_in_folder_tip}" VerticalAlignment="Center" Margin="12,0,0,0"/>
-                <ContentControl x:Name="search_host" Focusable="False"/>
+                          ToolTip="{DynamicResource search_in_folder_tip}" VerticalAlignment="Center" Margin="12,0,0,0"
+                          KeyboardNavigation.TabIndex="1"/>
+                <ContentControl x:Name="search_host" Focusable="False" KeyboardNavigation.TabIndex="0"/>
             </DockPanel>
             <DockPanel>
-                <Button x:Name="all_btn" Content="{DynamicResource check_visible}" Margin="0,0,8,0"/>
-                <Button x:Name="none_btn" Content="{DynamicResource uncheck_visible}" Margin="0,0,12,0"/>
+                <Button DockPanel.Dock="Right" x:Name="rescan_btn" Content="{DynamicResource models_rescan}"
+                        ToolTip="{DynamicResource models_rescan_tip}" Margin="12,0,0,0" KeyboardNavigation.TabIndex="2"/>
+                <Button x:Name="all_btn" Content="{DynamicResource check_visible}" Margin="0,0,8,0" KeyboardNavigation.TabIndex="0"/>
+                <Button x:Name="none_btn" Content="{DynamicResource uncheck_visible}" Margin="0,0,12,0" KeyboardNavigation.TabIndex="1"/>
                 <TextBlock Text="{DynamicResource selection_hint}" Style="{DynamicResource RxMuted}" FontSize="11"
                            VerticalAlignment="Center" TextWrapping="Wrap"/>
             </DockPanel>
         </StackPanel>
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="4">
         <ListView x:Name="models_lv" SelectionMode="Extended"
                   ScrollViewer.CanContentScroll="True" VirtualizingStackPanel.IsVirtualizing="True"
                   VirtualizingStackPanel.VirtualizationMode="Recycling">
@@ -94,6 +153,7 @@
                     <Setter Property="IsEnabled" Value="{Binding Enabled}"/>
                     <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
                     <Setter Property="ToolTip" Value="{Binding Tip}"/>
+                    <Setter Property="AutomationProperties.HelpText" Value="{Binding Tip}"/>
                 </Style>
             </ListView.ItemContainerStyle>
             <ListView.View><GridView>
@@ -102,26 +162,11 @@
                 <!-- Index 2 and 3: rx_export_ui.py puts the column filters on these headers. -->
                 <GridViewColumn Header="{DynamicResource models_col_folder}" Width="280" DisplayMemberBinding="{Binding Folder}"/>
                 <GridViewColumn Header="{DynamicResource models_col_version}" Width="110" DisplayMemberBinding="{Binding Version}"/>
-                <GridViewColumn Header="{DynamicResource models_col_note}" Width="300" DisplayMemberBinding="{Binding Note}"/>
+                <GridViewColumn Header="{DynamicResource models_col_note}" Width="300" CellTemplate="{StaticResource NoteTemplate}"/>
             </GridView></ListView.View>
         </ListView>
         <Grid x:Name="cloud_panel" Visibility="Collapsed">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-            <Border Grid.Row="0" Style="{DynamicResource RxCard}" Padding="12,8" Margin="0,0,0,8">
-                <StackPanel>
-                    <TextBlock Text="{DynamicResource cloud_projects_title}" Style="{DynamicResource RxSectionTitle}"/>
-                    <ListBox x:Name="cloud_projects_lb" Height="84" ItemTemplate="{StaticResource ProjectTemplate}"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
-                    <TextBlock Text="{DynamicResource cloud_projects_hint}" Style="{DynamicResource RxMuted}" FontSize="11"
-                               Margin="0,4,0,0" TextWrapping="Wrap"/>
-                </StackPanel>
-            </Border>
-            <TextBlock Grid.Row="1" x:Name="cloud_message_text" Style="{DynamicResource RxMuted}" Margin="0,0,0,6" TextWrapping="Wrap"/>
-            <ListView Grid.Row="2" x:Name="cloud_lv" SelectionMode="Extended"
+            <ListView x:Name="cloud_lv" SelectionMode="Extended"
                       ScrollViewer.CanContentScroll="True" VirtualizingStackPanel.IsVirtualizing="True"
                       VirtualizingStackPanel.VirtualizationMode="Recycling">
                 <ListView.ItemContainerStyle>
@@ -129,6 +174,7 @@
                         <Setter Property="IsEnabled" Value="{Binding Enabled}"/>
                         <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
                         <Setter Property="ToolTip" Value="{Binding Tip}"/>
+                    <Setter Property="AutomationProperties.HelpText" Value="{Binding Tip}"/>
                     </Style>
                 </ListView.ItemContainerStyle>
                 <ListView.View><GridView>
@@ -136,13 +182,14 @@
                     <GridViewColumn Header="{DynamicResource models_col_name}" Width="260" DisplayMemberBinding="{Binding Name}"/>
                     <GridViewColumn Header="{DynamicResource cloud_col_project}" Width="220" DisplayMemberBinding="{Binding Project}"/>
                     <GridViewColumn Header="{DynamicResource cloud_col_date}" Width="100" DisplayMemberBinding="{Binding CacheDate}"/>
-                    <GridViewColumn Header="{DynamicResource models_col_note}" Width="330" DisplayMemberBinding="{Binding Note}"/>
+                    <GridViewColumn Header="{DynamicResource models_col_note}" Width="330" CellTemplate="{StaticResource NoteTemplate}"/>
                 </GridView></ListView.View>
             </ListView>
         </Grid>
         </Grid>
-        <TextBlock Grid.Row="4" x:Name="count_text" Margin="0,6,0,0" Style="{DynamicResource RxMuted}" TextWrapping="Wrap"/>
-        <Border Grid.Row="5" Style="{DynamicResource RxCard}" Padding="12,6" Margin="0,8,0,0">
+        <TextBlock Grid.Row="5" x:Name="count_text" Margin="0,6,0,0" Style="{DynamicResource RxMuted}" TextWrapping="Wrap"/>
+        <StackPanel Grid.Row="6" Margin="0,8,0,0">
+        <Border Style="{DynamicResource RxCard}" Padding="12,6">
             <DockPanel>
                 <TextBlock Text="{DynamicResource models_scope}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,16,0"/>
                 <RadioButton x:Name="default_scope_rb" GroupName="scope" Content="{DynamicResource models_scope_default}"
@@ -154,14 +201,54 @@
                            TextTrimming="CharacterEllipsis"/>
             </DockPanel>
         </Border>
-        <TextBlock Grid.Row="6" x:Name="error_text" Style="{DynamicResource RxError}" Margin="0,6,0,0" TextWrapping="Wrap"/>
-        <Grid Grid.Row="7" Margin="0,8,0,0">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0">
-                <TextBlock x:Name="summary_text" FontWeight="SemiBold" TextWrapping="Wrap"/>
+        <!-- What the chosen scope does, in words (the radio tooltips say the same). -->
+        <TextBlock Text="{DynamicResource models_scope_default_tip}" FontSize="11" Margin="2,4,0,0" TextWrapping="Wrap">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="{DynamicResource RxMutedText}"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsChecked, ElementName=default_scope_rb}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+        <TextBlock Text="{DynamicResource models_scope_shared_tip}" FontSize="11" Margin="2,4,0,0" TextWrapping="Wrap">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="{DynamicResource RxMutedText}"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsChecked, ElementName=shared_scope_rb}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+        </StackPanel>
+        <TextBlock Grid.Row="7" x:Name="error_text" Style="{DynamicResource RxError}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        <Grid Grid.Row="8" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
+                <Grid ToolTip="{DynamicResource models_output_hint}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto" MaxWidth="380"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{DynamicResource models_output}" FontWeight="SemiBold"
+                               VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBlock Grid.Column="1" x:Name="output_text" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <Button Grid.Column="2" x:Name="output_btn" Content="{DynamicResource models_change_output}" Margin="10,0,0,0"/>
+                </Grid>
+                <TextBlock x:Name="output_warn_text" Text="{DynamicResource models_output_onedrive}" Margin="0,4,0,0"
+                           Foreground="{DynamicResource RxChangedText}" FontSize="11" TextWrapping="Wrap"
+                           Visibility="Collapsed"/>
+                <TextBlock x:Name="summary_text" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,8,0,0"/>
                 <TextBlock x:Name="status_text" Margin="0,2,0,0" Style="{DynamicResource RxMuted}" TextWrapping="Wrap"/>
             </StackPanel>
-            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
                 <Button x:Name="close_btn" IsCancel="True" Content="{DynamicResource close}" Margin="0,0,8,0"/>
                 <Button x:Name="views_btn" Content="{DynamicResource models_views}" ToolTip="{DynamicResource models_views_tip}"
                         ToolTipService.ShowOnDisabled="True" Margin="0,0,8,0"/>

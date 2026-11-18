@@ -1493,6 +1493,29 @@ class WindowTest(unittest.TestCase):
         self.assertEqual(self.shell.opened, [self.queue.jobs()[0].paths.output, WEBSITE_URL])
         self.assertIn("Node.js was not found.", self.window.error_text.Text)
 
+    def test_the_analyzer_fallback_is_a_warning_not_an_error(self):
+        self.window.FindResource = lambda key: key     # the theme's brushes, by name
+        self.submit("a")
+        self.finish(0)
+        self.tick()
+        self.plan_answer = ("web", "Node.js was not found.")
+        self.select(0)
+        self.click("open_analyzer_btn")
+        self.assertEqual(self.window.error_text.Foreground, "RxChangedText",
+                         "the export succeeded: amber, not red")
+        self.window.show_error("boom")
+        self.assertEqual(self.window.error_text.Foreground, "RxErrorText")
+
+    def test_the_highlighted_job_shows_its_full_text(self):
+        self.submit("a")
+        self.finish(0, code=1)
+        self.tick()
+        self.select(0)
+        self.assertEqual(self.window.detail_text.Text, self.rows()[0].Progress)
+        self.assertTrue(self.window.detail_text.Text)
+        self.select(None)
+        self.assertEqual(self.window.detail_text.Text, "")
+
     def fall_back(self):
         self.submit("a")
         self.finish(0)

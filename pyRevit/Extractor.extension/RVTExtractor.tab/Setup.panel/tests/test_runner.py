@@ -1956,6 +1956,33 @@ class QueueStagingTest(TempDirTest):
         self.assertIn(self.model_dir(job), job.result.message)
         self.assertFalse(queue.busy())
 
+    def test_stage_record_keeps_how_the_cleanup_ended(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.exit(job)
+        for _ in range(3):
+            queue.poll()
+        self.assertEqual(job.cleanup, "done")
+        with open(os.path.join(self.model_dir(job), "stage.json"), "rb") as handle:
+            record = json.loads(handle.read().decode("ascii"))
+        self.assertEqual((record["cleanup"], record["cleanup_error"]), ("done", None))
+
+    def test_a_failed_delete_leaves_its_error_type_in_the_record(self):
+        self.remover.locked.add("Zażółć-Konstrukcja.rvt")
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        self.job(queue, a).stage["items"][1]["size"] += 1
+        job = self.poll_until(queue, a, ("failed",))
+        with patch.object(rx_runner, "CLEANUP_SECONDS", 5):
+            for _ in range(10):
+                queue.poll()
+        self.assertEqual(job.cleanup_error, "OSError")
+        with open(os.path.join(self.model_dir(job), "stage.json"), "rb") as handle:
+            record = json.loads(handle.read().decode("ascii"))
+        self.assertEqual((record["cleanup"], record["cleanup_error"]), ("incomplete", "OSError"))
+        self.assertNotIn(self.tmp, json.dumps(record), "no path in the record")
+
     def test_a_locked_copy_after_a_copy_failure_removed_on_a_later_poll(self):
         self.remover.locked.add("Zażółć-Konstrukcja.rvt")
         queue = self.queue()

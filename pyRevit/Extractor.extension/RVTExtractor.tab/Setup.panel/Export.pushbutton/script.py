@@ -194,7 +194,8 @@ def main():
     appdata = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
     try:
         settings = load_settings(
-            config, Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments))
+            # the profile folder, not Documents: Documents is often synced by OneDrive
+            config, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))
         if not appdata:
             raise ValueError(tr("The AppData folder is unknown.",
                                 "Nie znaleziono folderu AppData."))
@@ -232,6 +233,13 @@ def main():
         _alert(tr("The export window could not be opened.\n\n{0}",
                   "Nie udało się otworzyć okna eksportu.\n\n{0}").format(_error_text(error)))
         return
+    try:
+        from System.Windows.Interop import WindowInteropHelper
+        # parent the window to Revit's main window, so it stays above Revit (and goes down
+        # and up with it) instead of dropping behind it
+        WindowInteropHelper(window).Owner = HOST_APP.uiapp.MainWindowHandle
+    except Exception:
+        script.get_logger().warning("Could not parent the export window to Revit.")
     try:
         window.show_dialog()
     except Exception as error:

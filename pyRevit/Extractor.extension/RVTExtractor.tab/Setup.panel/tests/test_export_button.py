@@ -340,6 +340,29 @@ def imported_roots(path):
     return roots
 
 
+class OneDriveCheck(unittest.TestCase):
+    ENV = {"OneDrive": r"C:\Users\x\OneDrive", "OneDriveCommercial": r"C:\Users\x\OneDrive - Acme"}
+
+    def test_inside_the_environment_roots_or_a_onedrive_named_folder(self):
+        check = lambda path: logic.inside_onedrive(path, self.ENV)
+        self.assertTrue(check(r"C:\Users\x\OneDrive\Documents\RevitExtractor"))
+        self.assertTrue(check(r"c:\users\x\onedrive - acme\Exports"))
+        self.assertTrue(check(r"D:\Work\OneDrive - Other\Exports"), "named, not in the variables")
+        self.assertFalse(check(r"C:\Users\x\RevitExtractor"))
+        self.assertFalse(check(r"C:\Users\x\Projects\Exports"))
+        self.assertFalse(check(""))
+        self.assertFalse(check(None))
+
+    def test_a_root_that_only_shares_a_prefix_is_not_inside(self):
+        self.assertFalse(logic.inside_onedrive(r"C:\Users\x\Docs\a", {"OneDrive": r"C:\Users\x\Doc"}))
+
+    def test_the_default_output_is_not_made_in_documents(self):
+        source = (BUTTON / "script.py").read_text(encoding="utf-8")
+        self.assertIn("SpecialFolder.UserProfile", source)
+        self.assertNotIn("SpecialFolder.MyDocuments", source)
+
+
+
 class LogicFileGuards(unittest.TestCase):
     PATH = BUTTON / "rx_export_logic.py"
 
@@ -348,7 +371,7 @@ class LogicFileGuards(unittest.TestCase):
         self.assertFalse(imported_roots(self.PATH) & banned)
 
     def test_only_lib_and_stdlib_imports(self):
-        allowed = {"__future__", "copy", "io", "json", "rx_catalog", "rx_cloud", "rx_i18n",
+        allowed = {"__future__", "copy", "io", "json", "os", "rx_catalog", "rx_cloud", "rx_i18n",
                    "rx_index", "rx_runner"}
         self.assertFalse(imported_roots(self.PATH) - allowed)
 
@@ -1015,6 +1038,34 @@ class ModelWindowHarness(object):
         if show:
             self.window.show_dialog()
         return self.window
+
+    def test_onedrive_output_folder_shows_a_warning(self):
+        window = self.open()
+        self.assertEqual(window.output_warn_text.Visibility, "Collapsed")
+        window.output_parent = os.path.join("C:\\", "Users", "x", "OneDrive - Acme", "Exports")
+        window._show_output()
+        self.assertEqual(window.output_warn_text.Visibility, "Visible")
+        window.output_parent = os.path.join("C:\\", "Users", "x", "RevitExtractor")
+        window._show_output()
+        self.assertEqual(window.output_warn_text.Visibility, "Collapsed")
+
+    def test_folders_section_is_open_only_while_no_folder_is_set(self):
+        self.assertFalse(self.open().folders_exp.IsExpanded)
+        self.assertIn(ROOT_M, self.window.folders_summary_text.Text)
+        empty = self.open(roots=())
+        self.assertTrue(empty.folders_exp.IsExpanded)
+        self.assertIn("none yet", empty.folders_summary_text.Text)
+
+    def test_child_windows_are_owned_by_the_model_window(self):
+        window = self.open()
+        child = types.SimpleNamespace()
+        window._own(child)
+        self.assertIs(child.Owner, window)
+
+        class Refuses(object):
+            def __setattr__(self, name, value):
+                raise RuntimeError("no owner")
+        window._own(Refuses())   # must not raise
 
     def tick(self):
         timer = TIMERS[-1]
@@ -2084,6 +2135,7 @@ class ScriptTests(unittest.TestCase):
         open(os.path.join(self.revit_dir, "RevitExtractor", "RevitExtractor.exe"), "w").close()
         self.appdata = os.path.join(self.tmp, "AppData")
         self.documents = os.path.join(self.tmp, "Documents")
+        self.profile = os.path.join(self.tmp, "Profile")   # the default output is made here
         FakeModelWindow.made = []
         FakeModelWindow.batches = []
         FakeModelWindow.output_override = None
@@ -2104,12 +2156,13 @@ class ScriptTests(unittest.TestCase):
         return self.handler
 
     def folder(self, which):
-        return {"ApplicationData": self.appdata, "MyDocuments": self.documents}[which]
+        return {"ApplicationData": self.appdata, "MyDocuments": self.documents,
+                "UserProfile": self.profile}[which]
 
     def load(self):
         test = self
         special = types.SimpleNamespace(ApplicationData="ApplicationData",
-                                        MyDocuments="MyDocuments")
+                                        MyDocuments="MyDocuments", UserProfile="UserProfile")
 
         def file_version(path):
             if path not in test.versions:
@@ -2227,7 +2280,7 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(window.caps, rx_capabilities.for_revit(2022))
         self.assertEqual(window.settings["roots"], [os.path.join("D:\\", "m")])
         self.assertEqual(window.settings["output_parent"],
-                         os.path.join(self.documents, "RevitExtractor"))
+                         os.path.join(self.profile, "RevitExtractor"))
         self.assertEqual(window.extractor_build, "2025.3.0.12")
         self.assertEqual(window.cache.file_path,
                          os.path.join(self.appdata, "RevitExtractor", "catalog-cache.json"))
@@ -2308,7 +2361,7 @@ class ScriptTests(unittest.TestCase):
                          [os.path.join("D:\\", "m", "a.rvt"), os.path.join("D:\\", "m", "b.rvt")])
         for job in submit["jobs"]:
             self.assertEqual(job["revit_dir"], self.revit_dir)
-            self.assertEqual(job["output_parent"], os.path.join(self.documents, "RevitExtractor"))
+            self.assertEqual(job["output_parent"], os.path.join(self.profile, "RevitExtractor"))
             self.assertEqual(job["index"], build_index(CAPS_2022))
         self.assertEqual(self.alerts, [])
         self.assertEqual(FakeModelWindow.made[0].results[0]["queued"], 1)
@@ -2850,7 +2903,8 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertIn("Not in the selected projects", zazolc.Note)
         self.assertIn("Not in the selected projects", zazolc.Tip)
         self.assertIn("Alpha-Architecture.rvt", alpha.Tip)
-        self.assertEqual(self.window.cloud_lv.ItemsSource.Count, 3)
+        self.assertEqual(self.window.cloud_lv.ItemsSource.Count, 2,
+                         "a ticked project hides the models of the other projects")
 
     def test_duplicate_rows_are_disabled(self):
         self.memory.merge([Sighting(CP1, "Demo Tower", CM5, "Alpha-Architecture.rvt", "journal")],
@@ -2926,7 +2980,7 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(SharedEventReactive.raised, [], "no row notifies: one refresh instead")
 
     def test_search_filters_the_cloud_rows(self):
-        self.open_cloud()
+        self.open_cloud(included=())
         search = legacy.FakeSearchBar.instances[0]
         search.Text = "beta"
         self.assertEqual([row.Name for row in self.window.cloud_lv.ItemsSource],
@@ -2939,10 +2993,35 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual([row.Name for row in self.window.cloud_lv.ItemsSource],
                          ["Zażółć-Konstrukcja.rvt"], "the project name is searchable on request")
 
+    def test_models_of_unticked_projects_are_hidden_once_a_project_is_ticked(self):
+        self.open_cloud(included=())
+        shown = lambda: [row.Name for row in self.window.cloud_lv.ItemsSource]
+        self.assertEqual(len(shown()), 3, "nothing ticked: every model is listed, greyed")
+        self.pclick("Demo Tower")
+        self.assertEqual(shown(), ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.pclick("Przykładowy")
+        self.assertEqual(len(shown()), 3, "both projects ticked: all models")
+        self.pclick("Demo Tower")
+        self.assertEqual(shown(), ["Zażółć-Konstrukcja.rvt"])
+        self.pclick("Przykładowy")
+        self.assertEqual(len(shown()), 3, "no project ticked again: the greyed list returns")
+
+    def test_the_folders_section_belongs_to_local_files_only(self):
+        window = self.open_cloud(switch=False)
+        self.assertEqual(window.folders_exp.Visibility, "Visible")
+        self.assertEqual(window.cloud_header.Visibility, "Collapsed")
+        self.switch("cloud")
+        self.assertEqual(window.folders_exp.Visibility, "Collapsed")
+        self.assertEqual(window.cloud_header.Visibility, "Visible", "the projects card, in its place")
+        self.switch("local")
+        self.assertEqual(window.folders_exp.Visibility, "Visible")
+        self.assertEqual(window.cloud_header.Visibility, "Collapsed")
+
     def test_counts_and_unnamed_files(self):
         self.open_cloud()
         self.assertIn("Selected: 0 / 3", self.window.count_text.Text)
-        self.assertIn("Shown: 3", self.window.count_text.Text)
+        self.assertIn("Shown: 2", self.window.count_text.Text,
+                      "the other project's model is hidden once a project is ticked")
         self.assertIn("without a name: 1", self.window.count_text.Text)
         demo = [p for p in self.projects() if "Demo Tower" in p.Label][0]
         self.assertIn("Cached models without a name: 1", demo.Tip)
