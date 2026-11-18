@@ -18,7 +18,7 @@ async function synthetic() {
   const vals = ['A101 - Ground floor', 'Revit Sheets', '1001', 'A101', 'Ground floor', 'x', 'A102 - First floor', '1002', 'A102', 'First floor'];
   const avs = [1, 0, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 1, 6, 2, 1, 3, 7, 4, 8, 5, 9, 6, 5];
   const offs = [0, 0, 6, 12];
-  const ids = ['', 'ext-1', 'ext-2'];
+  const ids = ['', guids[0], guids[1]];     // the viewable id equals the database's external id
   await fs.mkdir(resource, { recursive: true });
   for (const [name, data] of Object.entries({ attrs, vals, avs, ids, offs })) {
     await fs.writeFile(path.join(resource, `objects_${name}.json.gz`), gzipSync(JSON.stringify(data)));
@@ -28,6 +28,9 @@ async function synthetic() {
     await fs.mkdir(folder, { recursive: true });
     await fs.writeFile(path.join(folder, `${sheets[index][0]} - ${sheets[index][1]}.pdf`), 'pdf');
   }
+  await fs.mkdir(path.join(resource, '3D View', guids[0]), { recursive: true });
+  await fs.writeFile(path.join(resource, '3D View', guids[0], 'model.svf'), 'svf');
+  await fs.writeFile(path.join(resource, 'Sheets', guids[0], 'A101 - Ground floor.dwg'), 'dwg');
   const manifest = { type: 'design', name: 'Model.rvt', children: [{ type: 'folder', name: 'Sheets', children:
     sheets.map(([number, name], index) => ({ type: 'geometry', viewableID: guids[index], name: `${number} - ${name}`, role: '2d' })) }] };
   await fs.writeFile(path.join(root, 'bubble.json'), JSON.stringify(manifest));
@@ -44,6 +47,10 @@ test('the probe ties files to sheets and prints no names by default', async () =
     assert.equal(report.mapping.pdfStemEqualsViewableName, 2);
     assert.equal(report.mapping.pdfStemEqualsNumberDashName, 2);
     assert.equal(report.mapping.viewableHasGuid, 2);
+    assert.equal(report.mapping.viewableIdEqualsExternalId, 2);
+    assert.equal(report.mapping.viewableIdLooksLikeAnElementUniqueId, 0, 'plain GUIDs, not UniqueIds');
+    assert.deepEqual({ ...report.deliverables }, { pdf: 2, dwg: 1, ifc: 0, f2d: 0, svf: 1, pdfInGuidFolder: 2, dwgInGuidFolder: 1,
+      viewFolders: 1, viewFoldersWithOneViewFile: 1, dwgStemEqualsViewableName: 1 });
     assert.equal(report.properties.sheetsAndViews.builtIn['Sheet Number'].nonEmpty, 2);
     assert.equal(report.properties.sheetsAndViews.otherAttributeNames, 1, 'counted, not named');
     const text = JSON.stringify(report);

@@ -65,9 +65,13 @@ export async function probe(outputFolder, { showNames = false } = {}) {
   const hasProperties = files.includes('Resource/objects_attrs.json.gz');
   report.properties = { present: hasProperties };
   let sheets = [];
+  let externalIds = new Set();
+  let viewNames = new Set();
   if (hasProperties) {
     const store = new PropertyStore(resource);
     report.properties.elements = store.rows.length;
+    externalIds = new Set(store.rows.map(row => row.externalId));
+    viewNames = new Set(store.rows.filter(row => /^Views?$/i.test(row.category)).map(row => row.name));
     report.properties.categories = store.categories.slice(0, 40);
     const wanted = row => /^Sheets?$/i.test(row.category) || /^Views?$/i.test(row.category);
     const attributeCounts = new Map();
@@ -111,9 +115,26 @@ export async function probe(outputFolder, { showNames = false } = {}) {
     sheetElements: sheets.length,
     sheetNameEqualsViewableName: sheets.filter(({ row }) => names.has(row.name)).length,
     pdfStemEqualsNumberDashName: sheets.filter(({ values }) => pdfStems.includes(`${values['Sheet Number']} - ${values['Sheet Name']}`)).length,
+    viewableIdEqualsExternalId: viewables.filter(node => externalIds.has(String(node.viewableID || node.guid || ''))).length,
+    viewableIdLooksLikeAnElementUniqueId: viewables.filter(node => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}-[0-9a-f]{8}$/i.test(String(node.viewableID || node.guid || ''))).length,
+    viewNameEqualsViewableName: [...viewNames].filter(name => names.has(name)).length,
     nodeKeysThatLookLikeAnElementId: [...new Set(viewables.flatMap(node => Object.keys(node)).filter(key => /element.?id|revit.?id|uniqueid|external/i.test(key)))],
   };
   report.mapping = check;
+
+  // 5. Where the deliverables sit: counts of files and of folders (the 3D views are folders).
+  const guidFolder = file => file.split('/').slice(0, -1).find(part => /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(part));
+  const ext = pattern => files.filter(file => pattern.test(file));
+  const viewFiles = ext(/\.(svf|f2d)$/i);
+  const folders = new Map();
+  for (const file of viewFiles) { const key = guidFolder(file) ?? file.split('/').slice(0, -1).join('/'); folders.set(key, (folders.get(key) || 0) + 1); }
+  report.deliverables = {
+    pdf: ext(/\.pdf$/i).length, dwg: ext(/\.dwg$/i).length, ifc: ext(/\.ifc$/i).length, f2d: ext(/\.f2d$/i).length, svf: ext(/\.svf$/i).length,
+    pdfInGuidFolder: ext(/\.pdf$/i).filter(file => guidFolder(file)).length,
+    dwgInGuidFolder: ext(/\.dwg$/i).filter(file => guidFolder(file)).length,
+    viewFolders: folders.size, viewFoldersWithOneViewFile: [...folders.values()].filter(count => count === 1).length,
+    dwgStemEqualsViewableName: ext(/\.dwg$/i).filter(file => names.has(path.basename(file, path.extname(file)))).length,
+  };
   return report;
 }
 
