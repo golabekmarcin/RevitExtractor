@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>RevitExtractor v1 live test</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--mute:#5b6570;--line:#d7dce2;--accent:#1f5fbf;--accent-ink:#fff;
+--pass:#1a7f37;--fail:#c62828;--block:#b45309;--inc:#7b3fb5;--nt:#6b7280;--code:#0f172a;--codeink:#e6edf3;--warn:#fff4d6;--warnline:#e0b100}
+@media (prefers-color-scheme:dark){:root{--bg:#14171b;--panel:#1d2127;--ink:#e6e9ee;--mute:#9aa4af;--line:#363c45;--accent:#6aa5ff;--accent-ink:#0b1220;
+--pass:#4cc26b;--fail:#ff7b72;--block:#f0a04b;--inc:#c39bff;--nt:#8b949e;--code:#0b0e12;--codeink:#dbe4ee;--warn:#3a3012;--warnline:#8a6d00}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:8px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+header h1{font-size:16px;margin:0 8px 0 0}
+.bar{flex:1 1 220px;min-width:160px}
+.bar .track{height:10px;background:var(--line);border-radius:6px;overflow:hidden;display:flex}
+.bar .track span{display:block;height:100%}
+.bar small{color:var(--mute)}
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:5px 11px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.danger{color:var(--fail);border-color:var(--fail)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.layout{display:grid;grid-template-columns:270px 1fr;min-height:calc(100vh - 56px)}
+nav{border-right:1px solid var(--line);background:var(--panel);padding:10px 8px;overflow:auto;max-height:calc(100vh - 56px);position:sticky;top:56px}
+nav h3{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);margin:12px 6px 4px}
+nav button{display:flex;gap:7px;align-items:baseline;width:100%;text-align:left;border:0;background:none;padding:4px 6px;border-radius:5px}
+nav button.cur{background:var(--accent);color:var(--accent-ink)}
+nav .st{width:1.2em;text-align:center;font-weight:700}
+main{padding:18px 22px 60px;max-width:980px}
+@media (max-width:820px){.layout{grid-template-columns:1fr}nav{position:static;max-height:260px;border-right:0;border-bottom:1px solid var(--line)}}
+h2{margin:0 0 4px}h3.sec{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);margin:20px 0 6px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:8px 0}
+pre{background:var(--code);color:var(--codeink);border-radius:6px;padding:10px 12px;overflow:auto;margin:0;font:13px/1.45 Consolas,monospace;white-space:pre}
+code{font:13px Consolas,monospace;background:rgba(127,127,127,.18);padding:0 4px;border-radius:3px}
+.cmd{margin:10px 0}.cmd .top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
+.cmd .lab{font-weight:600}.cmd .cwd{color:var(--mute);font-size:13px}
+.warn{background:var(--warn);border:1px solid var(--warnline);border-radius:6px;padding:8px 12px;margin:8px 0}
+.bad{border-color:var(--fail)}.ok{border-color:var(--pass)}
+.pill{display:inline-block;border-radius:12px;padding:1px 10px;font-size:12px;font-weight:700;color:#fff}
+.s-PASS{background:var(--pass)}.s-FAIL{background:var(--fail)}.s-BLOCKED{background:var(--block)}.s-INCONCLUSIVE{background:var(--inc)}.s-NT{background:var(--nt)}
+.c-PASS{color:var(--pass)}.c-FAIL{color:var(--fail)}.c-BLOCKED{color:var(--block)}.c-INCONCLUSIVE{color:var(--inc)}.c-NT{color:var(--nt)}
+.stbtns{display:flex;flex-wrap:wrap;gap:6px}.stbtns button{font-weight:700}
+.stbtns button.on{color:#fff;border-color:transparent}
+label.chk{display:flex;gap:8px;align-items:flex-start;margin:5px 0}
+label.chk input{margin-top:4px}
+.fld{display:grid;grid-template-columns:minmax(180px,1fr) 2fr;gap:6px 12px;align-items:center;margin:6px 0}
+@media (max-width:640px){.fld{grid-template-columns:1fr}}
+input[type=text],select,textarea{font:inherit;width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:5px 8px}
+textarea{min-height:90px;resize:vertical}
+.hint{color:var(--mute);font-size:13px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:30px 12px}
+.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;max-width:860px;width:100%}
+table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top;font-size:14px}
+details{margin:6px 0}summary{cursor:pointer;font-weight:600}
+.toast{position:fixed;right:16px;bottom:16px;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:6px;z-index:30}
+ol,ul{padding-left:22px;margin:6px 0}li{margin:3px 0}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="application/json" id="rx-embedded">{"schema":"rx-v1-live-test","schemaVersion":1,"guideVersion":"1.1.0","guideBaseline":"branch mgo-changes; the exact commit is the Expected baseline set on the Start page","exportedAt":"2026-11-18T12:56:50.336Z","session":{"role":"Revit 2022 machine","revitYear":"2022","extractorBuild":"","pyrevit":"3.11.2","expectedBaseline":"2d39549"},"current":"H8","updatedAt":"2026-11-18T12:41:02.304Z","tests":{"P1":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{"hash":"2d39549","py":"3.11.2","node":"26"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T09:57:27.892Z","completedAt":"2026-11-16T09:57:27.892Z"},"P2":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"samples":"yes"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T09:59:03.210Z","completedAt":"2026-11-16T09:59:03.210Z"},"P3":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"spool":"Automatic","left":"0","revit":"0","build":"2025.3.0.12"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T20:59:06.864Z","completedAt":"2026-11-16T20:59:06.864Z"},"G1":{"status":"INCONCLUSIVE","checks":{"ran":true,"e0":true,"e1":true},"fields":{"pass":"22","fail":"0","skip":"0","exit":"1","err":"NativeCommandError"},"note":"powershell.exe : newest-all-options property GenerateExtendedPropertyDB: expected True, got False\nAt line:1 char:1\n\nvalidate_native_legacy.ps1:234 char:17\n+                 throw \"${label}: expected $expected, got $actual\"","noteApproved":true,"updatedAt":"2026-11-16T23:58:45.294Z","completedAt":null},"G2":{"status":"FAIL","checks":{"ran":true,"e0":true,"e1":true},"fields":{"outcome":"both failed","failn":"4"},"note":"  ExtractorUtility.dll FileVersion: (file not found in this Extractor folder)\n  RevitExtractor.exe ProductVersion: 2026.6.7.22+b1bdf3a3\nRESULT: FAIL (4)\n  - A alone: failed - The Extractor ended with exit code -1073741831. Check console.log, stderr.log, logs and journals in the run folder.\n  - B alone: failed - The Extractor ended with exit code -1073741831. Check console.log, stderr.log, logs and journals in the run folder.\n  - A parallel: failed - The Extractor ended with exit code -1073741831. Check console.log, stderr.log, logs and journals in the run folder.\n  - B parallel: failed - The Extractor ended with exit code -1073741831. Check console.log, stderr.log, logs and journals in the run folder.","noteApproved":true,"updatedAt":"2026-11-16T21:10:12.313Z","completedAt":"2026-11-16T21:10:12.313Z"},"A1":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:10:56.998Z","completedAt":"2026-11-16T21:10:56.998Z"},"A2":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:13:50.993Z","completedAt":"2026-11-16T21:13:50.993Z"},"A3":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:14:19.206Z","completedAt":"2026-11-16T21:14:19.206Z"},"B1":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:14:59.246Z","completedAt":"2026-11-16T21:14:59.246Z"},"B2":{"status":"INCONCLUSIVE","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"By default serach should be limited to file name, but it should be optional to search by folder column as well. Other thing is that Rescan should be moved above Add folder..., I am also not sure about including subfolders is good idea, or it should be easily switched by UI.","noteApproved":true,"updatedAt":"2026-11-16T21:17:28.066Z","completedAt":null},"B3":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:18:06.799Z","completedAt":"2026-11-16T21:18:06.799Z"},"B4":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:19:06.729Z","completedAt":"2026-11-16T21:19:06.729Z"},"B5":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:20:43.404Z","completedAt":"2026-11-16T21:20:43.404Z"},"B6":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:21:05.900Z","completedAt":"2026-11-16T21:21:05.900Z"},"B7":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"dlg":"no"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:21:30.623Z","completedAt":"2026-11-16T21:21:30.623Z"},"C1":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:23:28.172Z","completedAt":"2026-11-16T21:23:28.172Z"},"C2":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:43:49.729Z","completedAt":"2026-11-16T21:43:49.729Z"},"C3":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"mode":"local Analyzer"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:47:37.192Z","completedAt":"2026-11-16T21:46:18.478Z"},"C4":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:52:30.667Z","completedAt":"2026-11-16T21:52:30.667Z"},"C5":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T21:57:10.900Z","completedAt":"2026-11-16T21:57:10.900Z"},"C6":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T22:02:10.431Z","completedAt":"2026-11-16T22:02:10.431Z"},"C7":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T22:03:09.235Z","completedAt":"2026-11-16T22:03:09.235Z"},"C8":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T22:14:29.745Z","completedAt":"2026-11-16T22:14:29.745Z"},"C9":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"left":"0","run1":"NOT STARTED"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T22:18:46.450Z","completedAt":"2026-11-16T22:18:46.450Z"},"C10":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T22:20:39.420Z","completedAt":"2026-11-16T22:20:39.420Z"},"C11":{"status":"INCONCLUSIVE","checks":{"ran":true,"e1":true},"fields":{"unusual":"yes"},"note":"This file is open for editing by another user.\nIf you open the file, you cannot save changes\nuntil the user closes it. In this case, your changes\nwill overwrite the user's changes.","noteApproved":true,"updatedAt":"2026-11-16T22:23:38.537Z","completedAt":null},"C12":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{"mins":"35","left":"0","run1":"OK","run2":"NOT STARTED"},"note":"After opening the Revit and re-running the Export did not show that another export is running until I started another export which I had to cancel. It would be bring back what is running, what was queued obviously will be lost.","noteApproved":true,"updatedAt":"2026-11-16T23:00:51.952Z","completedAt":"2026-11-16T23:00:51.952Z"},"C13":{"status":"INCONCLUSIVE","checks":{"ran":true,"e0":true,"e1":true},"fields":{"left":"0","spool":"Automatic","run1":"NOT STARTED","run2":"no such run"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:02:20.407Z","completedAt":null},"C14":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true,"e4":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:07:56.735Z","completedAt":"2026-11-16T23:07:56.735Z"},"C15":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true,"e4":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:11:50.374Z","completedAt":"2026-11-16T23:11:50.374Z"},"C16":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:12:33.980Z","completedAt":"2026-11-16T23:12:33.980Z"},"C17":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true,"e4":true},"fields":{"unusual":"no"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:15:59.297Z","completedAt":"2026-11-16T23:15:59.297Z"},"D1":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"files":"60","cold":"1","warm":"1"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:20:07.965Z","completedAt":"2026-11-16T23:20:07.965Z"},"D2":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:36:15.401Z","completedAt":"2026-11-16T23:36:15.401Z"},"D3":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true,"e3":true},"fields":{"secs":"1","dlg":"no"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:28:07.251Z","completedAt":"2026-11-16T23:28:07.251Z"},"D4":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"secs":"150"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:34:35.093Z","completedAt":"2026-11-16T23:34:35.093Z"},"D5":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:39:34.168Z","completedAt":"2026-11-16T23:39:34.168Z"},"D6":{"status":"FAIL","checks":{"ran":true,"e0":true,"e1":true},"fields":{"secs":"300"},"note":"{\"StatusReportMsg\":{\"Code\":\"ERROR\",\"ErrorCode\":-1073741831,\"Message\":\"System.AggregateException: One or more errors occurred. (An error occurred trying to start process 'C:\\\\Program Files\\\\Autodesk\\\\Revit 2025\\\\RevitExtractor\\\\RevitExtractor_Client.exe' with working directory 'C:\\\\Program Files\\\\Autodesk\\\\Revit 2025'. The system cannot find the file specified.)\\r\\n ---\u003e System.ComponentModel.Win32Exception (2): An error occurred trying to start process 'C:\\\\Program Files\\\\Autodesk\\\\Revit 2025\\\\RevitExtractor\\\\RevitExtractor_Client.exe' with working directory 'C:\\\\Program Files\\\\Autodesk\\\\Revit 2025'. The system cannot find the file specified.\\r\\n   at System.Diagnostics.Process.StartWithCreateProcess(ProcessStartInfo startInfo)\\r\\n   at System.Diagnostics.Process.Start(ProcessStartInfo startInfo)\\r\\n   at Autodesk.RevitExtractor.IPCWorker.\u003c\u003ec__DisplayClass35_0.\u003cStartClient\u003eb__0()\\r\\n   at System.Threading.Tasks.Task`1.InnerInvoke()\\r\\n   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)\\r\\n--- End of stack trace from previous location ---\\r\\n   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)\\r\\n   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task\u0026 currentTaskSlot, Thread threadPoolThread)\\r\\n   --- End of inner exception stack trace ---\\r\\n   at System.Threading.Tasks.Task.WaitAllCore(Task[] tasks, Int32 millisecondsTimeout, CancellationToken cancellationToken)\\r\\n   at System.Threading.Tasks.Task.WaitAll(Task[] tasks)\\r\\n   at Autodesk.RevitExtractor.IPCWorker.StartClients(WindowsJob windowsJob)\\r\\n   at Autodesk.RevitExtractor.IPCWorker.Run()\\r\\n   at Autodesk.RevitExtractor.RCEClientCommunicator.Run()\",\"StackTrace\":null,\"Progress\":-1,\"FilePath\":null,\"FileProps\":{},\"IsCollecToBDP\":false,\"BDPMessageType\":\"\",\"ClientType\":null}}\n","noteApproved":true,"updatedAt":"2026-11-16T23:51:32.281Z","completedAt":"2026-11-16T23:51:32.281Z"},"D7":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:53:23.422Z","completedAt":"2026-11-16T23:53:23.422Z"},"D8":{"status":"PASS","checks":{"ran":true,"e0":true},"fields":{"read":"yes"},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:55:29.138Z","completedAt":"2026-11-16T23:55:29.138Z"},"E1":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{},"note":"","noteApproved":false,"updatedAt":"2026-11-16T23:55:41.008Z","completedAt":"2026-11-16T23:55:41.008Z"},"F1":{"status":"INCONCLUSIVE","checks":{"ran":true,"e0":true},"fields":{"pass":"22","fail":"0","skip":"0","exit":"1","err":"NativeCommandError"},"note":"powershell.exe : newest-all-options property GenerateExtendedPropertyDB: expected True, got False\nAt line:1 char:1\n+ powershell.exe -NoProfile -ExecutionPolicy Bypass -File\n\nvalidate_native_legacy.ps1:234 char:17\n+                 throw \"${label}: expected $expected, got $actual\"","noteApproved":true,"updatedAt":"2026-11-16T23:57:55.644Z","completedAt":null},"F2":{"status":"FAIL","checks":{"ran":true,"e0":true},"fields":{"exc":"System.AggregateException"},"note":"\"Code\":\"ERROR\",\"ErrorCode\":-1073741831","noteApproved":true,"updatedAt":"2026-11-17T00:03:26.762Z","completedAt":"2026-11-17T00:03:26.762Z"},"F3":{"status":"FAIL","checks":{"ran":true},"fields":{"err":"System.AggregateException"},"note":"\"Code\":\"ERROR\",\"ErrorCode\":-1073741831","noteApproved":true,"updatedAt":"2026-11-17T00:18:00.261Z","completedAt":"2026-11-17T00:09:01.125Z"},"H1":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{"jfolder":"yes","journals":"57","named":"92","unnamed":"47","rows":"2","pl":"no such name","guid":"no","folderkey":"yes"},"note":"","noteApproved":false,"updatedAt":"2026-11-17T16:00:39.280Z","completedAt":"2026-11-17T16:00:39.280Z"},"H2":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"listed":"yes","unread":"0"},"note":"Listing the cloud models for the project is relateviley slow.","noteApproved":true,"updatedAt":"2026-11-17T17:10:08.832Z","completedAt":"2026-11-17T16:10:29.032Z"},"H3":{"status":"INCONCLUSIVE","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{"links":"0","dialog":"yes","changed":"0","open":"no","secs":"60"},"note":"Links found, I did not found this information anywhere.","noteApproved":true,"updatedAt":"2026-11-17T16:18:23.123Z","completedAt":null},"H4":{"status":"INCONCLUSIVE","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{"state":"NOT STARTED","ok":"46","failed":"0","fed":"yes"},"note":"Copy the files took way too long. I think we need to drop copy locally models and open them directly. The smallest model that was used for export from ACC on current project took 37minutes including copy, open and export 23 sheets. For local models we can do it but it has to be done using robocopy. Also I am missing setting up the file name from the export I got Sheet Number - Sheet Name but I'd like to have it as Sheet Number only for example or other custom properties that are available for the sheet/view","noteApproved":true,"updatedAt":"2026-11-17T17:03:40.074Z","completedAt":null},"H5":{"status":"INCONCLUSIVE","checks":{"ran":true,"e0":true},"fields":{"secs":"1200","mb":"4000","freeze":"fully"},"note":"Copy the files took way too long. I think we need to drop copy locally models and open them directly. The smallest model that was used for export from ACC on current project took 37minutes including copy, open and export 23 sheets. For local models we can do it but it has to be done using robocopy. Also I am missing setting up the file name from the export I got Sheet Number - Sheet Name but I'd like to have it as Sheet Number only for example or other custom properties that are available for the sheet/view","noteApproved":true,"updatedAt":"2026-11-17T17:05:16.628Z","completedAt":null},"H6":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true,"e2":true},"fields":{"noncloud":"yes","links":"20","undo":"no","listed":"yes"},"note":"","noteApproved":false,"updatedAt":"2026-11-17T17:10:46.279Z","completedAt":"2026-11-17T17:10:46.279Z"},"H7":{"status":"PASS","checks":{"ran":true,"e0":true,"e1":true},"fields":{"items":"15","stage":"yes","procs":"0","free":"635"},"note":"I am left with backup folders \u003cFilename\u003e_backup","noteApproved":true,"updatedAt":"2026-11-17T17:13:23.003Z","completedAt":"2026-11-17T17:12:51.358Z"},"H8":{"status":"PASS","checks":{"ran":true,"e0":true},"fields":{"exported":"yes","pref":"yes","ro":"0","stagesecs":"3","linked":"19","plain":"0","warn":"no","linksok":"yes","untouched":"yes","left":"19","secs":"960"},"note":"Note that this run was on different ACC project which resulted in different times.","noteApproved":true,"updatedAt":"2026-11-18T12:41:02.304Z","completedAt":"2026-11-18T12:41:02.304Z"}},"summary":{"total":52,"passed":40,"failed":4,"blocked":[],"inconclusive":["G1","B2","C11","C13","F1","H3","H4","H5"],"remaining":["G1","B2","C11","C13","F1","H3","H4","H5"],"completionPercent":85,"nextTest":"G1"}}</script>
+<script>
+'use strict';
+/* RevitExtractor v1 live-test guide. Standalone, offline. No network calls, no external assets.
+   All text from users or imported files is inserted with textContent only (never as HTML). */
+
+var GUIDE = { schema: 'rx-v1-live-test', schemaVersion: 1, version: '1.1.0', date: '2026-11-16',
+  baseline: 'branch mgo-changes; the exact commit is the Expected baseline set on the Start page' };
+var STATUSES = ['NOT TESTED', 'PASS', 'FAIL', 'BLOCKED', 'INCONCLUSIVE'];
+var GLYPH = { 'NOT TESTED': '\u00b7', 'PASS': '\u2713', 'FAIL': '\u2717', 'BLOCKED': '\u2298', 'INCONCLUSIVE': '?' };
+var SCLASS = { 'NOT TESTED': 'NT', 'PASS': 'PASS', 'FAIL': 'FAIL', 'BLOCKED': 'BLOCKED', 'INCONCLUSIVE': 'INCONCLUSIVE' };
+
+/* ---------- PowerShell building blocks (copied from the verified specs/v1-revit-test.md blocks) ---------- */
+var P = {};
+P.repo = String.raw`$repo = $env:RX_REPO   # set once, see test P1
+if (-not $repo -or -not (Test-Path $repo)) { throw 'Set RX_REPO first: see test P1.' }
+Set-Location $repo`;
+P.kit = P.repo + '\n' + String.raw`$kit = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1'
+if (-not (Test-Path $kit)) { throw 'Wrong $repo: v1_test_kit.ps1 not found. Set $repo to the folder that holds pyRevit and specs.' }`;
+P.tests = P.repo + '\n' + String.raw`$tests = Join-Path $repo 'pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests'`;
+P.out = String.raw`$ini = Join-Path $env:APPDATA 'pyRevit\pyRevit_config.ini'   # the output folder the Export window uses
+$out = $null; $inSec = $false
+if (Test-Path $ini) { foreach ($l in Get-Content $ini) { if ($l -match '^\[') { $inSec = ($l.Trim() -eq '[RevitExtractorExport]') } elseif ($inSec -and $l -match '^output_parent\s*=\s*(.+)$') { $out = $Matches[1].Trim().Trim('"') } } }
+if (-not $out) { $out = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RevitExtractor' }
+"Output folder exists: $(Test-Path $out)"   # must print True (the path itself is not printed on purpose)`;
+P.res = String.raw`$res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null   # result files stay on this computer`;
+P.check = function (name) { return P.kit + '\n' + P.out + '\n' + P.res + '\n' + "& $kit -Check $out *>&1 | Tee-Object (Join-Path $res '" + name + ".txt')"; };
+P.counts = function (name) { return String.raw`$t = Get-Content (Join-Path 'C:\RX-test\results' '` + name + String.raw`.txt')
+"PASS lines: " + @($t | Where-Object { $_ -match '^PASS ' }).Count
+"FAIL lines: " + @($t | Where-Object { $_ -match '^FAIL' }).Count
+"SKIP lines: " + @($t | Where-Object { $_ -match '^SKIP ' }).Count`; };
+
+/* ---------- field types: every structured field is pattern-restricted, so it cannot hold free text ---------- */
+var FT = {
+  int:    { re: /^-?\d{0,9}$/, hint: 'whole number' },
+  code:   { re: /^[A-Za-z0-9._-]{0,40}$/, hint: 'letters, digits . _ - only (max 40)' },
+  ver:    { re: /^[0-9][0-9.]{0,19}$|^$/, hint: 'version number such as 2025.3.0.12' },
+  hex:    { re: /^[0-9a-fA-F]{0,40}$/, hint: 'hex commit id' },
+  choice: { re: null, hint: '' }
+};
+var F_ERR = { k: 'err', l: 'Sanitized error category (code, optional)', t: 'code', h: 'e.g. ImportError, none. Never paste a message.' };
+var YN = ['yes', 'no'];
+var RUNSTATE = ['OK', 'FAIL', 'INCOMPLETE', 'NOT STARTED', 'no such run'];
+var SPOOL = ['Automatic', 'Manual', 'Disabled', 'other'];
+var GENERIC_EVIDENCE = 'Status, the ticked checks and the structured values above. Nothing else is needed. Leave the notes empty unless a short, generic remark changes how the result must be read.';
+
+/* ---------- the tests ---------- */
+var PARTS = [
+  { id: 'P', name: 'Prepare (Revit closed)' },
+  { id: 'G', name: 'Scripts (Revit closed)' },
+  { id: 'A', name: 'A. First click' },
+  { id: 'B', name: 'B. Model window' },
+  { id: 'C', name: 'C. Exports with sample models' },
+  { id: 'D', name: 'D. Scale and edge cases' },
+  { id: 'E', name: 'E. Polish' },
+  { id: 'F', name: 'F. Revit 2025 machine' },
+  { id: 'H', name: 'H. Cloud (ACC) models' }
+];
+var SYN = 'Uses only the Autodesk sample models copied by the kit. No client model is needed.';
+var CLOUDRULE = 'Needs a real ACC model, so this is an exception to the synthetic-data rule (like D4) and needs your explicit authorization. Only counts and choices leave the computer, never a model, project or file name, a path or a GUID.';
+var TESTS = [
+{ id: 'P1', part: 'P', title: 'Baseline, tools and pyRevit registration', where: 'PowerShell (Windows PowerShell 5.1) on Computer B, then Revit',
+  purpose: 'Make sure Computer B runs exactly the code version you intend to test, and that the tools the later tests need are present.',
+  prereq: ['A copy of the RevitExtractor repository on Computer B (clone, or an unzipped archive of one commit). It is public code and holds no client data.', 'Windows PowerShell 5.1 (the blue "Windows PowerShell", not PowerShell 7).'],
+  steps: ['Open Windows PowerShell. The starting directory does not matter.', 'Run block 1. A folder picker opens: select the folder that **contains `pyRevit` and `specs`**. The block prints only True or False.',
+    'Run block 2 to move the clone to the expected baseline. If you have no git on this computer, skip it, unzip the archive made on Computer A instead, and enter the commit id from the archive name below.',
+    'Run block 3 and note the versions. Python 3 is needed for the G and F1 tests; Node 24+ is optional (C3, C14).',
+    'In Revit: pyRevit settings, Custom Extension Directories, add `<clone>\\pyRevit` (once per machine; skip if already present). Then **Reload pyRevit**.'],
+  cmds: function () { var sha = S.session.expectedBaseline;
+    return [
+    { t: '1. Tell the later blocks where the clone is (folder picker, once per machine)', cwd: 'any', c: String.raw`Add-Type -AssemblyName System.Windows.Forms
+$d = New-Object System.Windows.Forms.FolderBrowserDialog
+$d.Description = 'Select the folder that contains pyRevit and specs (the RevitExtractor clone)'
+if ($d.ShowDialog() -eq 'OK') {
+  [Environment]::SetEnvironmentVariable('RX_REPO', $d.SelectedPath, 'User')
+  $env:RX_REPO = $d.SelectedPath
+}
+Test-Path (Join-Path $env:RX_REPO 'pyRevit\Extractor.extension')   # must print True` },
+    { t: '2. Move the clone to the expected baseline' + (sha ? ' (' + sha + ')' : ' (NO baseline set on the Start page: this uses the branch tip)'), cwd: 'any (the block changes into the clone)',
+      c: P.repo + '\ngit fetch origin\n' + (sha ? 'git reset --keep ' + sha : 'git reset --keep origin/mgo-changes   # set the expected baseline on the Start page to pin a commit') + '\ngit rev-parse --short HEAD   # record this value below' },
+    { t: '3. Tool versions', cwd: 'any', c: "$PSVersionTable.PSVersion.ToString()   # expect 5.1.x\npython --version\nnode --version   # optional; v24 or higher" }]; },
+  expect: ['Block 1 printed True.', 'Block 2 printed a short commit id equal to the expected baseline (the page below compares it for you).', 'Block 3: PowerShell version starts with 5.1, and python printed a 3.x version.'],
+  fields: [{ k: 'hash', l: 'Commit id printed by block 2 (hex)', t: 'hex' }, { k: 'py', l: 'Python version', t: 'ver' }, { k: 'node', l: 'Node major version (blank if none)', t: 'int' }],
+  extra: 'baseline',
+  evidence: 'The commit id and the version numbers. Nothing else.',
+  trouble: ['Block 1 printed False: you selected the wrong folder. Run it again and choose the folder that contains both `pyRevit` and `specs`.', '`git reset --keep` refuses: you edited tracked files. Do not use `--hard`; ask for help or move the edits away first.', 'No git, or no access to the fork: use the zip made on Computer A (see Start page, workflow) and set `RX_REPO` through block 1 on the unzipped folder.', 'Never run `git pull` on the Revit computer (project rule).'] },
+
+{ id: 'P2', part: 'P', title: 'Build the synthetic sample folder', where: 'PowerShell on Computer B',
+  purpose: 'Create `C:\\RX-test`, a folder of copies of Autodesk sample models plus edge-case names (spaces, Polish letters, `&`, `%`, backup files, a fake model). It makes every later test possible without any client model.',
+  prereq: ['P1 passed.', 'Autodesk sample models under `C:\\ProgramData\\Autodesk\\RVT <year>\\` (installed with Revit), about 100 MB free disk.', SYN],
+  steps: ['Run the block. The kit only **copies** files; it never opens or changes the source models.', 'Look at the listing printed by the second command.', 'Optional, for B6 and D6: add `-Newer` / `-Older` models. Easiest synthetic source: on a Revit 2025 machine a sample from the 2025 folder is "newer" for a 2022 machine; a 2022 sample is "older" for the 2025 machine. Build again with `-Force` (removes only a folder this kit made).'],
+  cmds: function () { return [
+    { t: 'Build C:\\RX-test', cwd: 'any', c: P.kit + '\n& $kit -Setup' },
+    { t: 'List what was created (names only)', cwd: 'any', c: "Get-ChildItem 'C:\\RX-test' | Select-Object Name, Length" },
+    { t: 'Optional: rebuild with a newer and an older model (two file pickers; -Force deletes C:\\RX-test including results, so skip it if you already have results there)', cwd: 'any',
+      c: P.kit + String.raw`
+Add-Type -AssemblyName System.Windows.Forms
+function Pick($title) { $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = $title; $d.Filter = 'Revit models (*.rvt)|*.rvt'; if ($d.ShowDialog() -eq 'OK') { $d.FileName } }
+$new = Pick 'Select a model saved in a NEWER Revit than the one you test with'
+$old = Pick 'Select a model saved in an OLDER Revit than the one you test with'
+if (-not $new -or -not $old) { throw 'Both models are needed. Otherwise mark B6 and D6 BLOCKED.' }
+& $kit -Setup -Force -Newer $new -Older $old` }]; },
+  expect: ['The kit finished without an error.', 'C:\\RX-test holds the folders Samples, Backup, a folder with spaces, a folder with Polish letters, `Tower.2024.rvt` and `Not a model.rvt`.'],
+  fields: [{ k: 'samples', l: 'Two sample models found automatically', t: 'choice', o: YN }],
+  evidence: 'Whether the two samples were found. Not the folder listing.',
+  trouble: ['"No sample models found": pass `-SampleA` and `-SampleB` with two small **non-confidential** .rvt files. A synthetic option: in Revit create a new empty project from a template, save it twice under different names.', 'Folder already exists: add `-Force` (only works for a folder this kit made).', 'Script refused as "not digitally signed": run `Get-ChildItem -Recurse "$env:RX_REPO\\pyRevit" -Filter *.ps1 | Unblock-File` once. Do not change the execution policy.'] },
+
+{ id: 'P3', part: 'P', title: 'The "before" machine check (S1)', where: 'PowerShell on Computer B',
+  purpose: 'Record the starting state of the machine (Print Spooler, leftover Extractor processes, Extractor build). Later tests compare against it.',
+  prereq: ['P2 done.', 'Revit not running (close it so the counts are clean).'],
+  steps: ['Run the block. Its output holds only counts, sizes and state words; no path or model name.', 'Copy the values into the fields below.'],
+  cmds: function () { return [{ t: 'Machine check', cwd: 'any', c: P.kit + '\n' + P.res + '\n' + "& $kit -Check *>&1 | Tee-Object (Join-Path $res 'S1.txt')" }]; },
+  expectText: '== Machine / Komputer\nPrint Spooler: StartType=Automatic, Status=Running\nRevitExtractor processes left / procesy RevitExtractor: 0\nRevit.exe processes / procesy Revit.exe: 0\nRevit 2022: Extractor 2025.3.0.12',
+  expectNote: 'Observed shape in the owner\'s earlier run (2026-11-12). The StartType value, the Revit year and the build number vary by machine.',
+  expect: ['Print Spooler line is present.', 'RevitExtractor processes left is 0.'],
+  fields: [{ k: 'spool', l: 'Print Spooler StartType', t: 'choice', o: SPOOL }, { k: 'left', l: 'RevitExtractor processes left', t: 'int' }, { k: 'revit', l: 'Revit.exe processes', t: 'int' }, { k: 'build', l: 'Extractor build (version)', t: 'ver' }],
+  evidence: 'The four values. Do not send S1.txt.',
+  trouble: ['Leftover RevitExtractor processes: close Revit and wait a few minutes; they end by themselves. Do not kill them by name.', 'No "Extractor" line: that Revit year has no RevitExtractor installed; use a year that has.'] },
+
+{ id: 'G1', part: 'G', title: 'Native Extractor parser check', where: 'PowerShell on Computer B (Revit closed)',
+  purpose: 'Check that the index files the button writes are accepted by the Extractor that is installed on this computer. This is a script test; it does not run Revit.',
+  prereq: ['P1 passed, Python 3 on PATH.', 'Revit closed. An installed Revit 2022-2025 Extractor (found automatically).'],
+  steps: ['Run block 1 (it can take a minute).', 'Run block 2: it prints three numbers computed from the saved output, so you do not read or copy the raw output.', 'If it found no Extractor or the wrong one, add `-ExtractorDirectory \'C:\\Program Files\\Autodesk\\Revit 2025\\RevitExtractor\'` to the command.'],
+  cmds: function () { return [
+    { t: '1. Run the check', cwd: 'any', c: P.tests + '\n' + P.res + '\n' + "powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tests 'validate_native_legacy.ps1') *>&1 | Tee-Object (Join-Path $res 'G1.txt')\n$LASTEXITCODE" },
+    { t: '2. Count the result lines (no paths printed)', cwd: 'any', c: P.counts('G1') }]; },
+  expect: ['The nine legacy profile lines start with `PASS` and none starts with `FAIL`.', 'Lines about the newest Revit row are either `PASS` or `SKIP` (a SKIP means this Extractor cannot prove it; that is not a failure).'],
+  fields: [{ k: 'pass', l: 'PASS lines', t: 'int' }, { k: 'fail', l: 'FAIL lines', t: 'int' }, { k: 'skip', l: 'SKIP lines', t: 'int' }, { k: 'exit', l: 'Exit code printed by block 1', t: 'int' }],
+  evidence: 'The three counts and the exit code. Do not paste the output (its first line names an install path).',
+  prior: 'Earlier result (2026-11-12, Revit 2025 machine): a newest-row case about GenerateExtendedPropertyDB failed. How to treat it is still undecided, so FAIL lines on that case are a known open point; say so in the notes only as the error category.',
+  trouble: ['"python not found": install Python 3 (Company Portal) or pass `-Python <path>`.', 'Script blocked as downloaded: `Unblock-File` (see P2).'] },
+
+{ id: 'G2', part: 'G', title: 'Parallel extractor runs (expected to fail)', where: 'PowerShell on Computer B (Revit closed)',
+  purpose: 'Confirm that two Extractors at the same time do not work on this build (they share a fixed pipe). The button therefore runs exports one at a time. A FAIL here is the expected, informative result.',
+  prereq: ['P2 done (two samples in `C:\\RX-test\\Samples`), Python 3, Revit closed, nothing else exporting.', 'It starts real Extractor processes on **copies** of the two samples and takes minutes.'],
+  steps: ['Run block 1. The output names your Windows user folder (private): do not copy it.', 'Run block 2 for the numbers. Then read only the results table (columns Label, State, ExitCode, Seconds) on screen and fill the fields.'],
+  cmds: function () { return [
+    { t: '1. Parallel run', cwd: 'any', c: P.tests + '\n' + P.res + "\n# the two samples (not the .0001.rvt backup), smallest first\n$samples = Get-ChildItem 'C:\\RX-test\\Samples' -Filter *.rvt | Where-Object { $_.Name -notmatch '\\.\\d{4}\\.rvt$' } | Sort-Object Length\n$samples | Select-Object Name, Length   # must list exactly two files\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tests 'run_extractor_integration.ps1') -Parallel 2 -ModelPath $samples[0].FullName -ModelPath2 $samples[1].FullName *>&1 | Tee-Object (Join-Path $res 'G2.txt')" },
+    { t: '2. Count FAIL lines (no paths printed)', cwd: 'any', c: String.raw`"FAIL lines: " + @(Get-Content 'C:\RX-test\results\G2.txt' | Where-Object { $_ -match '^FAIL' }).Count` }]; },
+  expect: ['The script ended (it printed its final "Total time" line).', 'Record what happened: either one run failed (expected with this build) or both succeeded (a new finding).'],
+  fields: [{ k: 'outcome', l: 'Parallel outcome', t: 'choice', o: ['one run failed', 'both failed', 'both succeeded', 'script error'] }, { k: 'failn', l: 'FAIL lines', t: 'int' }, { k: 'spool', l: 'Print Spooler StartType afterwards', t: 'choice', o: SPOOL }],
+  evidence: 'The outcome, the FAIL count and the spooler value. Never the output file.',
+  prior: 'Earlier result: details were recorded privately by the owner on 2026-11-12; a re-run is needed for the new build.',
+  trouble: ['Leftover RevitExtractor processes afterwards: wait a few minutes; do not kill by name.', 'Exactly two files must be listed, else rebuild with P2.'] },
+
+{ id: 'A1', part: 'A', title: 'Export button on the ribbon', where: 'Revit (pyRevit)',
+  purpose: 'The button exists, is enabled with no model open, and is greyed while a model is open.',
+  prereq: ['P1 done, pyRevit reloaded.', 'Revit started **with no model open**.'],
+  steps: ['Look at the ribbon: tab **RevitExtractor**, panel **Setup**, button **Export**.', 'Open sample model A from `C:\\RX-test\\Samples` (open only; never save).', 'Check the button is greyed. Close the model (do not save).', 'Check the button is enabled again.'],
+  expect: ['Export is on the ribbon and enabled with no model open.', 'It is greyed while a model is open.', 'It is enabled again after closing the model.'],
+  fields: [], prior: 'Passed on the older build (owner, 2026-11-12).', evidence: GENERIC_EVIDENCE,
+  trouble: ['No tab: pyRevit did not load the extension. Recheck P1 step 4 and Reload.', 'Button greyed with no model open: a family/project doc is still open; close all documents.'] },
+{ id: 'A2', part: 'A', title: 'The window opens (first click)', where: 'Revit (pyRevit)',
+  purpose: 'The first real run of the code in IronPython. An import error would show here.',
+  prereq: ['A1 passed.'],
+  steps: ['With no model open click **Export**.', 'Watch for the pyRevit output window.'],
+  expect: ['The Export window opened.', 'pyRevit\'s output window shows no error.'],
+  fields: [{ k: 'exc', l: 'If it failed: exception type name only (e.g. ImportError)', t: 'code' }],
+  changed: 'Changed since the last run: a .NET 8 helper for Revit 2025+, and the window now stays open after Export. Retest here and on the Revit 2025 machine.',
+  prior: 'Passed on Revit 2022 with the older build. Failed on Revit 2025 (ImportError on FileVersionInfo); fixed in the working tree, unverified.', evidence: 'Status and, on failure, the exception type name only. The output window text can contain paths: do not copy it.',
+  trouble: ['Failure: look in pyRevit\'s output window for the last line. Record **only** the exception class (ImportError, TypeError...). If a missing module name is shown, note it as a code in the field above.', 'Work through the failure locally if needed; send only the category.'] },
+{ id: 'A3', part: 'A', title: 'The old "Export setup" button still works', where: 'Revit (pyRevit)',
+  purpose: 'The new button must not break the old one.', prereq: ['A2 passed.'],
+  steps: ['Click the old **Export setup** button.', 'Let it search, then close it.'],
+  expect: ['The old window opened and searched as before.', 'It closed without error.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+
+{ id: 'B1', part: 'B', title: 'Add folder and list models', where: 'Revit (Export window)',
+  purpose: 'Folder scan lists models and skips backups.', prereq: ['P2 done. Export window open (A2).'], steps: ['Click **Add folder\u2026** and choose `C:\\RX-test`.', 'Wait for the rows to appear.'],
+  expect: ['Rows appeared.', 'The model inside `Backup` and the `.0001.rvt` file are NOT listed.', '`Tower.2024` is listed.', 'The model in the folder with Polish letters, `&` and `%` is listed.'],
+  fields: [{ k: 'rows', l: 'Number of rows listed', t: 'int' }], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: ['Empty list: check P2 built the folder; use Rescan.'] },
+{ id: 'B2', part: 'B', title: 'Window stays responsive while scanning', where: 'Revit (Export window)', purpose: 'The scan must not freeze Revit.', prereq: ['B1.'],
+  steps: ['Remove and add the folder again (or Rescan).', 'While rows appear, drag the window and type in the search box.'],
+  expect: ['The window could be moved while rows appeared.', 'The search box accepted text.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'B3', part: 'B', title: 'Unreadable file is greyed', where: 'Revit (Export window)', purpose: 'A text file named .rvt must not be selectable.', prereq: ['B1.'],
+  steps: ['Find `Not a model.rvt`.', 'Hover over it and try to tick it.'],
+  expect: ['The row is greyed.', 'It cannot be ticked.', 'A tooltip explains why.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'B4', part: 'B', title: 'Search, filters, Select all shown', where: 'Revit (Export window)', purpose: 'List controls behave like the old window.', prereq: ['B1.'],
+  steps: ['Type words in any order in the search box.', 'Use the \u25be filters on the Folder and Revit version headers.', 'Click **Select all shown**, then press Space on a row.'],
+  expect: ['Search narrows the list.', 'Filters narrow the list.', 'Select all shown ticks shown rows but not greyed rows.', 'Space toggles a row.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'B5', part: 'B', title: 'Settings and cache are remembered', where: 'Revit + PowerShell', purpose: 'Folder and output folder persist; the list loads faster the second time.', prereq: ['B1.'],
+  steps: ['Close the window and open it again.', 'Run the command below.'],
+  cmds: function () { return [{ t: 'Cache file exists', cwd: 'any', c: String.raw`Test-Path "$env:APPDATA\RevitExtractor\catalog-cache.json"   # must print True` }]; },
+  expect: ['The folder and the output folder were remembered.', 'The list filled faster than the first time.', 'The command printed True.'], fields: [], prior: 'Passed on the older build.',
+  evidence: GENERIC_EVIDENCE + ' The cache file holds model paths: never open or send it.', trouble: [] },
+{ id: 'B6', part: 'B', title: 'Newer and older Revit versions (optional)', where: 'Revit (Export window)', purpose: 'A model saved in a newer Revit is blocked; an older one is allowed with a note.',
+  prereq: ['P2 built with `-Newer` and `-Older` samples. If you have none, set BLOCKED with the reason "no newer/older sample".'],
+  steps: ['Add `C:\\RX-test` and find the `Newer` and `Older` models.'], expect: ['The newer model is greyed, cannot be ticked, and has a tooltip.', 'The older model can be ticked and shows the upgrade note.'],
+  fields: [{ k: 'tip', l: 'Newer tooltip shows', t: 'choice', o: ['a year', 'could not be read', 'other'] }], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'B7', part: 'B', title: 'No dialogs during the scan', where: 'Revit (Export window)', purpose: 'The background read (BasicFileInfo.Extract) must not trigger dialogs.', prereq: ['B1.'],
+  steps: ['Repeat the scan and watch Revit for any dialog or refusal.'], expect: ['No dialog appeared.', 'Revit never refused the read.'], fields: [{ k: 'dlg', l: 'Dialog appeared', t: 'choice', o: YN }], prior: 'Passed on the older build (no dialog).', evidence: GENERIC_EVIDENCE, trouble: [] },
+
+{ id: 'C1', part: 'C', title: 'First export; the window stays open', where: 'Revit (Export + status windows)', purpose: 'One export starts; the model window stays open for more.',
+  prereq: ['B1 done.'], steps: ['Tick sample A, default scope, click **Export**.', 'Look at the model window and the status window.'],
+  expect: ['The model window stayed open.', 'A short line says how many exports were queued.', 'The ticks were cleared.', 'The status window shows the row, the time running and the finished steps.'],
+  fields: [], changed: 'Changed since the last run: the model window used to close after Export.', prior: 'Passed on the older build (old behaviour).', evidence: GENERIC_EVIDENCE, trouble: ['Status window not visible: it may be behind Revit; check the taskbar.'] },
+{ id: 'C2', part: 'C', title: 'Result and output folder', where: 'Revit', purpose: 'The export finishes and writes the expected folders.',
+  prereq: ['C1. Click **Close** on the model window first (the status window takes clicks only then).'], steps: ['Wait for Done.', 'Select the row and click **Open output folder**.'],
+  expect: ['The result is Done.', 'The folder opened is `export-<date>-<id>\\output`.', 'The run folder contains `index.json`, `output\\`, `logs\\`, `journals\\`, `console.log`.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C3', part: 'C', title: 'Open in Analyzer', where: 'Revit', purpose: 'The finished export opens in the local Analyzer (Node.js) or in the website fallback.', prereq: ['C2. Node.js 24+ is optional.'],
+  steps: ['Select the finished row, click **Open in Analyzer**.'], expect: ['The model showed in the browser (local Analyzer), or the folder and website opened (fallback).', 'With the local Analyzer a console window appeared; closing it stops the server.'],
+  fields: [{ k: 'mode', l: 'Which one did you test', t: 'choice', o: ['local Analyzer', 'website fallback'] }], prior: 'Passed; first run needed manual npm ci (resolved).', evidence: GENERIC_EVIDENCE, trouble: ['npm certificate error: see C14; `Start-Analyzer.cmd` already trusts the Windows certificate store. Do not disable strict-ssl.'] },
+{ id: 'C4', part: 'C', title: 'Choose views', where: 'Revit', purpose: 'Only the views you pick are exported.', prereq: ['B1.'], steps: ['Tick sample A, click **Choose views\u2026**.', 'Tick two 2D views and one 3D view, click Export.', 'After it finishes, check what the result contains.'],
+  expect: ['Views were listed.', 'Only the three chosen views are in the result.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C5', part: 'C', title: 'Save index.json and Back', where: 'Revit', purpose: 'The view window can save an index and go back.', prereq: ['C4.'], steps: ['In the view window click **Save index.json\u2026** and save into `C:\\RX-test`.', 'Click **Back**.'],
+  expect: ['A file was written.', 'Back returned to the model list with its ticks.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C6', part: 'C', title: 'Three models in a row, with Revit in use', where: 'Revit', purpose: 'Queue runs one after another and does not disturb Revit.', prereq: ['B1.'],
+  steps: ['Tick three models (include the one in the folder with Polish letters, `&` and `%`), click Export, then **Close** the model window.', 'While they run: open a model in Revit (button is greyed, status window still updates).', 'Click X on the status window (it minimises; restore it from the taskbar).', 'Click the old "Export setup" button and close it.'],
+  expect: ['The exports ran one after another.', 'The Export button was greyed while a model was open and the status window kept updating.', 'X minimised the status window and it could be restored.', 'The status window kept updating after the old button was used.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C7', part: 'C', title: 'Reload while exporting keeps one status window', where: 'Revit', purpose: 'The queue survives a pyRevit reload.', prereq: ['C6 still running.'],
+  steps: ['Close the model, run pyRevit **Reload**, click Export.', 'Add one more export.'], expect: ['The same status window with the same rows is shown (no second window).', 'The added export waits behind the others.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C8', part: 'C', title: 'Cancel a waiting row', where: 'Revit', purpose: 'A waiting export can be cancelled before it creates anything.', prereq: ['At least one waiting row. Model window closed.'],
+  steps: ['Select a waiting row and click **Cancel export**.'], expect: ['It never started.', 'No folder was created for it.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C9', part: 'C', title: 'Cancel the running row, then check', where: 'Revit + PowerShell', purpose: 'Cancelling kills the whole Extractor tree and leaves no stray process.', prereq: ['A running row. Model window closed.'],
+  steps: ['Select the running row, click **Cancel export**.', 'Run the check block.'],
+  cmds: function () { return [{ t: 'Check', cwd: 'any', c: P.check('C9') }]; },
+  expectText: 'RevitExtractor processes left / procesy RevitExtractor: 0\n== Runs / Eksporty: 1\nrun 1: NOT STARTED   (or INCOMPLETE)',
+  expectNote: 'Observed in the owner\'s earlier run. NOT STARTED means it was cancelled before the Extractor created its folders; INCOMPLETE is also correct.',
+  expect: ['No RevitExtractor process is left.', 'The cancelled run is INCOMPLETE or NOT STARTED.'],
+  fields: [{ k: 'left', l: 'RevitExtractor processes left', t: 'int' }, { k: 'run1', l: 'State of the cancelled run', t: 'choice', o: RUNSTATE }], prior: 'Passed on the older build.', evidence: 'The process count and the run state word. Do not send C9.txt.', trouble: ['Processes left: wait two minutes and repeat; record the second value.'] },
+{ id: 'C10', part: 'C', title: 'Shared index.json with views is refused for several models', where: 'Revit', purpose: 'View ids belong to one model, so a shared index with views must not be used for a batch.', prereq: ['The index.json saved in C5 (with views ticked).'],
+  steps: ['Choose the saved file as **Shared index.json** with two models ticked and click Export.', 'Repeat with one model ticked.'],
+  expect: ['With two models: refused with a clear message (it says view ids belong to one model).', 'With one model: it ran.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C11', part: 'C', title: 'Open the model that is being exported', where: 'Revit', purpose: 'Opening a model during its own export must not break either.', prereq: ['A running export of a sample copy.'],
+  steps: ['While an export runs, open **the same sample model** in Revit (open only; close without saving).'], expect: ['Nothing unusual happened.', 'The export still finished.'], fields: [{ k: 'unusual', l: 'Anything unusual', t: 'choice', o: ['no', 'yes'] }], prior: 'Passed on the older build (tested on detached and central models).', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C12', part: 'C', title: 'Close Revit during an export', where: 'Revit + PowerShell', purpose: 'Extractor processes keep going by design when Revit closes; the next session waits for them; the second queued run is not started.',
+  prereq: ['P3 values noted.', 'Two exports queued, first running.'],
+  steps: ['Close Revit (File, Exit) while the first export runs.', 'Check in Task Manager that no `Revit.exe` is left. Extractor processes and `RevitAccelerator.exe` may stay for a while.', 'Start Revit again and note whether it says "Waiting: another Extractor is running" (then close it and keep waiting).', 'Wait until the Extractor processes are gone (note how many minutes), then run the check block.'],
+  cmds: function () { return [{ t: 'Revit processes (prints nothing when Revit has exited)', cwd: 'any', c: 'Get-Process Revit -ErrorAction SilentlyContinue' }, { t: 'Check', cwd: 'any', c: P.check('C12') }]; },
+  expect: ['Revit exited fully.', 'Extractor processes ended by themselves.', 'First run OK, second run NOT STARTED.'],
+  fields: [{ k: 'mins', l: 'Minutes until the Extractor processes ended', t: 'int' }, { k: 'left', l: 'RevitExtractor processes left at the end', t: 'int' }, { k: 'run1', l: 'First run state', t: 'choice', o: RUNSTATE }, { k: 'run2', l: 'Second run state', t: 'choice', o: RUNSTATE }],
+  prior: 'Partial (2026-11-12): Revit exited; RevitExtractor and workers stayed; duration and final state were not recorded. Please record them now.', evidence: 'The four values. Do not send C12.txt.', trouble: ['If processes stay for more than 30 minutes, record the minutes and set INCONCLUSIVE.'] },
+{ id: 'C13', part: 'C', title: 'After the processes ended: final check', where: 'PowerShell', purpose: 'Read the runs once more with nothing running. No exports in this test.',
+  prereq: ['No `RevitExtractor.exe`, `RevitExtractor Client.exe` or `RevitWorker.exe` running (ignore `RevitAccelerator.exe`).'], steps: ['Run the check block.', 'Compare the Print Spooler StartType with the value from P3.'],
+  cmds: function () { return [{ t: 'Check', cwd: 'any', c: P.check('C13') }]; },
+  expect: ['RevitExtractor processes left is 0.', 'The Print Spooler StartType equals the value recorded in P3.'],
+  fields: [{ k: 'left', l: 'RevitExtractor processes left', t: 'int' }, { k: 'spool', l: 'Print Spooler StartType now', t: 'choice', o: SPOOL }, { k: 'run1', l: 'First run state', t: 'choice', o: RUNSTATE }, { k: 'run2', l: 'Second run state', t: 'choice', o: RUNSTATE }],
+  prior: 'Not completed yet on the older build.', evidence: 'The four values.', trouble: [] },
+{ id: 'C14', part: 'C', title: 'The Node.js notice', where: 'Revit + PowerShell', purpose: 'Without the Analyzer packages the button explains why and falls back to the website; the first-run installer recovers.',
+  prereq: ['A finished export row (C2). **This test renames `Analyzer\\node_modules` inside the clone and deletes your own `preferences.json`.** Both are restored by the steps.'],
+  steps: ['Run block 1 (hide the packages), then click **Open in Analyzer**: the notice shows the reason, the folder and the website open. Tick "Don\'t show this again", OK, click again: no notice.', 'Run block 2 (switch the preference off) and repeat once to see the notice again.', 'Run block 3: it reinstalls the packages (Internet needed) and starts the server. Close its window to stop it.', 'Run block 4, then click Open in Analyzer: the local Analyzer opens with no notice.'],
+  cmds: function () { return [
+    { t: '1. Hide the Analyzer packages', cwd: 'any', c: String.raw`$repo = $env:RX_REPO
+if (-not $repo -or -not (Test-Path $repo)) { throw 'Set RX_REPO first: see test P1.' }
+Rename-Item (Join-Path $repo 'Analyzer\node_modules') 'node_modules.off'` },
+    { t: '2. Switch the "don\'t show again" flag off', cwd: 'any', c: String.raw`Remove-Item "$env:APPDATA\RevitExtractor\preferences.json" -ErrorAction SilentlyContinue` },
+    { t: '3. First-run installer', cwd: 'any', c: String.raw`$repo = $env:RX_REPO
+if (-not $repo -or -not (Test-Path $repo)) { throw 'Set RX_REPO first: see test P1.' }
+Remove-Item -Recurse -Force (Join-Path $repo 'Analyzer\node_modules.off') -ErrorAction SilentlyContinue
+& (Join-Path $repo 'Analyzer\Start-Analyzer.cmd')` },
+    { t: '4. Packages are back', cwd: 'any', c: String.raw`Test-Path (Join-Path $env:RX_REPO 'Analyzer\node_modules\pdfjs-dist\build\pdf.mjs')   # must print True` }]; },
+  expect: ['The notice appeared with the reason and the website opened.', '"Don\'t show this again" stopped the notice.', 'The text reads well in English.', 'Block 3 reinstalled the packages and block 4 printed True.', 'Afterwards the local Analyzer opened with no notice.'],
+  fields: [], prior: 'Passed on the older build (owner, 2026-11-12).', evidence: GENERIC_EVIDENCE, trouble: ['npm certificate error: ask IT for the company root certificate and run `npm config set cafile "<path to root.pem>"`. Do not turn off strict-ssl.', 'Needs Node.js 24+ and Internet for block 3.'] },
+{ id: 'C15', part: 'C', title: 'Row context menu', where: 'Revit + PowerShell', purpose: 'Right-click actions open the right Explorer locations and handle missing files.',
+  prereq: ['A status window with at least two rows (one waiting or not started, one running or finished). Close the model window first.', '**This test renames sample files and a folder in `C:\\RX-test`. Run the restore block at the end.**'],
+  steps: ['Right-click a row that is not highlighted: it is highlighted, and the menu shows "Show model in File Explorer" and "Show export folder in File Explorer".', 'Right-click empty space below the rows: no menu.', '"Show model" opens Explorer with the model selected, also for the Polish-letters folder.', 'Run block 1 (rename the model file): "Show model" now opens its folder. Run block 2 (rename the folder): the error line says the file and folder were not found.', '"Show export folder" opens the same folder as Open output folder; it is greyed on a queued row or one cancelled before start.', 'Run the restore block.'],
+  cmds: function () { return [
+    { t: '1. Rename the model file of a listed row (edit nothing; takes the smaller sample)', cwd: 'any', c: String.raw`$model = (Get-ChildItem 'C:\RX-test\Samples' -Filter *.rvt | Where-Object { $_.Name -notmatch '\.\d{4}\.rvt$' } | Sort-Object Length | Select-Object -First 1).FullName
+Test-Path $model                                          # check True, and that this is the model of your row
+Rename-Item $model ((Split-Path $model -Leaf) + '.off')   # file missing: "Show model" must open its folder` },
+    { t: '2. Rename the folder too', cwd: 'any', c: String.raw`Rename-Item 'C:\RX-test\Samples' 'Samples.off'    # folder missing too: the error line must say file and folder were not found` },
+    { t: 'Restore everything (always run this at the end)', cwd: 'any', c: String.raw`if (Test-Path 'C:\RX-test\Samples.off') { Rename-Item 'C:\RX-test\Samples.off' 'Samples' }
+Get-ChildItem 'C:\RX-test\Samples' -Filter *.off | ForEach-Object { Rename-Item $_.FullName ($_.Name -replace '\.off$','') }
+Get-ChildItem 'C:\RX-test\Samples' | Select-Object Name   # the sample names are back to .rvt` }]; },
+  expect: ['The menu appears only on rows and shows both items.', '"Show model" selects the file in Explorer (Polish-letters folder included).', 'File missing: the folder opened. File and folder missing: the error line said so.', '"Show export folder" opened the right folder and is greyed where it should be.', 'Everything was restored.'],
+  fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: ['Restore block errors: list `C:\\RX-test` in Explorer and rename `Samples.off` / `*.rvt.off` by hand.'] },
+{ id: 'C16', part: 'C', title: 'Clear finished', where: 'Revit', purpose: 'Only finished, failed and cancelled rows are removed from the list.', prereq: ['Rows in several states: finished, failed or cancelled, running, waiting. Model window closed.'],
+  steps: ['Click **Clear finished**.', 'With only running or waiting rows, look at the button.'], expect: ['Only finished, failed and cancelled rows were removed; running and waiting rows stayed, in order, and kept updating.', 'With only running or waiting rows the button is greyed.', 'Output folders of removed rows are still on disk and nothing was cancelled.', 'A new export appeared as a new row.'], fields: [], prior: 'Passed on the older build.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'C17', part: 'C', title: 'Queue more from the still-open window', where: 'Revit', purpose: 'The new behaviour: the model window stays open and queues more exports.', prereq: ['B1 done.'],
+  steps: ['Tick sample A, Export; do not close the model window.', 'While it runs tick sample B (or A again) and Export again.', 'Choose views\u2026 on one model and Export from the view window.', 'Click **Close**: nothing more is queued and the status window takes clicks again (Cancel export, Clear finished).', 'Optional: provoke a failed hand-over (pyRevit **Reload** between two Exports).'],
+  expect: ['The second row appeared behind the first and started when the first ended.', 'After each Export the ticks cleared and a line said how many were queued; folders, output folder and search stayed.', 'Export from the view window closed the view window, kept the model window open and added a third row.', 'After Close, nothing more was queued and the status window took clicks.', 'After a failed hand-over (if provoked) a red error line showed the reason, the ticks stayed, and a second Export retried.'],
+  fields: [{ k: 'unusual', l: 'Anything unusual', t: 'choice', o: ['no', 'yes'] }], changed: 'New behaviour since the last run; nothing about it has been seen in Revit yet.', prior: 'Not tested.', evidence: GENERIC_EVIDENCE, trouble: [] },
+
+{ id: 'D1', part: 'D', title: 'Many models: scan time', where: 'Revit + PowerShell', purpose: 'Many models must list without freezing. A synthetic folder of 50 copies replaces a real network share.',
+  prereq: ['P2 done, about 50 x (sample size) free disk (check below).', 'Optional production variant: a real share, **only if you are allowed**; read-only; record numbers only.'],
+  steps: ['Run the block to make `C:\\RX-test\\Many`.', 'In the Export window add that folder; time until the list is complete (cold), then Rescan and time again (warm).', 'Check the window stays responsive.'],
+  cmds: function () { return [{ t: 'Make 50 synthetic copies (disk check first)', cwd: 'any', c: String.raw`$src = Get-ChildItem 'C:\RX-test\Samples' -Filter *.rvt | Where-Object { $_.Name -notmatch '\.\d{4}\.rvt$' } | Sort-Object Length | Select-Object -First 1
+$need = [math]::Round($src.Length * 50 / 1MB); "Needs about $need MB"
+$dst = 'C:\RX-test\Many'; New-Item -ItemType Directory -Force $dst | Out-Null
+1..50 | ForEach-Object { Copy-Item -LiteralPath $src.FullName -Destination (Join-Path $dst ('Synthetic-{0:D3}.rvt' -f $_)) }
+@(Get-ChildItem $dst -Filter *.rvt).Count   # must print 50` }]; },
+  expect: ['50 files were listed.', 'The window stayed responsive.'], fields: [{ k: 'files', l: 'Files listed', t: 'int' }, { k: 'cold', l: 'Seconds until complete, cold', t: 'int' }, { k: 'warm', l: 'Seconds after Rescan, warm', t: 'int' }],
+  prior: 'Passed with a real share (owner, 2026-11-12); not repeated synthetically.', evidence: 'File count and the two timings.', trouble: ['Low disk space: lower 50 to 20 and the expected count accordingly.'] },
+{ id: 'D2', part: 'D', title: 'Backups and local copies are skipped', where: 'Revit', purpose: 'Backup files, Backup folders and local copies of centrals are not listed.', prereq: ['P2 done.'],
+  steps: ['Add `C:\\RX-test`. Compare with the folders: Backup, `.0001.rvt`. For a local copy of a central, use the one made in D3 (a `<name>_<username>.rvt` file) if you did D3.'],
+  expect: ['No backup files and no `Backup` folder content are listed.', 'No local copies of centrals are listed (mark N/A in notes only if D3 was not done).'], fields: [], prior: 'Passed with a real share.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'D3', part: 'D', title: 'Choose views on a synthetic workshared central', where: 'Revit + PowerShell', purpose: 'Reading views of a central must be detached, read-only and leave the file untouched.',
+  prereq: ['P2 done.', 'You create the model: in Revit make a new empty project, enable worksharing (Collaborate tab, Collaborate), then File, Save As, Project, and in the Save As dialog use Options to tick "Make this a central model after save". Save to `C:\\RX-test\\Central\\Synthetic-Central.rvt`, then close Revit documents. (Revit wording may differ slightly between versions.)', 'If you cannot create one, set BLOCKED. Do not use a client central.'],
+  steps: ['Run the stamp block and note it is present.', 'Add `C:\\RX-test\\Central`, tick the central, **Choose views\u2026**. Note the open time and any dialog.', 'Run the stamp block again and compare.', 'Check: no new local copy in your Documents, no document open in Revit, Export button still enabled.'],
+  cmds: function () { return [{ t: 'Stamp before and after (size and time, no name or path printed)', cwd: 'any', c: P.kit + "\n& $kit -Stamp 'C:\\RX-test\\Central\\Synthetic-Central.rvt'" }]; },
+  expect: ['Views were listed.', 'The stamp is identical before and after.', 'No new local copy appeared in Documents.', 'No document is open in Revit and Export is still enabled.'],
+  fields: [{ k: 'secs', l: 'Seconds to open the view list', t: 'int' }, { k: 'dlg', l: 'Any dialog appeared', t: 'choice', o: YN }], prior: 'Passed on a real central (owner, 2026-11-12).', evidence: 'Seconds, dialog yes/no, and whether the stamp changed (tick the checks).', trouble: ['Stamp command says file missing: the save path above was not used exactly.'] },
+{ id: 'D4', part: 'D', title: 'Very large model (1000+ sheets): view list speed', where: 'Revit', purpose: 'Performance only. This cannot be tested synthetically without large generated content.',
+  prereq: ['**Needs a large model.** If you have no non-confidential one, set BLOCKED ("requires large model").', 'If you must use a production model: only with explicit authorization; Choose views is read-only (detached, never saved); record the seconds only; no screenshots; close without saving.'],
+  steps: ['Add the model\'s folder, tick it, **Choose views\u2026**; time the open.', 'Tick several views, Select all shown, and type in search; judge the speed.'],
+  expect: ['The view list opened.', 'Ticking, Select all shown and search felt as fast as with a small model.'], fields: [{ k: 'secs', l: 'Seconds to open the view list', t: 'int' }], prior: 'Passed with a real model (owner, 2026-11-12).', evidence: 'Seconds and the checks.', trouble: [] },
+{ id: 'D5', part: 'D', title: 'Export the synthetic central straight from its folder', where: 'Revit + PowerShell', purpose: 'Exporting must not modify the source file.', prereq: ['D3 done.'],
+  steps: ['Run the stamp block, export the central with the default scope, wait for Done, run the stamp block again.'],
+  cmds: function () { return [{ t: 'Stamp', cwd: 'any', c: P.kit + "\n& $kit -Stamp 'C:\\RX-test\\Central\\Synthetic-Central.rvt'" }]; },
+  expect: ['The result is OK.', 'The stamp is unchanged afterwards.'], fields: [], prior: 'Passed with a real central.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'D6', part: 'D', title: 'Older-version model', where: 'Revit + PowerShell', purpose: 'An older model can be read and exported without changing the file.',
+  prereq: ['P2 built with an `-Older` sample (Revit 2025 machine: a 2022 sample). Otherwise BLOCKED.'], steps: ['Run the stamp for the older file, **Choose views\u2026** (note seconds), confirm the stamp is unchanged, then Export it and note the result.'],
+  cmds: function () { return [{ t: 'Stamp (adjust the file name to the older sample in C:\\RX-test\\Older)', cwd: 'any', c: P.kit + "\nGet-ChildItem 'C:\\RX-test\\Older' -Filter *.rvt | ForEach-Object { & $kit -Stamp $_.FullName }" }]; },
+  expect: ['Views were listed.', 'The file is unchanged.', 'The export finished.'], fields: [{ k: 'secs', l: 'Seconds to open the view list', t: 'int' }, { k: 'result', l: 'Export result', t: 'choice', o: ['OK', 'FAIL', 'cancelled'] }], prior: 'Not completed on the older build.', evidence: 'Seconds and result.', trouble: [] },
+{ id: 'D7', part: 'D', title: 'Model renamed while listed', where: 'Revit + File Explorer', purpose: 'A missing file gives a readable message and nothing is queued.', prereq: ['B1 done.'],
+  steps: ['List the folder, then rename one sample file in Explorer.', 'Click **Choose views\u2026** on it. Then click **Rescan**: the list updates.', 'Rename the file back.'],
+  expect: ['A readable message in the window\'s language said the file was not found.', 'Nothing was queued.', 'Rescan refreshed the list.'], fields: [], changed: 'The owner asked for a reload button; the window already has **Rescan**. Confirm that it covers the need.', prior: 'Message shown: file not found (owner). Reload request raised.', evidence: GENERIC_EVIDENCE, trouble: [] },
+{ id: 'D8', part: 'D', title: 'Polish path readable in console.log', where: 'PowerShell + Notepad', purpose: 'The model path with Polish letters must be readable in the log. The log holds paths, so you only answer yes or no.', prereq: ['C6 export of the Polish-letters model.'],
+  steps: ['Run the block: Notepad opens the newest run\'s log. Use the run of the Polish-letters model if you made others since.', 'Look at the model path line for the Polish letters. Close Notepad. **Do not copy or send any text.**'],
+  cmds: function () { return [{ t: 'Open the newest console.log in Notepad', cwd: 'any', c: P.out + '\n' + String.raw`$run = Get-ChildItem $out -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
+notepad (Join-Path $run.FullName 'console.log')` }]; },
+  expect: ['The Polish letters in the path are readable (not garbled).'], fields: [{ k: 'read', l: 'Polish letters readable', t: 'choice', o: YN }], prior: 'Readable (owner, 2026-11-12).', evidence: 'Yes or no only.', trouble: [] },
+
+{ id: 'E1', part: 'E', title: 'Polish interface', where: 'Revit (pyRevit settings)', purpose: 'With pyRevit set to Polish all windows are Polish.', prereq: ['A1-A2.'],
+  steps: ['Set pyRevit\'s language to Polish and Reload. (The Revit UI language is deliberately not used.)', 'Look at the button title, the model window, the view window and the status window, including the row menu and the Node.js notice.', 'Set the language back and Reload.'],
+  expect: ['The button title and all three windows are Polish.', 'No English label is left.'], fields: [{ k: 'eng', l: 'English labels left (count)', t: 'int' }], prior: 'Passed on the older build; the newer texts (stay-open line, row menu, Clear finished) need a look.', evidence: 'The count only. No screenshots.', trouble: [] },
+
+{ id: 'F1', part: 'F', title: 'Native parser check on the Revit 2025 machine', where: 'PowerShell on the Revit 2025 machine', purpose: 'Same as G1, on the machine whose Extractor is the newest.', prereq: ['P1 on that machine, Python 3.'],
+  steps: ['Run the same blocks as G1 on this machine; add `-ExtractorDirectory \'C:\\Program Files\\Autodesk\\Revit 2025\\RevitExtractor\'` if it picks the wrong one.'],
+  cmds: function () { return [{ t: 'Run the check', cwd: 'any', c: P.tests + '\n' + P.res + '\n' + "powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tests 'validate_native_legacy.ps1') *>&1 | Tee-Object (Join-Path $res 'F1.txt')\n$LASTEXITCODE" }, { t: 'Count the result lines', cwd: 'any', c: P.counts('F1') }]; },
+  expect: ['No line starts with `FAIL`.', 'SKIP lines (if any) say the Extractor cannot prove that case.'],
+  fields: [{ k: 'pass', l: 'PASS lines', t: 'int' }, { k: 'fail', l: 'FAIL lines', t: 'int' }, { k: 'skip', l: 'SKIP lines', t: 'int' }, { k: 'exit', l: 'Exit code', t: 'int' }],
+  prior: 'Earlier: a GenerateExtendedPropertyDB case failed (see G1).', evidence: 'Counts and exit code only.', trouble: [] },
+{ id: 'F2', part: 'F', title: 'One export on Revit 2025', where: 'Revit 2025', purpose: 'The button loads and exports on Revit 2025 (.NET 8).', prereq: ['P1, P2 on that machine; pyRevit reloaded; no model open.'], steps: ['Check Export is enabled; open the window; one export of a sample with the default scope.'],
+  expect: ['Export is enabled with no model open and the window opened.', 'The result is OK.', 'Open in Analyzer and the folder buttons still work.'], fields: [{ k: 'exc', l: 'If it failed: exception type name only', t: 'code' }],
+  changed: 'This is the first run of the Revit 2025 import fix; it is unverified.', prior: 'Earlier (2026-11-12) the button failed to load on this machine; later notes say F2 worked but on which machine is unknown.', evidence: 'Status and, on failure, the exception type only.', trouble: ['Failure to load: record the exception class only (A2).'] },
+{ id: 'F3', part: 'F', title: 'Choose views on Revit 2025', where: 'Revit 2025', purpose: 'The view-id code path that differs on newer Revit versions.', prereq: ['F2.'], steps: ['Tick a sample, Choose views\u2026, tick two 2D views and one 3D view, Export.'],
+  expect: ['Only those three views are in the result.'], fields: [], prior: 'Not tested.', evidence: GENERIC_EVIDENCE, trouble: [] },
+
+{ id: 'H1', part: 'H', title: 'Cloud (ACC): journals and names', where: 'PowerShell + Revit (Export window, Cloud source)',
+  purpose: 'The Cloud source lists a model only when a Revit journal names it. Check that this computer\'s journals are found, that real names appear (also Polish letters and %20 names) and that no GUID is ever shown as a name.',
+  prereq: ['P1 done, pyRevit reloaded, Revit started with no model open.', CLOUDRULE, 'The ACC model has been opened on this computer before (you open it daily).'],
+  steps: ['Run block 1. It prints counts only: journals folder found, journal count, named cloud models, cached models, unnamed cached models, cache folder present.',
+    'Run block 2. It prints only the key names of the model-browser lines in your journals (no values), to see whether a folder field exists.',
+    'Click **Export**, choose **Cloud (ACC)** in "Models from", and wait for the list. Tick your project in the projects card (none is ticked at first).',
+    'Look at the rows: real project and file names. If a project or file name has Polish letters or was written with %20 in the journal, check it reads correctly. A GUID must never appear as a name.',
+    'If a message says no cloud model names were found, record that and go on to H6.'],
+  cmds: function () { return [
+    { t: '1. Cloud counts (numbers only)', cwd: 'any', c: P.kit + '\n' + P.res + "\n& $kit -Check *>&1 | Tee-Object (Join-Path $res 'H1.txt')" },
+    { t: '2. Key names of the model-browser journal lines (no values printed)', cwd: 'any', c: String.raw`$y = ` + (S.session.revitYear || '2022') + String.raw`
+$j = Join-Path $env:LOCALAPPDATA "Autodesk\Revit\Autodesk Revit $y\Journals"
+$keys = Get-ChildItem $j -Filter 'journal*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 20 |
+  ForEach-Object { Select-String -LiteralPath $_.FullName -Pattern 'ModelBrowserOpenDocumentEvent:open:' } |
+  ForEach-Object { [regex]::Matches($_.Line, '"+([A-Za-z]+)"+\s*:') | ForEach-Object { $_.Groups[1].Value } } | Sort-Object -Unique
+"Key names: " + ($keys -join ', ')` }]; },
+  expect: ['Block 1 shows journals folder 1, a journal count above 0, and named cloud models above 0.', 'The Cloud list shows your models under real names; Polish letters and %20 names read correctly; no GUID is shown as a name.', 'Block 2 lists key names (it may list none if your journals have no browser lines).'],
+  fields: [{ k: 'jfolder', l: 'Journals folder found (block 1)', t: 'choice', o: YN }, { k: 'journals', l: 'Journals read (count)', t: 'int' }, { k: 'named', l: 'Named cloud models (count)', t: 'int' }, { k: 'unnamed', l: 'Unnamed cached models (count)', t: 'int' },
+    { k: 'rows', l: 'Rows listed after ticking the project (count)', t: 'int' }, { k: 'pl', l: 'Polish or %20 names read correctly', t: 'choice', o: ['yes', 'no', 'no such name'] }, { k: 'guid', l: 'A GUID shown as a name', t: 'choice', o: YN },
+    { k: 'folderkey', l: 'A folder-like key in block 2 (owner question: folder selection)', t: 'choice', o: ['yes', 'no', 'no browser lines'] }],
+  evidence: 'The counts and choices above. Never a model, project or file name, a path, a GUID, or the output file.',
+  prior: 'Journal lines were read by hand once on Revit 2022 (earlier session); the code has never read a real journal.',
+  trouble: ['Journals folder 0: the folder is fixed at `%LOCALAPPDATA%\\Autodesk\\Revit\\Autodesk Revit <year>\\Journals`. Record it; whether it can be moved is an open question.', 'The list is empty but journals exist: the models were opened in another Revit year, or only the cache has them. Use H6.'] },
+
+{ id: 'H2', part: 'H', title: 'Cloud (ACC): the current-session journal', where: 'Revit (Export window)',
+  purpose: 'The journal of the running Revit is locked for writing. Check that the Cloud scan can still read it, so a model opened a minute ago is listed.',
+  prereq: ['H1 done.', CLOUDRULE, 'Start Revit fresh, so no earlier journal names the model you open now: any model of H1 will do if it was not opened in earlier sessions; otherwise just note that.'],
+  steps: ['Open the ACC model from the cloud (this session), then close it. Do not save or synchronise.', 'Click **Export**, choose **Cloud (ACC)**, tick the project.', 'The model you just opened is listed.', 'Run the block and note "unreadable" for the journals.'],
+  cmds: function () { return [{ t: 'Cloud counts again', cwd: 'any', c: P.kit + '\n' + P.res + "\n& $kit -Check *>&1 | Tee-Object (Join-Path $res 'H2.txt')" }]; },
+  expect: ['The model opened in this session is listed.', 'The block prints "unreadable 0".'],
+  fields: [{ k: 'listed', l: 'Model opened this session is listed', t: 'choice', o: ['yes', 'no', 'cannot tell'] }, { k: 'unread', l: 'Journals unreadable (block)', t: 'int' }],
+  evidence: 'The choice and the number.', prior: 'Not tested.',
+  trouble: ['Not listed: the journal may be written late or locked. Close Revit, start it again, and look at the list once more; record both results.'] },
+
+{ id: 'H3', part: 'H', title: 'Cloud (ACC): background open of the cache copy; links', where: 'PowerShell + Revit (Export window)',
+  purpose: 'The links of a cloud model are read by opening its cache copy in the background (detached, read-only). Check that Revit allows it without any cloud dialog, that all links are found, and that the cache file is not changed.',
+  prereq: ['H1 done.', CLOUDRULE, 'A cloud model with links (yours has 28).'],
+  steps: ['Run block 1 (list before): it prints a number, size and time per cached model file, never a name.', 'Click **Export**, choose **Cloud (ACC)**, tick the project, tick the one host model, and click **Choose views\u2026** (this reads the links).',
+    'Note any dialog (sign-in, sync, cloud), the time, and whether the view window opens. Click **Back** and close the window.', 'Check that no document is open in Revit and that the Export button is still enabled.',
+    'Run block 2 (list after) and block 3 (compare). Block 3 prints how many lines differ; it must be 0.'],
+  cmds: function () { var y = (S.session.revitYear || '2022'); var list = function (n) { return String.raw`$cache = Join-Path $env:LOCALAPPDATA 'Autodesk\Revit\Autodesk Revit ` + y + String.raw`\CollaborationCache'
+$res = 'C:\RX-test\results'; New-Item -ItemType Directory -Force $res | Out-Null
+$i = 0; Get-ChildItem $cache -Recurse -File -Filter *.rvt -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object { $i++; '{0}: {1} bytes; {2}' -f $i, $_.Length, $_.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss') } | Tee-Object (Join-Path $res '` + n + String.raw`.txt')`; };
+    return [{ t: '1. List the cache files before (numbers, sizes, times)', cwd: 'any', c: list('H3-before') }, { t: '2. List the cache files after', cwd: 'any', c: list('H3-after') },
+      { t: '3. Compare (0 = nothing changed)', cwd: 'any', c: String.raw`$d = @(Compare-Object (Get-Content 'C:\RX-test\results\H3-before.txt') (Get-Content 'C:\RX-test\results\H3-after.txt'))
+"Lines that differ: " + $d.Count` }]; },
+  expect: ['The view window opens, with no sign-in or cloud dialog.', 'The block 3 count is 0.', 'No document stays open and Export is still enabled.'],
+  fields: [{ k: 'links', l: 'Links found (see the view window or the Export window note)', t: 'int' }, { k: 'dialog', l: 'Any dialog appeared', t: 'choice', o: YN }, { k: 'changed', l: 'Cache lines that differ (block 3)', t: 'int' }, { k: 'open', l: 'A document left open', t: 'choice', o: YN }, { k: 'secs', l: 'Seconds until the view window opened', t: 'int' }, F_ERR],
+  evidence: 'The numbers and choices. If it failed, only an error category (for example, the exception type name).',
+  prior: 'Never run. If Revit refuses or connects to the cloud, stage the host first and open the copy (a code change), or take the links only from H6.',
+  trouble: ['A dialog about the cloud or a sign-in: close it, mark FAIL, and record the type only.', 'Block 3 shows a difference: the cache file changed. Mark FAIL and do not repeat the test on this model until the agent has looked.'] },
+
+{ id: 'H4', part: 'H', title: 'Cloud (ACC): staged export; links in a federated view', where: 'Revit + PowerShell',
+  purpose: 'Export one cloud model from copies. The Extractor must finish with no failed job, and the links must appear in a federated 3D view of the result.',
+  prereq: ['H3 done.', CLOUDRULE, 'About 2 GB of free disk space per 1 GB of model, for the copies and the Extractor\'s own copy.'],
+  steps: ['Click **Export**, choose **Cloud (ACC)**, tick the project and the host model, and click **Export**.', 'Close the model window; watch the status window: first a "Copying from the cache" row, then running.', 'When it ends, run the block (counts only).',
+    'Open the result in the Analyzer (**Open in Analyzer**) and open a 3D view that shows several models together: your links should be there.', 'Note how many "Link ... is not in the cache" notes the row shows.'],
+  cmds: function () { return [{ t: 'Check the finished run (counts only)', cwd: 'any', c: P.check('H4') }]; },
+  expect: ['The row ends OK. The block prints state OK and `Success Jobs: N, Failed Jobs: 0`.', 'The 3D view shows the host and its links.', 'The cache copy was never changed (repeat the H3 comparison if unsure).'],
+  fields: [{ k: 'state', l: 'Run state (block)', t: 'choice', o: RUNSTATE }, { k: 'ok', l: 'Success Jobs', t: 'int' }, { k: 'failed', l: 'Failed Jobs', t: 'int' }, { k: 'fed', l: 'Links visible in a federated 3D view', t: 'choice', o: ['yes', 'some', 'no'] }, { k: 'missing', l: 'Link notes "not in the cache" (count)', t: 'int' }, F_ERR],
+  evidence: 'The values above. Not the output folder, console.log or any name.',
+  prior: 'The Extractor accepted cached copies renamed to their real names on Revit 2022 (an earlier hand test); the staged queue itself ran only on the agent\'s machine with a fake cache.',
+  trouble: ['Failed Jobs above 0: record the number only and keep the run folder private.', 'Not enough disk space: the row fails with a message before copying; free space and retry.'] },
+
+{ id: 'H5', part: 'H', title: 'Cloud (ACC): copy time and Revit while it copies', where: 'Revit',
+  purpose: 'The copy runs in small steps inside Revit. Check how long it takes for your model and whether Revit stays usable.',
+  prereq: ['H4 done.', CLOUDRULE, 'Export again if you need a new copy phase (the same model may be queued again).'],
+  steps: ['Queue the host model from the Cloud list again.', 'While the status row says "Copying from the cache", work in Revit: pan a view, open a ribbon tab, type in the status window search.', 'Note how long the copy phase took and the size shown in the row.'],
+  expect: ['Revit responds during the copy; a freeze under one second at most.'],
+  fields: [{ k: 'secs', l: 'Copy phase (seconds)', t: 'int' }, { k: 'mb', l: 'Size shown (MB)', t: 'int' }, { k: 'freeze', l: 'Revit stayed usable', t: 'choice', o: ['fully', 'short pauses', 'froze'] }],
+  evidence: 'The two numbers and the choice.', prior: 'The copy budget is 40 ms per timer tick; never measured next to a working Revit.',
+  trouble: ['It froze: mark FAIL and record how long (seconds); the chunk size can be tuned.'] },
+
+{ id: 'H6', part: 'H', title: 'Cloud (ACC): Remember cloud model button', where: 'Revit (RevitExtractor tab)',
+  purpose: 'The fallback button stores the open cloud model\'s names and links, for when journals name nothing. It must be read-only on the model.',
+  prereq: ['H1 done.', CLOUDRULE, 'pyRevit reloaded; one cloud model and one non-cloud model (a sample copy) to open.'],
+  steps: ['Open a sample copy from `C:\\RX-test\\Samples` and click **Remember cloud model**: a message says it is not a cloud model, and nothing is written. Close the model (do not save).', 'Open the cloud model and click **Remember cloud model**. A short message gives counts only.',
+    'Look at the Undo list and the model: nothing changed, nothing to save or synchronise. Close the model.', 'Click **Export** > **Cloud (ACC)**: the model is listed (also if no journal names it).'],
+  expect: ['The non-cloud model gets a message and no write.', 'The cloud model gets a confirmation and a link count.', 'No change in the model; the model is listed in Export afterwards.'],
+  fields: [{ k: 'noncloud', l: 'Non-cloud model: message, nothing written', t: 'choice', o: YN }, { k: 'links', l: 'Links remembered (count in the message)', t: 'int' }, { k: 'undo', l: 'An Undo entry or a change appeared', t: 'choice', o: YN }, { k: 'listed', l: 'Model listed in Export afterwards', t: 'choice', o: YN }, F_ERR],
+  evidence: 'The values above. No names.', prior: 'Never run in Revit; `doc-project` for a cloud model and the user-visible path shape are unverified.',
+  trouble: ['The button is greyed with a cloud model open: record it (the pyRevit `doc-project` context); the Export list still works from journals.'] },
+
+{ id: 'H7', part: 'H', title: 'Cloud (ACC): disk use and clean-up', where: 'PowerShell',
+  purpose: 'Staged copies must be removed once the Extractor has finished, and only stage.json may stay in the model folder.',
+  prereq: ['H4 done; wait until no RevitExtractor process is running (the block shows it).', CLOUDRULE],
+  steps: ['Run the block. It prints counts and sizes of the newest run folder only (no names).', 'Note the free space before H4 and now if you wrote it down.'],
+  cmds: function () { return [{ t: 'Newest run: model folder and processes (counts only)', cwd: 'any', c: P.out + String.raw`
+$run = Get-ChildItem $out -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
+$m = Join-Path $run.FullName 'model'
+"Items in the model folder: " + @(Get-ChildItem $m -Force -ErrorAction SilentlyContinue).Count
+"stage.json present: " + (Test-Path (Join-Path $m 'stage.json'))
+"RevitExtractor processes: " + @(Get-Process -Name 'RevitExtractor*' -ErrorAction SilentlyContinue).Count
+"Free space on the output drive (GB): " + [math]::Round((Get-PSDrive -Name ([IO.Path]::GetPathRoot($out).Substring(0, 1))).Free / 1GB, 1)` }]; },
+  expect: ['Items in the model folder: 1, and stage.json present: True.', 'No RevitExtractor process is running.'],
+  fields: [{ k: 'items', l: 'Items in the model folder', t: 'int' }, { k: 'stage', l: 'stage.json present', t: 'choice', o: YN }, { k: 'procs', l: 'RevitExtractor processes', t: 'int' }, { k: 'free', l: 'Free space on the output drive (GB)', t: 'int' }],
+  evidence: 'The values above.', prior: 'Not tested.',
+  trouble: ['More than one item left: the copies were still in use when the queue tried to delete them; wait a few minutes and run the block again, then record both counts.']
+},
+
+{ id: 'H8', part: 'H', title: 'Cloud (ACC): export with hard links instead of copies', where: 'PowerShell + Revit (Export window, Cloud tab)',
+  purpose: 'Copying took 37 minutes for the smallest model (H4, H5). With the option "cloud_hardlinks" on, the Cloud tab links the cache files into the run folder instead of copying them (an NTFS hard link is a second name for the same file: no copy, no extra disk space). Cache files that have the read-only attribute are never linked (a link to one could not be deleted afterwards); they are copied as before. So only cache files without that attribute, on the same drive as the output folder, become links. Check how many become links, that staging of those takes seconds, that the Extractor exports fine from them, and that the cache files are not changed.',
+  prereq: ['H1 and H4 done. Get the new version first: `git fetch origin; git reset --keep origin/mgo-changes` (never git pull), then restart Revit so the new code is loaded.', CLOUDRULE,
+    'Use the model from H4 (host and links all in the cache). The cache and the Export output folder must be on the same drive; if not, the export silently copies instead, and block 3 shows plain copies.',
+    'Have the full path of the host cache file and of each link cache file (the same files H3 listed). Type them only into your own PowerShell; never send them.', 'No other export or RevitExtractor process is running.'],
+  steps: ['Run block 1. It turns the option on (it keeps the other preferences) and prints `cloud_hardlinks = True`.',
+    'Edit block 2: the full path of the host cache file after -CacheHost, and one `-Link \'RealName.rvt=full cache path\'` per link (the real file name before the = sign). Run it. It records sizes, times and attributes of those cache files and prints how many have the read-only attribute: write the number down. Those files will be copied, not linked, so this number decides what block 3 should show.',
+    'In Revit click **Export**, choose **Cloud (ACC)**, tick the project and the host model, and click **Export**. Time how long the row says "Copying from the cache" (it should be seconds if every file is linked; copied files still take their usual time) and note it.',
+    'While the row is running (not finished), run block 3. It counts, in the newest run folder, the files with two or more names (hard links) and the plain copies. Counts only. Expected: hard-linked = files without the read-only attribute, plain copies = files with it.',
+    'Wait until the export has finished. Run block 4: it must say RESULT: cache untouched.', 'Run block 5: it counts what is left in the newest run model folder. Expected 1 (stage.json).',
+    'Click **Open in Analyzer** and open a 3D view that shows several models: the links should be there.', 'Run block 6 to turn the option off again, so later tests copy as before.'],
+  cmds: function () {
+    var pref = function (state) { return String.raw`$p = Join-Path $env:APPDATA 'RevitExtractor\preferences.json'
+New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null
+$d = [ordered]@{}
+if (Test-Path -LiteralPath $p) { try { $o = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($n in $o.PSObject.Properties) { $d[$n.Name] = $n.Value } } catch {} }
+$d['cloud_hardlinks'] = $` + state + String.raw`
+[IO.File]::WriteAllText($p, ($d | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))   # UTF-8 without BOM
+'cloud_hardlinks = ' + $d['cloud_hardlinks']`; };
+    return [{ t: '1. Turn the hard-link option on', cwd: 'any', c: pref('true') },
+      { t: '2. Record the cache files (edit the paths first; makes no links)', cwd: 'any', c: P.tests + String.raw`
+& (Join-Path $tests 'hardlink_experiment.ps1') -Snapshot -Root 'C:\RX-test\hardlink' -CacheHost 'PUT-THE-FULL-PATH-OF-THE-HOST-CACHE-FILE-HERE' -Link 'LinkName.rvt=PUT-THE-FULL-PATH-OF-A-LINK-CACHE-FILE-HERE'` },
+      { t: '3. While the export runs: hard links or copies (counts only)', cwd: 'any', c: P.tests + '\n' + P.out + String.raw`
+& (Join-Path $tests 'hardlink_experiment.ps1') -Probe -OutputParent $out` },
+      { t: '4. After the export: is the cache untouched?', cwd: 'any', c: P.tests + String.raw`
+& (Join-Path $tests 'hardlink_experiment.ps1') -Verify -Root 'C:\RX-test\hardlink'` },
+      { t: '5. What is left in the newest run model folder (counts only)', cwd: 'any', c: P.out + String.raw`
+$run = Get-ChildItem $out -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
+$m = Join-Path $run.FullName 'model'
+'Items in the model folder: ' + @(Get-ChildItem $m -Force -ErrorAction SilentlyContinue).Count
+'stage.json present: ' + (Test-Path (Join-Path $m 'stage.json'))
+'RevitExtractor processes: ' + @(Get-Process -Name 'RevitExtractor*' -ErrorAction SilentlyContinue).Count` },
+      { t: '6. Turn the hard-link option off again', cwd: 'any', c: pref('false') }]; },
+  expect: ['Block 1 prints cloud_hardlinks = True.', 'Block 3: the hard-linked count equals the number of cache files WITHOUT the read-only attribute (block 2) and the plain-copy count equals the number WITH it. Staging takes seconds only when every file is linked.', 'The export result shows no warning "cache file(s) changed during the export".', 'The export finishes OK; the links appear in the federated 3D view.', 'Block 4 says RESULT: cache untouched. Block 5 says 1 item (stage.json only) and stage.json present: True; no link is ever left behind.'],
+  fields: [{ k: 'pref', l: 'Block 1 printed cloud_hardlinks = True', t: 'choice', o: YN }, { k: 'ro', l: 'Block 2: cache files with the read-only attribute', t: 'int' }, { k: 'stagesecs', l: 'Seconds the row said "Copying from the cache"', t: 'int' }, { k: 'linked', l: 'Block 3: hard-linked files', t: 'int' }, { k: 'plain', l: 'Block 3: plain copies', t: 'int' }, { k: 'warn', l: 'Result shows the warning "cache file(s) changed during the export"', t: 'choice', o: YN }, { k: 'exported', l: 'Export finished OK', t: 'choice', o: YN }, { k: 'linksok', l: 'Linked models present in the 3D view', t: 'choice', o: YN }, { k: 'untouched', l: 'Block 4: cache untouched', t: 'choice', o: YN }, { k: 'left', l: 'Block 5: items left in the model folder', t: 'int' }, { k: 'secs', l: 'Seconds from Export to the end', t: 'int' }, F_ERR],
+  evidence: 'The values above and the RESULT line of block 4. No names.', prior: 'The link code and the script are tested on synthetic files only (CPython); the IronPython link call (CreateHardLinkW), the read-only skip and the Extractor reading from links have never run in Revit.',
+  trouble: ['Block 3 shows plain copies only and block 2 says every cache file is read-only: this is expected, not a failure. Record the numbers and mark INCONCLUSIVE (hard links cannot help with this cache as it is). If block 2 says none is read-only, the link failed and the code copied instead (another drive, or no link support): record the numbers and mark FAIL.', 'Block 4 says CACHE CHANGED, or the result shows the "cache file(s) changed" warning: mark FAIL, turn the option off (block 6) and do not repeat on this model.',
+    'Block 5 shows more than 1 item: something was left in the model folder, which should not happen now. Record the number; do not delete anything by hand yet.', 'Block 2 fails with "not found": a path is wrong; give full paths to existing files.']
+}
+];
+
+/* ---------- state ---------- */
+var ORDER = TESTS.map(function (t) { return t.id; });
+var BYID = {}; TESTS.forEach(function (t) { BYID[t.id] = t; });
+var SESSION_FIELDS = {
+  role: { l: 'This computer', t: 'choice', o: ['Revit 2022 machine', 'Revit 2025 machine', 'other Revit machine'] },
+  revitYear: { l: 'Revit year in use', t: 'int' },
+  extractorBuild: { l: 'Extractor build', t: 'ver' },
+  pyrevit: { l: 'pyRevit version', t: 'ver' },
+  expectedBaseline: { l: 'Expected baseline commit (set on Computer A)', t: 'hex' }
+};
+var KEY = 'rx-v1-live-test/state/v1';
+var S, storageOK = false, loadInfo = '';
+function freshState() { return { schema: GUIDE.schema, schemaVersion: GUIDE.schemaVersion, guideVersion: GUIDE.version, session: { role: '', revitYear: '', extractorBuild: '', pyrevit: '', expectedBaseline: '' }, current: 'home', tests: {}, updatedAt: null }; }
+function T(id) { if (!S.tests[id]) S.tests[id] = { status: 'NOT TESTED', checks: {}, fields: {}, note: '', noteApproved: false, updatedAt: null, completedAt: null }; return S.tests[id]; }
+function statusOf(id) { return S.tests[id] ? S.tests[id].status : 'NOT TESTED'; }
+function allFields(t) { return (t.fields || []).concat([F_ERR]); }
+function checksOf(t) { return ['ran'].concat((t.expect || []).map(function (_, i) { return 'e' + i; })); }
+function fieldOk(def, v) {
+  if (typeof v !== 'string') return false;
+  if (def.t === 'choice') return v === '' || (def.o || []).indexOf(v) >= 0;
+  return FT[def.t].re.test(v) && v.length <= 40;
+}
+
+/* sanitize any object (import, embedded, localStorage) into a valid state; unknown keys are dropped */
+function sanitizeState(o) {
+  var warns = [];
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return { error: 'Not a test-state object.' };
+  if (o.schema !== GUIDE.schema) return { error: 'Wrong schema (expected ' + GUIDE.schema + ').' };
+  if (o.schemaVersion !== GUIDE.schemaVersion) return { error: 'Unsupported schema version.' };
+  var s = freshState();
+  var sess = o.session && typeof o.session === 'object' ? o.session : {};
+  Object.keys(SESSION_FIELDS).forEach(function (k) { if (fieldOk(SESSION_FIELDS[k], sess[k])) s.session[k] = sess[k]; else if (sess[k]) warns.push('session.' + k + ' dropped'); });
+  if (typeof o.current === 'string' && (o.current === 'home' || o.current === 'dash' || BYID[o.current])) s.current = o.current;
+  if (typeof o.updatedAt === 'string' && o.updatedAt.length < 40) s.updatedAt = o.updatedAt;
+  var tests = o.tests && typeof o.tests === 'object' ? o.tests : {};
+  Object.keys(tests).forEach(function (id) {
+    if (!BYID[id]) { warns.push('unknown test ' + id.slice(0, 12) + ' ignored'); return; }
+    var src = tests[id]; if (!src || typeof src !== 'object') return;
+    var d = { status: 'NOT TESTED', checks: {}, fields: {}, note: '', noteApproved: false, updatedAt: null, completedAt: null };
+    if (STATUSES.indexOf(src.status) >= 0) d.status = src.status;
+    var okc = checksOf(BYID[id]);
+    if (src.checks && typeof src.checks === 'object') okc.forEach(function (k) { if (src.checks[k] === true) d.checks[k] = true; });
+    var defs = {}; allFields(BYID[id]).forEach(function (f) { defs[f.k] = f; });
+    if (src.fields && typeof src.fields === 'object') Object.keys(defs).forEach(function (k) { if (src.fields[k] !== undefined) { if (fieldOk(defs[k], src.fields[k])) d.fields[k] = src.fields[k]; else warns.push(id + '.' + k + ' dropped (invalid value)'); } });
+    if (typeof src.note === 'string' && src.note) { d.note = src.note.slice(0, 4000); d.noteApproved = src.noteApproved === true; }
+    ['updatedAt', 'completedAt'].forEach(function (k) { if (typeof src[k] === 'string' && src[k].length < 40) d[k] = src[k]; });
+    s.tests[id] = d;
+  });
+  return { state: s, warns: warns };
+}
+
+/* ---------- storage ---------- */
+function probeStorage() { try { localStorage.setItem(KEY + '.probe', '1'); localStorage.removeItem(KEY + '.probe'); storageOK = true; } catch (e) { storageOK = false; } }
+function persist() { S.updatedAt = new Date().toISOString(); if (!storageOK) return; try { localStorage.setItem(KEY, JSON.stringify(S, function (k, v) { return k === '_alt' ? undefined : v; })); } catch (e) { storageOK = false; renderBanner(); } }
+function loadInitial() {
+  var emb = null, loc = null;
+  try { var raw = document.getElementById('rx-embedded').textContent; var parsed = JSON.parse(raw); if (parsed) { var r = sanitizeState(parsed); if (r.state) emb = r.state; } } catch (e) { }
+  if (storageOK) { try { var lr = localStorage.getItem(KEY); if (lr) { var r2 = sanitizeState(JSON.parse(lr)); if (r2.state) loc = r2.state; } } catch (e) { } }
+  S = freshState();
+  if (emb && loc) { if ((loc.updatedAt || '') >= (emb.updatedAt || '')) { S = loc; loadInfo = 'Restored from this browser (newer than the saved file).'; S._alt = emb; } else { S = emb; loadInfo = 'Restored from the saved file (newer than this browser copy).'; S._alt = loc; } }
+  else if (loc) { S = loc; loadInfo = 'Restored from this browser.'; }
+  else if (emb) { S = emb; loadInfo = 'Restored from the progress saved inside this file.'; }
+}
+
+/* ---------- small DOM helpers ---------- */
+function h(tag, attrs) {
+  var e = document.createElement(tag), a = attrs || {};
+  Object.keys(a).forEach(function (k) { var v = a[k]; if (k === 'class') e.className = v; else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), v); else if (v === true) e.setAttribute(k, ''); else if (v !== false && v != null) e.setAttribute(k, v); });
+  for (var i = 2; i < arguments.length; i++) add(e, arguments[i]);
+  return e;
+}
+function add(e, c) { if (c == null || c === false) return; if (Array.isArray(c)) { c.forEach(function (x) { add(e, x); }); return; } e.append(c.nodeType ? c : document.createTextNode(String(c))); }
+function rich(text) {
+  var f = document.createDocumentFragment(), re = /(\*\*[^*]+\*\*|`[^`]+`)/g, last = 0, m;
+  while ((m = re.exec(text))) { if (m.index > last) f.append(text.slice(last, m.index)); var t = m[0]; f.append(t.charAt(0) === '*' ? h('strong', {}, t.slice(2, -2)) : h('code', {}, t.slice(1, -1))); last = m.index + t.length; }
+  f.append(text.slice(last)); return f;
+}
+function toast(msg) { var t = h('div', { class: 'toast', role: 'status' }, msg); document.body.append(t); setTimeout(function () { t.remove(); }, 2600); }
+function copyText(text) {
+  function fallback() { var ta = h('textarea', { style: 'position:fixed;left:-9999px' }); ta.value = text; document.body.append(ta); ta.select(); var ok = false; try { ok = document.execCommand('copy'); } catch (e) { } ta.remove(); toast(ok ? 'Copied' : 'Copy blocked by the browser: select the text and press Ctrl+C'); }
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { toast('Copied'); }, fallback); else fallback();
+}
+function download(name, text, mime) {
+  var b = new Blob([text], { type: mime }), a = h('a', { href: URL.createObjectURL(b), download: name });
+  document.body.append(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+function stamp() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()); }
+function pill(st) { return h('span', { class: 'pill s-' + SCLASS[st] }, GLYPH[st] + ' ' + st); }
+
+/* ---------- summary ---------- */
+function summary() {
+  var c = {}; STATUSES.forEach(function (s) { c[s] = []; });
+  ORDER.forEach(function (id) { c[statusOf(id)].push(id); });
+  var total = ORDER.length, decided = c.PASS.length + c.FAIL.length;
+  return { total: total, counts: c, decided: decided, percent: Math.round(decided * 100 / total),
+    remaining: c['NOT TESTED'].concat(c.INCONCLUSIVE), blocked: c.BLOCKED,
+    next: ORDER.filter(function (id) { var s = statusOf(id); return s === 'NOT TESTED' || s === 'INCONCLUSIVE'; })[0] || null };
+}
+function checkTally(id) { var t = BYID[id], d = S.tests[id] || { checks: {} }, ks = checksOf(t).slice(1), n = 0; ks.forEach(function (k) { if (d.checks[k]) n++; }); return { done: n, total: ks.length }; }
+
+/* ---------- confidentiality scan: assistance only, NEVER proof of safety ---------- */
+var SCANS = [
+  [/\b[A-Za-z]:[\\/]/, 'drive path'], [/\\\\[^\s\\]+\\/, 'network path'], [/\/\/[^\s/]+\/[^\s/]+/, 'URL or share'], [/RSN:/i, 'Revit Server path'],
+  [/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, 'GUID'], [/\S+@\S+\.\S+/, 'e-mail address'], [/\.(rvt|rfa|rte|nwc|nwd|ifc|dwg|sdb)\b/i, 'model file name'],
+  [/\b\d{6,}\b/, 'long number (element or project id?)'], [/\\Users\\|\/Users\//i, 'user folder']
+];
+function scanNote(text) { var hits = []; SCANS.forEach(function (s) { if (s[0].test(text)) hits.push(s[1]); }); return hits; }
+
+/* ---------- export model ---------- */
+function buildExport(includeNotes) {
+  var o = { schema: GUIDE.schema, schemaVersion: GUIDE.schemaVersion, guideVersion: GUIDE.version, guideBaseline: GUIDE.baseline, exportedAt: new Date().toISOString(),
+    session: JSON.parse(JSON.stringify(S.session)), current: S.current, updatedAt: S.updatedAt, tests: {} };
+  var sm = summary(); o.summary = { total: sm.total, passed: sm.counts.PASS.length, failed: sm.counts.FAIL.length, blocked: sm.counts.BLOCKED, inconclusive: sm.counts.INCONCLUSIVE, remaining: sm.remaining, completionPercent: sm.percent, nextTest: sm.next };
+  ORDER.forEach(function (id) {
+    var d = S.tests[id]; if (!d) return;
+    var empty = d.status === 'NOT TESTED' && !Object.keys(d.checks).length && !Object.keys(d.fields).length && !d.note;
+    if (empty) return;
+    var inc = includeNotes && includeNotes[id] === true;
+    o.tests[id] = { status: d.status, checks: d.checks, fields: d.fields, note: inc ? d.note : '', noteApproved: inc, updatedAt: d.updatedAt, completedAt: d.completedAt };
+  });
+  return o;
+}
+function markdownSummary(o) {
+  var L = [], sm = o.summary;
+  L.push('# RevitExtractor v1 live test: sanitized result summary');
+  L.push('Guide ' + o.guideVersion + ' (' + GUIDE.date + '). Guide baseline: ' + o.guideBaseline);
+  L.push('Expected baseline on test machine: ' + (o.session.expectedBaseline || '(not set)') + '; commit seen: ' + ((o.tests.P1 && o.tests.P1.fields.hash) || '(not recorded)'));
+  L.push('Session: ' + ['role', 'revitYear', 'extractorBuild', 'pyrevit'].map(function (k) { return k + '=' + (o.session[k] || '?'); }).join(', '));
+  L.push('Exported ' + o.exportedAt + '. This summary was reviewed by the operator before export; it contains no raw logs.');
+  L.push('');
+  L.push('Completion: ' + sm.completionPercent + '% decided (PASS ' + sm.passed + ', FAIL ' + sm.failed + ') of ' + sm.total + ' tests. Blocked: ' + (sm.blocked.join(', ') || 'none') + '. Inconclusive: ' + (sm.inconclusive.join(', ') || 'none') + '.');
+  L.push('Remaining (not decided): ' + (sm.remaining.join(', ') || 'none') + '. Next test: ' + (sm.nextTest || 'none') + '.');
+  L.push('Evidence caveat: results are operator-recorded. Offline unit tests do not prove Revit behaviour; only items marked PASS here were observed in Revit/PowerShell by the operator.');
+  L.push('');
+  L.push('| Test | Title | Status | Checks | Values | Note |'); L.push('|---|---|---|---|---|---|');
+  ORDER.forEach(function (id) {
+    var d = o.tests[id], t = BYID[id], st = d ? d.status : 'NOT TESTED', ks = checksOf(t).slice(1), n = 0;
+    if (d) ks.forEach(function (k) { if (d.checks[k]) n++; });
+    var vals = d ? Object.keys(d.fields).filter(function (k) { return d.fields[k] !== ''; }).map(function (k) { return k + '=' + d.fields[k]; }).join('; ') : '';
+    var note = d && d.note ? d.note.replace(/\|/g, '/').replace(/\s+/g, ' ') : (d && d.noteApproved === false && S.tests[id] && S.tests[id].note ? '(note withheld)' : '');
+    L.push('| ' + id + ' | ' + t.title.replace(/\|/g, '/') + ' | ' + st + ' | ' + (d ? n + '/' + ks.length : '-') + ' | ' + vals + ' | ' + note + ' |');
+  });
+  L.push(''); L.push('Unticked expected checks on a PASS, or empty results, are listed as missing information, not as success.');
+  return L.join('\n');
+}
+
+/* ---------- views ---------- */
+var app, mainEl, navEl;
+function render() { app.textContent = ''; app.append(headerEl(), h('div', { class: 'layout' }, navEl = navView(), mainEl = h('main', { id: 'main' }))); renderMain(); }
+function renderBanner() { var b = document.getElementById('banner'); if (!b) return; b.textContent = ''; if (!storageOK) b.append(h('div', { class: 'warn bad', role: 'alert' }, h('strong', {}, 'Browser storage is not available. '), 'Autosave is OFF. Use "Save filled HTML" or "Export results" regularly; closing this tab loses unsaved progress.')); }
+function headerEl() {
+  var sm = summary(), track = h('div', { class: 'track' });
+  [['PASS', 'var(--pass)'], ['FAIL', 'var(--fail)'], ['BLOCKED', 'var(--block)'], ['INCONCLUSIVE', 'var(--inc)']].forEach(function (p) { track.append(h('span', { style: 'width:' + (sm.counts[p[0]].length * 100 / sm.total) + '%;background:' + p[1] })); });
+  return h('header', {}, h('h1', {}, 'RevitExtractor v1 live test'),
+    h('div', { class: 'bar' }, track, h('small', {}, sm.percent + '% decided \u00b7 ' + sm.counts.PASS.length + ' pass \u00b7 ' + sm.counts.FAIL.length + ' fail \u00b7 ' + sm.counts.BLOCKED.length + ' blocked \u00b7 ' + sm.counts.INCONCLUSIVE.length + ' inconclusive \u00b7 ' + sm.counts['NOT TESTED'].length + ' not tested')),
+    h('button', { class: 'primary', onclick: function () { openReview('html'); } }, 'Save filled HTML'),
+    h('button', { onclick: function () { openReview('json'); } }, 'Export results'),
+    h('button', { onclick: function () { openReview('summary'); } }, 'Copy summary'),
+    h('button', { onclick: importPick }, 'Import results'),
+    h('button', { class: 'danger', onclick: resetDialog }, 'Reset progress'),
+    h('input', { type: 'file', id: 'imp', accept: '.json,application/json', style: 'display:none', onchange: importFile }));
+}
+function navView() {
+  var n = h('nav', { 'aria-label': 'Tests' });
+  [['home', 'Start and workflow'], ['dash', 'Dashboard']].forEach(function (p) { n.append(navBtn(p[0], h('span', { class: 'st' }, '\u25a0'), p[1])); });
+  PARTS.forEach(function (pt) { n.append(h('h3', {}, pt.name)); TESTS.filter(function (t) { return t.part === pt.id; }).forEach(function (t) { var st = statusOf(t.id); n.append(navBtn(t.id, h('span', { class: 'st c-' + SCLASS[st], title: st }, GLYPH[st]), t.id + '  ' + t.title)); }); });
+  return n;
+}
+function navBtn(id, mark, label) { return h('button', { class: S.current === id ? 'cur' : '', 'aria-current': S.current === id ? 'page' : null, onclick: function () { go(id); } }, mark, h('span', {}, label)); }
+function go(id) { S.current = id; persist(); render(); window.scrollTo(0, 0); }
+function renderMain() {
+  mainEl.textContent = '';
+  mainEl.append(h('div', { id: 'banner' })); renderBanner();
+  if (S.current === 'home') homeView(); else if (S.current === 'dash') dashView(); else testView(BYID[S.current]);
+}
+
+function homeView() {
+  var m = mainEl;
+  m.append(h('h2', {}, 'RevitExtractor v1 live test'), h('p', { class: 'hint' }, 'Guide ' + GUIDE.version + ' \u00b7 ' + GUIDE.date + ' \u00b7 offline, one file, no network access. ' + loadInfo));
+  if (S._alt) m.append(h('div', { class: 'warn' }, 'Both a saved file copy and a browser copy of progress exist and differ. ', h('button', { onclick: function () { var a = S._alt; a._alt = null; S = a; persist(); toast('Switched'); render(); } }, 'Use the other copy instead')));
+  m.append(h('div', { class: 'warn' }, h('strong', {}, 'Rule of this guide: '), 'client project data stays on the Revit computer. Use the synthetic sample models the kit builds. Only a few typed values, ticked checks and notes you have read and approved can leave this computer, and only through the review dialog. Nothing is ever sent automatically.'));
+  m.append(h('h3', { class: 'sec' }, 'Session (generic values only)'));
+  var sess = h('div', { class: 'card' });
+  Object.keys(SESSION_FIELDS).forEach(function (k) { sess.append(fieldRow(SESSION_FIELDS[k], S.session[k], function (v) { S.session[k] = v; persist(); if (k === 'expectedBaseline') compareBaseline(); }, k === 'expectedBaseline' ? 'Set this on Computer A to the commit you are sending (git rev-parse --short HEAD). P1 then pins and verifies it.' : '')); });
+  sess.append(h('p', { class: 'hint' }, 'Guide baseline: ' + GUIDE.baseline));
+  m.append(sess);
+  m.append(h('h3', { class: 'sec' }, 'How to test on my second computer'));
+  var steps = [
+    ['Computer A (development computer)', [
+      '**Fix the baseline.** Commit it (and, with the owner\'s approval, push `mgo-changes`), then run `git rev-parse --short HEAD` and type the result into "Expected baseline" above.',
+      'Run `git status` and confirm the tree is clean. A dirty tree is not a fixed baseline.',
+      '**Prepare the files to carry:** this HTML (use "Save filled HTML" so the baseline is stored in it) and the repository at that commit. Either the clone is fetched from the fork on Computer B, or make a zip with `git archive --format=zip -o RevitExtractor-<commit>.zip <commit>` and move it with a company-approved method. The repository is public code; no client file is needed.',
+      'Do not copy any client model, `test-*` folder, pyRevit config or `catalog-cache.json`.']],
+    ['Computer B (Revit computer)', [
+      'Open this HTML by double-clicking it (Edge, Chrome or Firefox). If a red banner says storage is unavailable, save regularly.',
+      'Do tests in order, starting with **P1**. Commands run in Windows PowerShell 5.1 on Computer B; nothing runs on Computer A.',
+      'Create synthetic data only (P2 builds it from Autodesk sample models). Never open a client model for these tests; D4, Part H (needs a real ACC model, counts only) and the optional production variants are the only exceptions, and need your explicit authorization.',
+      'After each test choose a result button. Autosave keeps the progress in the browser; click **Save filled HTML** now and then. Reopen the saved file once to confirm progress comes back.']],
+    ['Returning results to Claude', [
+      'Click **Export results** (JSON) or **Copy summary** (text). A review dialog lists exactly what will leave: all typed values, ticked checks and each note you approved.',
+      'Read it. Notes are excluded unless you approve them on the test page; any note matching a path, GUID, e-mail, model name or long number is also held back until you include it deliberately. The scan only helps: it never proves safety.',
+      'Tick the confirmation, download, and move the file by an authorized method. Paste the summary text, or give the JSON file, to Claude Code at the start of the next session.',
+      'If your organization forbids exporting anything, finish the tests locally and keep the saved HTML. Nothing in the tests requires sending data.']]];
+  steps.forEach(function (s) { var d = h('details', { open: true }, h('summary', {}, s[0])); var ol = h('ol', {}); s[1].forEach(function (x) { ol.append(h('li', {}, rich(x))); }); d.append(ol); m.append(h('div', { class: 'card' }, d)); });
+  m.append(h('div', { class: 'row' }, h('button', { class: 'primary', onclick: function () { go('P1'); } }, 'Start with P1'), h('button', { onclick: function () { go('dash'); } }, 'Open dashboard')));
+}
+function compareBaseline() { var e = document.getElementById('bl'); if (e) e.replaceWith(baselineBadge()); }
+function baselineBadge() {
+  var exp = (S.session.expectedBaseline || '').toLowerCase(), seen = ((S.tests.P1 && S.tests.P1.fields.hash) || '').toLowerCase(), b = h('div', { id: 'bl', class: 'warn' });
+  if (!exp) b.append('No expected baseline is set on the Start page, so the version cannot be verified.');
+  else if (!seen) b.append('Expected baseline: ' + exp + '. Enter the commit id printed by block 2 to compare.');
+  else if (seen.indexOf(exp) === 0 || exp.indexOf(seen) === 0) { b.className = 'warn ok'; b.append('Match: this computer is on the expected baseline.'); }
+  else { b.className = 'warn bad'; b.append('MISMATCH: expected ' + exp + ', this computer reports ' + seen + '. Results would not describe the intended version.'); }
+  return b;
+}
+
+function dashView() {
+  var sm = summary(), m = mainEl;
+  m.append(h('h2', {}, 'Dashboard'));
+  var tbl = h('table', {}, h('tr', {}, h('th', {}, 'Status'), h('th', {}, 'Count'), h('th', {}, 'Tests')));
+  STATUSES.forEach(function (s) { tbl.append(h('tr', {}, h('td', {}, pill(s)), h('td', {}, sm.counts[s].length), h('td', {}, sm.counts[s].join(', ')))); });
+  m.append(h('div', { class: 'card' }, h('p', {}, h('strong', {}, sm.percent + '%'), ' decided (PASS or FAIL) of ' + sm.total + ' tests. BLOCKED and INCONCLUSIVE count as not decided.'), tbl,
+    sm.next ? h('p', {}, 'Next test: ', h('button', { onclick: function () { go(sm.next); } }, sm.next + ' ' + BYID[sm.next].title)) : h('p', {}, 'Every test has a decided result or is blocked.')));
+  var t2 = h('table', {}, h('tr', {}, h('th', {}, 'Test'), h('th', {}, 'Title'), h('th', {}, 'Status'), h('th', {}, 'Checks')));
+  ORDER.forEach(function (id) { var ct = checkTally(id); t2.append(h('tr', {}, h('td', {}, h('button', { onclick: function () { go(id); } }, id)), h('td', {}, BYID[id].title), h('td', {}, pill(statusOf(id))), h('td', {}, ct.done + '/' + ct.total))); });
+  m.append(h('div', { class: 'card' }, t2));
+  m.append(h('p', { class: 'hint' }, 'Results are what you recorded. The guide does not read Revit, your files or your logs.'));
+}
+
+function fieldRow(def, val, onSet, hint) {
+  var id = 'f' + Math.random().toString(36).slice(2, 8), el;
+  if (def.t === 'choice') { el = h('select', { id: id }, h('option', { value: '' }, '\u2014'), (def.o || []).map(function (o) { return h('option', { value: o }, o); })); el.value = val || ''; el.addEventListener('change', function () { onSet(el.value); }); }
+  else { el = h('input', { type: 'text', id: id, autocomplete: 'off', spellcheck: 'false', inputmode: def.t === 'int' ? 'numeric' : null, maxlength: 40 }); el.value = val || ''; var prev = el.value;
+    el.addEventListener('input', function () { if (!fieldOk(def, el.value)) { el.value = prev; toast('Not accepted: ' + FT[def.t].hint); return; } prev = el.value; onSet(el.value); }); }
+  return h('div', { class: 'fld' }, h('label', { for: id }, def.l, (hint || def.h) ? h('div', { class: 'hint' }, hint || def.h) : null), el);
+}
+
+function testView(t) {
+  var m = mainEl, d = T(t.id), idx = ORDER.indexOf(t.id);
+  m.append(h('div', { class: 'row' }, h('h2', {}, t.id + ' \u2014 ' + t.title), h('span', { id: 'curpill' }, pill(d.status))));
+  if (t.changed) m.append(h('div', { class: 'warn' }, h('strong', {}, 'Retest: '), t.changed));
+  if (t.prior) m.append(h('p', { class: 'hint' }, 'Earlier information (not a result of this session): ' + t.prior));
+  sec('Purpose', h('p', {}, rich(t.purpose)));
+  sec('Where to perform this test', h('p', {}, t.where));
+  if (t.prereq && t.prereq.length) sec('Prerequisites', ul(t.prereq));
+  sec('Steps', ol(t.steps));
+  var cmds = typeof t.cmds === 'function' ? t.cmds() : [];
+  cmds.forEach(function (c) { m.append(h('div', { class: 'cmd' }, h('div', { class: 'top' }, h('span', {}, h('span', { class: 'lab' }, c.t), ' ', h('span', { class: 'cwd' }, '\u00b7 start in: ' + c.cwd)), h('button', { onclick: function () { copyText(c.c); } }, 'Copy command')), h('pre', {}, c.c))); });
+  if (t.extra === 'baseline') m.append(baselineBadge());
+  var ex = h('div', { class: 'card' });
+  t.expect.forEach(function (e) { ex.append(h('div', {}, '\u2022 ', rich(e))); });
+  if (t.expectText) ex.append(h('div', { class: 'cmd' }, h('div', { class: 'top' }, h('span', { class: 'lab' }, 'Literal expected output'), h('button', { onclick: function () { copyText(t.expectText); } }, 'Copy expected output')), h('pre', {}, t.expectText), t.expectNote ? h('p', { class: 'hint' }, t.expectNote) : null));
+  sec('Expected result', ex, 'Success means every item below is true. Anything you cannot confirm stays unticked.');
+
+  sec('My actual result', null);
+  var box = h('div', { class: 'card' });
+  box.append(h('label', { class: 'chk' }, chk('ran', 'I performed the steps on this computer.')));
+  t.expect.forEach(function (e, i) { box.append(h('label', { class: 'chk' }, chk('e' + i, e))); });
+  allFields(t).forEach(function (f) { box.append(fieldRow(f, d.fields[f.k], function (v) { if (v === '') delete d.fields[f.k]; else d.fields[f.k] = v; touch(d); persist(); })); });
+  box.append(h('div', { class: 'warn' }, h('strong', {}, 'Notes can hold private data. '), 'Write generic remarks only: no client, project or model names, no paths, GUIDs or element ids, no log text. A note leaves this computer only if you tick the box below AND confirm it in the export review. Unapproved notes stay in this browser only.'));
+  var ta = h('textarea', { 'aria-label': 'Optional sanitized notes', maxlength: 4000, placeholder: 'Optional. Generic remarks only.' }); ta.value = d.note;
+  var ap = h('input', { type: 'checkbox' }); ap.checked = d.noteApproved;
+  var flag = h('div', { class: 'hint' });
+  function upd() { var hits = scanNote(ta.value); flag.textContent = hits.length ? 'Possible private content detected: ' + hits.join(', ') + '. Remove it, or it will be held back at export.' : (ta.value ? 'No known pattern matched. This does not prove the note is safe: read it yourself.' : ''); flag.style.color = hits.length ? 'var(--fail)' : ''; }
+  ta.addEventListener('input', function () { d.note = ta.value; if (!ta.value) { d.noteApproved = false; ap.checked = false; } touch(d); persist(); upd(); });
+  ap.addEventListener('change', function () { d.noteApproved = ap.checked && !!d.note; ap.checked = d.noteApproved; persist(); });
+  upd(); box.append(ta, flag, h('label', { class: 'chk' }, ap, h('span', {}, 'I read this note and approve it for export.')));
+  m.append(box);
+
+  sec('Evidence Claude requires', h('p', {}, rich(t.evidence || GENERIC_EVIDENCE)));
+  if (t.trouble && t.trouble.length) { var dt = h('details', {}, h('summary', {}, 'Troubleshooting')); dt.append(ul(t.trouble)); m.append(h('div', { class: 'card' }, dt)); }
+
+  sec('Result', null);
+  var hintEl = h('div', { class: 'hint', id: 'sthint' }), btns = h('div', { class: 'stbtns', role: 'group', 'aria-label': 'Result' });
+  STATUSES.forEach(function (s) { var b = h('button', { class: d.status === s ? 'on s-' + SCLASS[s] : '', 'aria-pressed': d.status === s ? 'true' : 'false', onclick: function () { setStatus(t, s); } }, GLYPH[s] + ' ' + s); btns.append(b); });
+  m.append(btns, hintEl); updHint(t);
+  m.append(h('div', { class: 'row', style: 'margin-top:18px' },
+    h('button', { disabled: idx === 0, onclick: function () { go(ORDER[idx - 1]); } }, '\u2190 Previous'),
+    h('button', { class: 'primary', disabled: idx === ORDER.length - 1, onclick: function () { go(ORDER[idx + 1]); } }, 'Continue \u2192 ' + (ORDER[idx + 1] || '')),
+    h('button', { onclick: function () { var n = summary().next; if (n) go(n); } }, 'Next untested'), h('button', { onclick: function () { go('dash'); } }, 'Dashboard')));
+
+  function sec(title, body, hint) { m.append(h('h3', { class: 'sec' }, title)); if (hint) m.append(h('p', { class: 'hint' }, hint)); if (body) m.append(body); }
+  function chk(k, label) { var c = h('input', { type: 'checkbox' }); c.checked = d.checks[k] === true; c.addEventListener('change', function () { if (c.checked) d.checks[k] = true; else delete d.checks[k]; touch(d); persist(); updHint(t); refreshChrome(); }); return [c, h('span', {}, k === 'ran' ? label : rich(label))]; }
+}
+function ul(a) { var e = h('ul'); a.forEach(function (x) { e.append(h('li', {}, rich(x))); }); return e; }
+function ol(a) { var e = h('ol'); a.forEach(function (x) { e.append(h('li', {}, rich(x))); }); return e; }
+function touch(d) { d.updatedAt = new Date().toISOString(); }
+function setStatus(t, s) {
+  var d = T(t.id); d.status = s; touch(d); d.completedAt = (s === 'PASS' || s === 'FAIL') ? d.updatedAt : null; persist(); render();
+}
+function updHint(t) {
+  var el = document.getElementById('sthint'); if (!el) return; var d = T(t.id), ct = checkTally(t.id), msg = '';
+  if (d.status === 'NOT TESTED' && ct.done === ct.total && d.checks.ran) msg = 'All expected checks are ticked. You may mark PASS.';
+  else if (d.status === 'PASS' && ct.done < ct.total) msg = 'Warning: PASS with ' + (ct.total - ct.done) + ' unticked check(s). Use FAIL or INCONCLUSIVE if one did not happen as described.';
+  else if (d.status === 'PASS' && !d.checks.ran) msg = 'Warning: PASS but "I performed the steps" is unticked.';
+  else if (d.status === 'BLOCKED') msg = 'BLOCKED: add a generic reason in the notes (for example "no newer sample") and approve it if it may be exported.';
+  el.textContent = msg;
+}
+function refreshChrome() { var old = document.querySelector('header'); if (old) old.replaceWith(headerEl()); }
+
+/* ---------- modals ---------- */
+function modal(content) { var wrap = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'box' }, content)); document.body.append(wrap); return function close() { wrap.remove(); }; }
+function openReview(kind) {
+  var inc = {}, body = h('div'), close, lines = [];
+  var list = h('div'); var chosen = {};
+  var sm = summary();
+  body.append(h('h2', {}, kind === 'html' ? 'Review before saving the filled HTML' : kind === 'json' ? 'Review before exporting results' : 'Review before copying the summary'),
+    h('div', { class: 'warn' }, 'Only what is listed here is included. Nothing is uploaded; the file stays where you save it. Read every line.'));
+  var tests = ORDER.filter(function (id) { var d = S.tests[id]; return d && (d.status !== 'NOT TESTED' || Object.keys(d.checks).length || Object.keys(d.fields).length || d.note); });
+  body.append(h('p', {}, tests.length + ' of ' + sm.total + ' tests have data. Status: ' + STATUSES.map(function (s) { return sm.counts[s].length + ' ' + s; }).join(', ') + '.'));
+  var sess = Object.keys(S.session).filter(function (k) { return S.session[k]; }).map(function (k) { return k + '=' + S.session[k]; }).join(', ');
+  body.append(h('p', {}, 'Session values: ' + (sess || 'none')));
+  var tbl = h('table', {}, h('tr', {}, h('th', {}, 'Test'), h('th', {}, 'Typed values included')));
+  tests.forEach(function (id) { var d = S.tests[id], f = Object.keys(d.fields).filter(function (k) { return d.fields[k] !== ''; }).map(function (k) { return k + '=' + d.fields[k]; }).join('; '); tbl.append(h('tr', {}, h('td', {}, id + ' ' + d.status), h('td', {}, f || '\u2014'))); });
+  body.append(tbl);
+  var withNotes = tests.filter(function (id) { return S.tests[id].note; });
+  body.append(h('h3', { class: 'sec' }, 'Notes (' + withNotes.length + ')'));
+  if (!withNotes.length) body.append(h('p', { class: 'hint' }, 'No notes exist.'));
+  withNotes.forEach(function (id) {
+    var d = S.tests[id], hits = scanNote(d.note), row = h('div', { class: 'card' });
+    row.append(h('strong', {}, id));
+    if (!d.noteApproved) { row.append(h('p', { class: 'hint' }, 'Not approved on the test page (' + d.note.length + ' characters): EXCLUDED. It stays in this browser only.')); }
+    else {
+      var cb = h('input', { type: 'checkbox' }); cb.checked = hits.length === 0; chosen[id] = cb.checked;
+      cb.addEventListener('change', function () { chosen[id] = cb.checked; });
+      row.append(h('pre', {}, d.note));
+      if (hits.length) row.append(h('div', { class: 'warn bad' }, 'Possible private content: ' + hits.join(', ') + '. Excluded unless you tick the box.'));
+      row.append(h('label', { class: 'chk' }, cb, h('span', {}, hits.length ? 'Include this note despite the warning' : 'Include this note (no known pattern matched; that is not proof)')));
+    }
+    body.append(row);
+  });
+  if (kind === 'html') body.append(h('div', { class: 'warn' }, 'Notes that are excluded will NOT be stored in the saved file. They remain only in this browser. To keep a note in the file, approve and include it.'));
+  var conf = h('input', { type: 'checkbox' }), go1 = h('button', { class: 'primary', disabled: true }, kind === 'summary' ? 'Copy to clipboard' : 'Download');
+  conf.addEventListener('change', function () { go1.disabled = !conf.checked; });
+  go1.addEventListener('click', function () {
+    var o = buildExport(chosen);
+    if (kind === 'json') download('rx-v1-test-results-' + stamp() + '.json', JSON.stringify(o, null, 2), 'application/json');
+    else if (kind === 'html') saveHtml(o);
+    else copyText(markdownSummary(o));
+    close();
+  });
+  body.append(h('label', { class: 'chk' }, conf, h('span', {}, 'I have read everything listed above. It contains no client names, project names, model or file names, paths, GUIDs, user names or screenshots.')),
+    h('div', { class: 'row' }, go1, h('button', { onclick: function () { close(); } }, 'Cancel')));
+  close = modal(body);
+}
+function safeJson(o) { return JSON.stringify(o).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'); }
+function saveHtml(o) {
+  var clone = document.documentElement.cloneNode(true);
+  clone.querySelector('#app').textContent = '';
+  /* keep only #app, the embedded state and the program script: drop review dialogs, toasts and any other transient node */
+  Array.prototype.slice.call(clone.querySelector('body').children).forEach(function (n) {
+    var keep = n.id === 'app' || n.id === 'rx-embedded' || (n.tagName === 'SCRIPT' && !n.id);
+    if (!keep) n.remove();
+  });
+  clone.querySelector('#rx-embedded').textContent = safeJson(o);
+  download('v1-revit-test.filled-' + stamp() + '.html', '<!DOCTYPE html>\n' + clone.outerHTML, 'text/html;charset=utf-8');
+}
+function importPick() { document.getElementById('imp').click(); }
+function importFile(ev) {
+  var f = ev.target.files && ev.target.files[0]; ev.target.value = ''; if (!f) return;
+  if (f.size > 2000000) { toast('File too large for a results file'); return; }
+  var r = new FileReader();
+  r.onload = function () {
+    var res; try { res = sanitizeState(JSON.parse(String(r.result))); } catch (e) { res = { error: 'Not valid JSON.' }; }
+    var body = h('div'), close;
+    if (res.error) { body.append(h('h2', {}, 'Import refused'), h('p', {}, res.error), h('button', { onclick: function () { close(); } }, 'Close')); close = modal(body); return; }
+    var n = Object.keys(res.state.tests).length;
+    body.append(h('h2', {}, 'Import results?'), h('p', {}, 'The file holds ' + n + ' test record(s). Importing REPLACES your current progress in this browser.'),
+      res.warns.length ? h('div', { class: 'warn' }, 'Ignored or dropped: ' + res.warns.slice(0, 8).join('; ') + (res.warns.length > 8 ? ' (+' + (res.warns.length - 8) + ' more)' : '')) : null,
+      h('div', { class: 'row' }, h('button', { class: 'danger', onclick: function () { S = res.state; S._alt = null; persist(); close(); render(); toast('Imported'); } }, 'Overwrite and import'), h('button', { onclick: function () { close(); } }, 'Cancel')));
+    close = modal(body);
+  };
+  r.onerror = function () { toast('Could not read the file'); };
+  r.readAsText(f);
+}
+function resetDialog() {
+  var body = h('div'), close;
+  body.append(h('h2', {}, 'Reset all testing progress?'), h('p', {}, 'This clears every status, value and note in this browser and in this open page. Exported or saved files are not touched. It cannot be undone.'),
+    h('div', { class: 'row' }, h('button', { class: 'danger', onclick: function () { S = freshState(); if (storageOK) { try { localStorage.removeItem(KEY); } catch (e) { } } loadInfo = ''; persist(); close(); render(); toast('Progress cleared'); } }, 'Yes, clear everything'), h('button', { onclick: function () { close(); } }, 'Cancel')));
+  close = modal(body);
+}
+
+/* ---------- start ---------- */
+window.addEventListener('DOMContentLoaded', function () { app = document.getElementById('app'); probeStorage(); loadInitial(); render(); });
+</script>
+
+
+</body></html>
