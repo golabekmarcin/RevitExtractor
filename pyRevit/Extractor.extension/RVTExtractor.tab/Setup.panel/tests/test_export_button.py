@@ -2964,6 +2964,57 @@ class CloudPlanTests(unittest.TestCase):
             logic.plan_cloud_jobs([self.alpha._replace(name="a:b.rvt")], CAPS_2022, self.files,
                                   self.memory)
 
+    # -- refresh_stat: the cache files an in-place open rewrote
+
+    def disk_stat(self, changed=None, missing=()):
+        sizes = dict((f.path, (f.size, f.mtime)) for f in self.files)
+        sizes.update(changed or {})
+
+        def stat(path):
+            if path in missing or path not in sizes:
+                raise OSError(path)
+            return types.SimpleNamespace(st_size=sizes[path][0], st_mtime=sizes[path][1])
+        return stat
+
+    def refreshed_job(self, stat):
+        links = [self.link("Beta-MEP", CP1, CM4)]
+        row, files = rx_cloud.refresh_stat(self.alpha, links, self.files, stat)
+        return row, files, logic.plan_cloud_jobs([row], CAPS_2022, files, self.memory,
+                                                 {row.key: links})[0]
+
+    def test_refresh_takes_the_new_size_and_time_of_the_host_and_its_links(self):
+        stat = self.disk_stat({self.alpha.cache_path: (99, CNOW), self.beta.cache_path: (77, CNOW)})
+        row, files, job = self.refreshed_job(stat)
+        self.assertEqual((row.size, row.cache_mtime), (99, CNOW))
+        items = job["stage"]["items"]
+        self.assertEqual([(i["size"], i["mtime"]) for i in items], [(99, CNOW), (77, CNOW)])
+        self.assertEqual(job["stage"]["notes"], [])
+        self.assertEqual(len(files), len(self.files))
+
+    def test_a_file_that_did_not_change_is_left_as_it_is(self):
+        row, files, job = self.refreshed_job(self.disk_stat())
+        self.assertEqual(row, self.alpha)
+        self.assertEqual(files, self.files)
+
+    def test_a_link_that_cannot_be_stat_ed_is_missing_with_the_usual_note(self):
+        row, files, job = self.refreshed_job(self.disk_stat(missing=[self.beta.cache_path]))
+        self.assertEqual([i["name"] for i in job["stage"]["items"]], ["Alpha-Architecture.rvt"])
+        self.assertEqual(len(job["stage"]["notes"]), 1)
+        self.assertIn("Beta-MEP.rvt", job["stage"]["notes"][0])
+
+    def test_a_host_that_cannot_be_stat_ed_keeps_its_scan_time_values(self):
+        row, files, job = self.refreshed_job(self.disk_stat(missing=[self.alpha.cache_path]))
+        self.assertEqual(row, self.alpha)
+
+    def test_a_file_changed_after_the_plan_is_still_caught_by_the_copy(self):
+        import rx_cloud_stage
+        stat = self.disk_stat({self.alpha.cache_path: (99, CNOW)})
+        row, files, job = self.refreshed_job(stat)
+        later = self.disk_stat({self.alpha.cache_path: (100, CNOW + 5)})
+        with self.assertRaises(rx_cloud.StageError):
+            list(rx_cloud_stage.copy_steps(job["stage"], os.path.join(self.tmp, "run"),
+                                           stat=later))
+
     def test_shared_index_is_copied_and_view_ids_need_one_model(self):
         shared = launcher_default_index()
         jobs = logic.plan_cloud_jobs([self.alpha, self.zazolc], CAPS_2022, self.files,
@@ -2989,6 +3040,15 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.files = cloud_cache_files()
         self.cscan = FakeCloudScan(self.files)
         self.walks = []
+        self.disk = {}          # path -> (size, mtime) a cache file has now (default: as scanned)
+        self.unreadable = set()
+
+    def stat(self, path):
+        if path in self.unreadable:
+            raise OSError(path)
+        size, mtime = self.disk.get(path) or [(f.size, f.mtime) for f in self.files
+                                              if f.path == path][0]
+        return types.SimpleNamespace(st_size=size, st_mtime=mtime)
 
     def cloud(self, memory=None, scan=None):
         def scan_cache(root):
@@ -2996,7 +3056,7 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
             return list(self.files)
         return {"folders": {"cache": CACHE_ROOT, "journals": os.path.join("C:\\", "journals")},
                 "memory": memory or self.memory, "scan": scan or self.cscan,
-                "scan_cache": scan_cache, "now": lambda: CNOW}
+                "scan_cache": scan_cache, "now": lambda: CNOW, "stat": self.stat}
 
     def open_cloud(self, included=(CP1_KEY,), switch=True, **kwargs):
         if included:
@@ -3451,16 +3511,74 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(len(self.submitted), 1, "still exported")
         job = self.submitted[0]["jobs"][0]
         self.assertEqual(job["model_path"], self.cby("Alpha-Architecture.rvt").cloud.cache_path)
-        self.assertIsNone(job["naming"].get("values"))
         notes = job["stage"]["notes"]
         self.assertEqual(len(notes), 1)
         self.assertIn("Revit could not open the model.", notes[0])
         self.assertIn("own names", notes[0])
+        self.assertNotIn("naming", job, "a failed open means the Extractor's own names")
         self.assertIn("Revit could not open the model.", self.window.error_text.Text)
         self.assertIsNone(GUID_ANYWHERE.search(notes[0]))
         self.assertEqual(self.cticked(), [])
         self.assertIsNone(MOUSE.OverrideCursor)
         self.assertTrue(self.window.IsEnabled)
+
+    def alpha_and_beta_files(self):
+        return (self.cby("Alpha-Architecture.rvt").cloud.cache_path,
+                self.cby("Beta-MEP.rvt").cloud.cache_path)
+
+    def test_an_open_that_rewrote_the_cache_files_does_not_fail_the_export(self):
+        self.cloud_answer = {"views_2d": [], "views_3d": [], "ifc_setups": [], "ifc_error": "",
+                             "links": [self.link("Beta-MEP", CP1, CM4)]}
+        self.open_cloud()
+        alpha, beta = self.alpha_and_beta_files()
+        self.disk = {alpha: (99, CNOW), beta: (77, CNOW)}
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        items = self.submitted[0]["jobs"][0]["stage"]["items"]
+        self.assertEqual([(i["size"], i["mtime"]) for i in items], [(99, CNOW), (77, CNOW)])
+        self.assertEqual(self.submitted[0]["jobs"][0]["stage"]["notes"], [])
+
+    def test_an_unreadable_link_after_the_open_is_a_missing_link_not_a_crash(self):
+        self.cloud_answer = {"views_2d": [], "views_3d": [], "ifc_setups": [], "ifc_error": "",
+                             "links": [self.link("Beta-MEP", CP1, CM4)]}
+        self.open_cloud()
+        self.unreadable = {self.alpha_and_beta_files()[1]}
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        stage = self.submitted[0]["jobs"][0]["stage"]
+        self.assertEqual(len(stage["items"]), 1)
+        self.assertIn("Beta-MEP.rvt", stage["notes"][0])
+
+    def test_a_failed_open_leaves_the_scan_time_numbers_alone(self):
+        self.cloud_error = RuntimeError("boom")
+        self.open_cloud()
+        alpha = self.cby("Alpha-Architecture.rvt").cloud
+        self.disk = {alpha.cache_path: (99, CNOW)}
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        item = self.submitted[0]["jobs"][0]["stage"]["items"][0]
+        self.assertEqual((item["size"], item["mtime"]), (alpha.size, alpha.cache_mtime))
+
+    def test_choose_views_plans_from_the_refreshed_files(self):
+        self.cloud_answer = {"views_2d": [], "views_3d": [], "ifc_setups": [], "ifc_error": "",
+                             "links": [self.link("Beta-MEP", CP1, CM4)]}
+        self.open_cloud()
+        alpha, beta = self.alpha_and_beta_files()
+        self.disk = {alpha: (99, CNOW), beta: (77, CNOW)}
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(EXPORT_UI, "ViewWindow", self.views_window([])):
+            self.fire("views_btn")
+        items = self.submitted[0]["jobs"][0]["stage"]["items"]
+        self.assertEqual([(i["size"], i["mtime"]) for i in items], [(99, CNOW), (77, CNOW)])
+
+    def test_a_successful_open_still_names_with_the_values(self):
+        self.cloud_answer = self.values_answer()
+        self.names_cloud_window()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.fire("export_btn")
+        self.assertEqual(self.submitted[0]["jobs"][0]["naming"]["values"],
+                         self.cloud_answer["values"])
 
     def test_a_failed_open_without_a_profile_says_only_that_it_was_not_opened(self):
         self.cloud_error = RuntimeError("boom")

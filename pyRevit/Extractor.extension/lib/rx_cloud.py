@@ -687,6 +687,33 @@ def _shown_name(name):
     return value.replace("\r", " ").replace("\n", " ")
 
 
+def refresh_stat(row, link_refs, cache_files, stat=os.stat):
+    """(row, cache_files) with the size and time of the host file and of the cache copies of its
+    links read again, for after an in-place open rewrote them (plan_stage copies the numbers
+    into the plan and rx_cloud_stage rejects a file that differs). Read-only stat. A link copy
+    that cannot be stat'ed is left out, so plan_stage reports it as missing; a host that cannot
+    be stat'ed keeps its scan-time values."""
+    wanted = set()
+    for ref in link_refs or ():
+        if isinstance(ref, dict):
+            wanted.add((normalize_guid(ref.get("project_guid")), normalize_guid(ref.get("model_guid"))))
+    files = []
+    for item in cache_files:
+        if (item.project_guid, item.model_guid) in wanted and item.path != row.cache_path:
+            try:
+                st = stat(item.path)
+                item = item._replace(size=st.st_size, mtime=st.st_mtime)
+            except Exception:
+                continue
+        files.append(item)
+    try:
+        st = stat(row.cache_path)
+        row = row._replace(size=st.st_size, cache_mtime=st.st_mtime)
+    except Exception:
+        pass
+    return row, files
+
+
 def plan_stage(row, link_refs, cache_files, memory):
     """StagePlan for exporting `row` (a CloudRow) from copies: the host first, then its links.
 

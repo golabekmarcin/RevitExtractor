@@ -914,6 +914,9 @@ class ModelWindow(forms.WPFWindow):
         named = []
         for job in jobs:
             copy = dict(job)
+            if job.get("own_names"):
+                named.append(copy)
+                continue
             copy["naming"] = dict(naming)
             if job.get("name_values") is not None:      # read by the one in-place cloud open
                 copy["naming"]["values"] = job["name_values"]
@@ -1405,11 +1408,27 @@ class ModelWindow(forms.WPFWindow):
                 len(unique) - MAX_NOTES_SHOWN)
         return text_
 
-    def _store_links(self, row, links):
+    def _refresh_cloud(self, row, snapshot):
+        """The row's CloudRow with its size and time (and the link copies' in the cache list)
+        read again after the open, which rewrote those cache files. Read-only stat."""
+        cloud, files = rx_cloud.refresh_stat(
+            row.cloud, self._links_of(snapshot), self._cache_files(),
+            self._cloud_value("stat", os.stat))
+        self._cloud_files = files
+        return cloud
+
+    def _refresh_opened(self, rows, snapshots):
+        """Row key -> refreshed CloudRow for every row that opened; call once all opens are done
+        (a later open can rewrite a link copy an earlier one shares)."""
+        return dict((row.key, self._refresh_cloud(row, snapshots[row.key]))
+                    for row in rows if row.key in snapshots)
+
+    def _store_links(self, row, links, cloud=None):
         """An open succeeded: keep the link list in the cloud memory (a failed save only costs
         the fallback of a later failed open; it never raises)."""
         memory = self._cloud["memory"]
-        memory.store_links(link_key(row.cloud), row.cloud.cache_mtime, links)
+        cloud = cloud or row.cloud
+        memory.store_links(link_key(cloud), cloud.cache_mtime, links)
         memory.save()
 
     @staticmethod
@@ -1461,7 +1480,7 @@ class ModelWindow(forms.WPFWindow):
         self._resume(resume)
         return snapshots, reasons
 
-    def _after_opens(self, rows, snapshots):
+    def _after_opens(self, rows, snapshots, clouds):
         """What every successful open leaves behind: the links in the memory, the parameter names
         in the property catalog (never logged), and one alert for the whole run when Revit could
         not hand back everything it took."""
@@ -1470,7 +1489,7 @@ class ModelWindow(forms.WPFWindow):
             snapshot = snapshots.get(row.key)
             if snapshot is None:
                 continue
-            self._store_links(row, self._links_of(snapshot))
+            self._store_links(row, self._links_of(snapshot), clouds.get(row.key))
             if isinstance(snapshot.get("catalog"), dict):   # script.py: rx_reader.collect_catalog
                 merge_catalog(os.path.join(os.path.dirname(self._prefs_path or ""),
                                            "property-catalog.json"), snapshot["catalog"])
@@ -1491,6 +1510,7 @@ class ModelWindow(forms.WPFWindow):
             if isinstance(snapshot.get("values"), dict):
                 job["name_values"] = snapshot["values"]
             return
+        job["own_names"] = True     # _with_naming: no template naming for a model that did not open
         note = tr("{0} could not be opened ({1}); it is exported from the cache as it is.",
                   "Nie udało się otworzyć modelu {0} ({1}); wyeksportowano go z pamięci "
                   "podręcznej bez zmian.").format(row.Name, reason)
@@ -1514,11 +1534,12 @@ class ModelWindow(forms.WPFWindow):
             if opened is None:
                 return
             snapshots, reasons = opened
-            self._after_opens(fresh, snapshots)
+            clouds = self._refresh_opened(fresh, snapshots)
+            self._after_opens(fresh, snapshots, clouds)
             link_lists = dict((key, self._links_of(snapshot))
                               for key, snapshot in snapshots.items())
             try:
-                jobs = plan_cloud_jobs([row.cloud for row in fresh], self._caps,
+                jobs = plan_cloud_jobs([clouds.get(row.key, row.cloud) for row in fresh], self._caps,
                                        self._cache_files(), memory, link_lists, (), shared)
             except (SetupError, StageError) as error:
                 self._show_error(_error_text(error))
@@ -1548,7 +1569,8 @@ class ModelWindow(forms.WPFWindow):
             self._resume(resume)
             return
         snapshot = snapshots[row.key]
-        self._after_opens([row], snapshots)
+        clouds = self._refresh_opened([row], snapshots)
+        self._after_opens([row], snapshots, clouds)
         links = self._links_of(snapshot)
         shown = dict(snapshot)
         shown["title"] = row.Name
@@ -1565,7 +1587,7 @@ class ModelWindow(forms.WPFWindow):
         picked = getattr(view, "job", None)
         if picked:
             try:
-                job = plan_cloud_job(row.cloud, picked["index"], self._cache_files(),
+                job = plan_cloud_job(clouds[row.key], picked["index"], self._cache_files(),
                                      self._cloud["memory"], links)
             except (SetupError, StageError) as error:
                 self._show_error(_error_text(error))
