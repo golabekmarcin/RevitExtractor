@@ -949,9 +949,10 @@ class Queue(object):
             extra = {}
             if getattr(self._copier, "accepts_report", False):
                 def report(item, how, job=job):
-                    job.stage_modes[item.name] = how
                     est = job._linked_names     # a link that fell back to a copy (or the reverse)
-                    if how == "copied" and item.name in est:
+                    if how != "copying":        # "copying" is the early notice of a fallback
+                        job.stage_modes[item.name] = how
+                    if how in ("copied", "copying") and item.name in est:
                         est.discard(item.name)
                         job.stage_total += item.size
                     elif how == "linked" and item.name not in est:

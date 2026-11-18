@@ -104,6 +104,29 @@ class LinkRoute(WritablePlan, StageCase):
         self.assertFalse(os.path.samefile(beta, plan.items[1].src))
         self.assertEqual(facts(beta)[2], facts(plan.items[1].src)[2])
 
+    def test_fallback_is_reported_before_the_first_chunk(self):
+        plan = self.writable_plan()
+        events = []
+
+        def link(source, target):
+            raise OSError("no")
+        for step in copy_steps(plan, self.dest, chunk=1, link=link,
+                               report=lambda item, mode: events.append(("report", mode))):
+            events.append(("step", step[2].name))
+        self.assertEqual(events[0], ("report", "copying"))
+        self.assertEqual(events.count(("report", "copying")), 2)
+        self.assertLess(events.index(("report", "copying")), events.index(("step", plan.items[0].name)))
+        self.assertEqual([e[1] for e in events if e[0] == "report" and e[1] != "copying"],
+                         ["copied", "copied"])
+
+    def test_plain_copy_and_link_send_no_early_notice(self):
+        for link, kind in ((os.link, "linked"), (None, "copied")):
+            plan = self.writable_plan()
+            events = []
+            list(copy_steps(plan, self.dest + kind, chunk=CHUNK, link=link,
+                            report=lambda item, mode: events.append(mode)))
+            self.assertEqual(events, [kind, kind])
+
     def test_existing_target_is_never_replaced_by_a_link(self):
         plan = self.two_item_plan()
         os.makedirs(self.dest)

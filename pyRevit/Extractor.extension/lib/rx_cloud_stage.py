@@ -217,6 +217,8 @@ def copy_steps(plan, dest_dir, chunk=CHUNK, open=io.open, stat=os.stat, create=_
                     linked = created = True
                 except Exception:   # not linkable here (other drive, no support): copy instead
                     linked = False
+                    if report is not None:
+                        report(item, "copying")     # before the first chunk: the runner re-counts it now
             if linked:
                 # the same file under a second name: its size and time are the source's own
                 if not _matches(stat(target), item) or not _matches(stat(item.src), item):

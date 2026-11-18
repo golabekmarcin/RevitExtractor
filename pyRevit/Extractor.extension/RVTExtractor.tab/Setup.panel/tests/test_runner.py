@@ -1843,10 +1843,40 @@ class QueueStagingTest(TempDirTest):
         queue = self.queue(copier=self.copier(link=link))
         a = queue.add(self.staged_job())
         queue.poll()
-        self.assertEqual(self.job(queue, a).stage_total, 0)
+        self.assertEqual(self.job(queue, a).stage_total, os.path.getsize(self.link))  # notice came first
         job = self.poll_until(queue, a, ("running",))
         self.assertEqual((job.stage_link_count, job.stage_total, job.stage_done),
                          (1, os.path.getsize(self.link), os.path.getsize(self.link)))
+
+    def test_a_failed_link_is_recounted_before_the_first_copied_chunk(self):
+        import rx_status
+        size = os.path.getsize(self.link)
+        calls, seen = [], []
+
+        def link(source, target):
+            calls.append(source)
+            if len(calls) == 2:
+                raise OSError("no link here")
+            os.link(source, target)
+        inner = self.copier(link=link)
+
+        def copier(plan, folder, chunk, report=None):
+            for step in inner(plan, folder, chunk, report=report):
+                job = self.job(queue, a)
+                seen.append((step[2].name, job.stage_link_count, job.stage_total,
+                             job.stage_done, rx_status.job_view(job, None, 0, None)["progress"]))
+                yield step
+        for name in ("accepts_report", "linking", "mode"):
+            setattr(copier, name, getattr(inner, name))
+        queue = self.queue(copier=copier)
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        first = [row for row in seen if row[0] == "Alpha-Architecture.rvt"][0]
+        self.assertEqual(first[1:3], (1, size))     # already a copy at its first chunk
+        self.assertTrue(first[4].endswith("MB"), first[4])
+        self.assertIn("Copying from the cache", first[4])
+        self.assertEqual(job.stage_modes["Alpha-Architecture.rvt"], "copied")
+        self.assertEqual([i["mode"] for i in self.stage_json(job)["items"]], ["linked", "copied"])
 
     def test_without_hard_links_everything_is_a_copy(self):
         queue = self.queue(copier=self.copier(linking=False))
