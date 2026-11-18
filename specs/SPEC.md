@@ -35,6 +35,7 @@ Run the whole export from Revit through **one pyRevit button**, with no PowerShe
 | `status-window` | Modeless progress/result window: Open output folder, Open in Analyzer, Cancel export | `export-runner`, `shared-ui` |
 | `export-button` | The one ribbon button (zero-doc only) and its main window: model → views → options → queue | all of the above |
 | `cloud-catalog` | Cloud list from Revit journals (project/file names + GUIDs) matched to `CollaborationCache` files by project GUID + model GUID; staging copies under real names with cache dates (Q27, Q29; APS API route parked 2026-11-16, `HANDOVER.md`). **Built and unit-tested (2026-11-16); not run in Revit** (checklist Part H). Amends `export-runner`, `status-window` and `export-button` | `model-reader`, `capabilities`, `export-runner`, `status-window` |
+| `named-copies` | File-name template: `<run>\named\` of hard links under the owner's names after a successful export (`SPEC-named-copies.md`, `plan-named-copies.md`). **Built 2026-11-18 and unit-tested (one real Extractor run on the Dynamo sample, counts); owner verification pending (Part I of `v1-revit-test`).** Amends `export-runner`, `status-window` and `export-button` | `model-reader`, `export-runner`, `status-window`, `export-button` |
 | `ifc-setup-command` | Separate small command with a document open: prepare an IFC setup (Q22) | `shared-ui`, `capabilities` |
 
 Build order: `shared-ui`, `capabilities` → `index-builder`, `model-catalog`, `model-reader`, `export-runner` → `status-window` → `export-button`.

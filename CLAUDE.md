@@ -70,6 +70,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.exte
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\run_extractor_integration.ps1 -Cloud
 # -Named: the normal run, then runner_cli.py name (rx_naming.NamedRun, real hard links, "{OriginalName} {Date}"), counts-only JSON, output\ SHA-256 compared, then the probe's deliverables/mapping counts (node on PATH). Verified 2026-11-18 (Revit 2023 Extractor): PASS (5 PDF + 1 SVF folder linked, 0 copied, 64 output files unchanged; no PDF in a GUID folder, no DWG/IFC in the default export).
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\run_extractor_integration.ps1 -Named
+# Counts only for the named copies of one run (files, folders, hard links, longest path, named.json state; never a name or path).
+# Not yet run against a Revit-made run (run once on a Dynamo-sample run made by run_extractor_integration.ps1).
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\v1_test_kit.ps1 -Named "<run folder>"
 # Native-parser check for the 2022-2025 button. Auto-picks the first Revit 2022-2025
 # Extractor and handles both parser shapes. Verified 2026-11-09 on Revit 2023 (9/9 pass).
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pyRevit\Extractor.extension\RVTExtractor.tab\Setup.panel\tests\validate_native_legacy.ps1

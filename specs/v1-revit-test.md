@@ -1,6 +1,6 @@
 # v1 Revit test: the owner's one session
 
-One session, about two hours (Part H, the Cloud source, adds 30 minutes and needs your ACC model), on the Revit 2022 + pyRevit machine. Part F (10 minutes) is on the machine with Revit 2025. Answer with the item number and PASS, FAIL or a note, for example `C6 FAIL: second window appeared`. Results come back privately, never through git.
+One session, about two hours (Part H, the Cloud source, adds 30 minutes and needs your ACC model; Part I, file names, adds 25 minutes), on the Revit 2022 + pyRevit machine. Part F (10 minutes) is on the machine with Revit 2025. Answer with the item number and PASS, FAIL or a note, for example `C6 FAIL: second window appeared`. Results come back privately, never through git.
 
 **Everything below is unverified inside Revit.** The unit tests and the real Extractor runs on the agent's machine never ran IronPython, pyRevit or Revit's API. This session is the first time the code runs there, so a first-click failure (Part A) is possible and cheap to find: Part A comes first and takes minutes.
 
@@ -532,10 +532,32 @@ Expected: `Items in the model folder: 1`, `stage.json present: True`, `RevitExtr
 
 Open questions this part answers (also in `HANDOVER.md`): do journals after Revit 2022 keep the same lines (H1); folders cannot be chosen, only projects, because the journals carry no folder (H1 key names); does a background open of a cache file work without touching the cloud or the file (H3); can the journal or cache folder be moved (the kit only reports whether the fixed paths exist).
 
+## Part I: file names, "named copies" (25 minutes)
+
+With a file-name template set, a successful export gets a `named` folder in its run folder: hard links of every PDF, DWG, IFC and 3D view folder under the template's names; `output` stays as the Extractor wrote it. **Unit-tested and run once on the Dynamo sample with Revit 2023's Extractor (counts); never run in Revit: every item below is unverified there.** Counts and choices only: never send a file, sheet, model or parameter name or a path. The kit prints counts only: `& $kit -Named <run folder>` (state, counts, files and folders under `named`, hard links, longest path, files under `output`). The blocks use the `$kit`, `$out` and `$res` lines of the other parts.
+
+```powershell
+$run = Get-ChildItem $out -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'named.json') } | Sort-Object LastWriteTime | Select-Object -Last 1
+& $kit -Named $run.FullName *>&1 | Tee-Object (Join-Path $res 'I2.txt')
+```
+
+- [ ] **I0** Probe a real export. In the `Analyzer` folder: `node scripts/probe-export-structure.mjs "<output folder>"` (counts only; add `--show-names` only if you agree to send the other attribute names). Record: do the sheet number and name attributes show under `builtIn` (yes/no); the language of those names (English/Polish/other); `viewableIdEqualsExternalId` and `viewables`. Not English: set INCONCLUSIVE and run again with `--show-names`.
+- [ ] **I1** The File names row. In the model window: **Presets** fill the field, **Insert** adds a token, **Clear** empties it, the example line follows the field. `{SheetNumber` (no closing brace) shows an error and Export is refused with the ticks kept. After closing and restarting Revit the template and the checkbox are remembered. Polish texts too, if you switch pyRevit to Polish.
+- [ ] **I2** Default-scope export with `{SheetNumber} - {SheetName}`. The row says "Naming files: x of y"; `named` appears; run the block above (state `done`, `failed 0`, every checked file has a second hard link, longest path 259 or less). **Open in Analyzer** opens `output` as before. Look at three names by eye: pass or fail only.
+- [ ] **I3** Custom parameter: `{SheetNumber} - {param:<one of your sheet parameters>}` (type the real name only in your own session). Three files hold the values: pass or fail.
+- [ ] **I4** Clash numbering: template `{Year}` only. The number of files under `named` equals the number of PDFs; names carry " (2)", " (3)" ...
+- [ ] **I5** A 200-character template on a deep output folder (about 120 characters): names are cut; the longest path printed is 259 or less.
+- [ ] **I6** A 3D view in scope: `named` holds a folder with the whole view subtree; the file count equals that of the view folder under `output\Resource\3D View` (counts only).
+- [ ] **I7** A Cloud (ACC) job with a template: named copies appear after the staged copies are cleaned up; `& $kit -Stamp <host cache file>` before and after is equal; no RevitExtractor process left (`-Check`). Needs your ACC model: counts only, like Part H.
+- [ ] **I8** The checkbox "A separate folder for each format" on: `named` has one folder per exported format (PDF, DWG, IFC, 3D).
+- [ ] **I9** (optional) Close Revit while the row says "Naming files": `named.json` stays `running`; after restarting Revit the next Export works.
+
+If names are not recognised (Revit's language is not English), files keep their original name and a note says so: record the language, set INCONCLUSIVE and run I0 with `--show-names`.
+
 ## What to send back, privately
 
 1. This list with PASS, FAIL or a note per item, and the times of D1, D3, D4 and D6.
-2. The outputs: the files in `C:\RX-test\results` (`S1.txt`, `C9.txt`, `C12.txt`, `C13.txt`, `G1.txt`, `G2.txt`, and `F1.txt` from the Revit 2025 machine). Part H: `H1.txt`, `H3-before.txt`, `H3-after.txt` hold numbers only; send the counts, not the files. To list them: `Get-ChildItem C:\RX-test\results | Select-Object Name, Length, LastWriteTime`.
+2. The outputs: the files in `C:\RX-test\results` (`S1.txt`, `C9.txt`, `C12.txt`, `C13.txt`, `G1.txt`, `G2.txt`, and `F1.txt` from the Revit 2025 machine). Part I: `I2.txt` ... `I9.txt` hold counts only. Part H: `H1.txt`, `H3-before.txt`, `H3-after.txt` hold numbers only; send the counts, not the files. To list them: `Get-ChildItem C:\RX-test\results | Select-Object Name, Length, LastWriteTime`.
 3. For any failure: the text of pyRevit's output window, and `console.log` and `stderr.log` of that run folder. These can name models and paths, so never commit them.
 
 ## What the agent does with the results

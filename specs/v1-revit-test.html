@@ -69,7 +69,7 @@ ol,ul{padding-left:22px;margin:6px 0}li{margin:3px 0}
 /* RevitExtractor v1 live-test guide. Standalone, offline. No network calls, no external assets.
    All text from users or imported files is inserted with textContent only (never as HTML). */
 
-var GUIDE = { schema: 'rx-v1-live-test', schemaVersion: 1, version: '1.1.0', date: '2026-11-16',
+var GUIDE = { schema: 'rx-v1-live-test', schemaVersion: 1, version: '1.2.0', date: '2026-11-18',
   baseline: 'branch mgo-changes; the exact commit is the Expected baseline set on the Start page' };
 var STATUSES = ['NOT TESTED', 'PASS', 'FAIL', 'BLOCKED', 'INCONCLUSIVE'];
 var GLYPH = { 'NOT TESTED': '\u00b7', 'PASS': '\u2713', 'FAIL': '\u2717', 'BLOCKED': '\u2298', 'INCONCLUSIVE': '?' };
@@ -119,10 +119,20 @@ var PARTS = [
   { id: 'D', name: 'D. Scale and edge cases' },
   { id: 'E', name: 'E. Polish' },
   { id: 'F', name: 'F. Revit 2025 machine' },
-  { id: 'H', name: 'H. Cloud (ACC) models' }
+  { id: 'H', name: 'H. Cloud (ACC) models' },
+  { id: 'I', name: 'I. File names (named copies)' }
 ];
 var SYN = 'Uses only the Autodesk sample models copied by the kit. No client model is needed.';
 var CLOUDRULE = 'Needs a real ACC model, so this is an exception to the synthetic-data rule (like D4) and needs your explicit authorization. Only counts and choices leave the computer, never a model, project or file name, a path or a GUID.';
+/* Part I helpers: the kit's -Named block and the answer fields shared by the I items */
+var NAMEDPRIOR = 'Unit-tested and run once on the Dynamo sample with Revit 2023\'s Extractor (counts); never run in Revit.';
+var NEWESTRUN = String.raw`
+$run = Get-ChildItem $out -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'named.json') } | Sort-Object LastWriteTime | Select-Object -Last 1`;
+var NAMEDCMD = function (name) { return { t: '1. Counts of the named copies (newest run with named.json; counts only)', cwd: 'any', c: P.kit + '\n' + P.out + '\n' + P.res + NEWESTRUN + "\n& $kit -Named $run.FullName *>&1 | Tee-Object (Join-Path $res '" + name + ".txt')" }; };
+var NSTATE = { k: 'state', l: 'named.json state', t: 'choice', o: ['done', 'partial', 'failed', 'running', 'none'] };
+var NCOUNTS = {};
+['total', 'linked', 'copied', 'failed', 'untied'].forEach(function (k) { NCOUNTS[k] = { k: k, l: 'counts: ' + k, t: 'int' }; });
+NCOUNTS.notes = { k: 'notes', l: 'notes (count)', t: 'int' };
 var TESTS = [
 { id: 'P1', part: 'P', title: 'Baseline, tools and pyRevit registration', where: 'PowerShell (Windows PowerShell 5.1) on Computer B, then Revit',
   purpose: 'Make sure Computer B runs exactly the code version you intend to test, and that the tools the later tests need are present.',
@@ -536,7 +546,106 @@ $m = Join-Path $run.FullName 'model'
   evidence: 'The values above and the RESULT line of block 4. No names.', prior: 'The link code and the script are tested on synthetic files only (CPython); the IronPython link call (CreateHardLinkW), the read-only skip and the Extractor reading from links have never run in Revit.',
   trouble: ['Block 3 shows plain copies only and block 2 says every cache file is read-only: this is expected, not a failure. Record the numbers and mark INCONCLUSIVE (hard links cannot help with this cache as it is). If block 2 says none is read-only, the link failed and the code copied instead (another drive, or no link support): record the numbers and mark FAIL.', 'Block 4 says CACHE CHANGED, or the result shows the "cache file(s) changed" warning: mark FAIL, turn the option off (block 6) and do not repeat on this model.',
     'Block 5 shows more than 1 item: something was left in the model folder, which should not happen now. Record the number; do not delete anything by hand yet.', 'Block 2 fails with "not found": a path is wrong; give full paths to existing files.']
-}
+},
+
+/* ---------- Part I: file names (named copies) ---------- */
+{ id: 'I0', part: 'I', title: 'File names: probe a real export', where: 'PowerShell (Analyzer folder)',
+  purpose: 'The sheet and view values for the file-name template are read from the export\'s own property data. This probe tells whether that data has the sheet number and name under English attribute names, and whether the viewable ids tie to the elements. Counts only.',
+  prereq: ['Node.js 24+ installed. One finished export of a model you may use (a sample copy from the kit is enough). Its output folder is the `output` folder inside the run folder.', 'Type the path only into your own PowerShell; never send it.'],
+  steps: ['Edit the path in block 1 and run it from the Analyzer folder. It prints JSON with counts only.', 'Read the three values below from the JSON (or paste the JSON). Add `--show-names` only if you agree to send the other attribute names (they can be project specific); do that only when asked after an INCONCLUSIVE result.'],
+  cmds: function () { return [{ t: '1. Probe the export (counts only; edit the path)', cwd: 'any', c: P.repo + String.raw`
+Set-Location (Join-Path $repo 'Analyzer')
+node scripts/probe-export-structure.mjs 'PUT-THE-FULL-PATH-OF-THE-OUTPUT-FOLDER-HERE'` }]; },
+  expect: ['The JSON prints without an error.', 'The sheet number and sheet name attributes show under builtIn.', 'viewableIdEqualsExternalId is close to the viewables count.'],
+  fields: [{ k: 'sheetattr', l: 'Sheet number and name attributes show under builtIn', t: 'choice', o: YN }, { k: 'lang', l: 'Language of those attribute names', t: 'choice', o: ['English', 'Polish', 'other', 'not shown'] }, { k: 'idmatch', l: 'viewableIdEqualsExternalId', t: 'int' }, { k: 'viewables', l: 'viewables', t: 'int' }, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The values above (counts and choices). Not the output path.',
+  trouble: ['The names are not English (your Revit language is not English): record the language, set INCONCLUSIVE and run the probe with --show-names to see the attribute names. With other names the files keep their original names and a note says so.', 'The sheet attributes are missing: the property data was switched off for this export (it is on by default); export again with it on.'] },
+{ id: 'I1', part: 'I', title: 'File names: the row in the model window', where: 'Revit (Export window)',
+  purpose: 'The model window has a "File names" row: a template field, Presets, an Insert list of tokens, Clear, an example line and the checkbox "A separate folder for each format". An invalid template must show its error and refuse Export without losing the ticks.',
+  prereq: ['P1 done, pyRevit reloaded, Revit started with no model open. Uses only the sample models from the kit.'],
+  steps: ['Click **Export**, tick a sample model and look at the "File names" row. Open **Presets** and pick one: the field and the example line change.', 'Click **Insert** and pick a token: it lands in the field. Click **Clear**: the field empties.', 'Type `{SheetNumber` (no closing brace): an error shows and **Export** is refused; the ticked models and views stay ticked.', 'Fix the template and tick the split checkbox, then close Revit and start it again: open **Export** and check that the template and the checkbox are remembered.', 'If you switch pyRevit to Polish, check the row\'s texts in both languages.'],
+  cmds: function () { return []; },
+  expect: ['Presets and Insert fill the field; Clear empties it; the example line follows the field.', 'An invalid template shows its error, Export is refused, the ticks stay.', 'The template and the checkbox are remembered after restarting Revit.', 'The row\'s texts exist in English and in Polish.'],
+  fields: [{ k: 'presets', l: 'Presets and Insert work', t: 'choice', o: YN }, { k: 'clear', l: 'Clear works', t: 'choice', o: YN }, { k: 'example', l: 'The example line follows the field', t: 'choice', o: YN }, { k: 'invalid', l: 'Invalid template: error shown, Export refused, ticks kept', t: 'choice', o: YN }, { k: 'remembered', l: 'Remembered after restarting Revit', t: 'choice', o: YN }, { k: 'pl', l: 'Polish texts checked', t: 'choice', o: ['yes', 'no', 'not tried'] }, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The answers above. No templates that hold real names.',
+  trouble: ['The row is missing: pyRevit was not reloaded after the update; reload and repeat.', 'Not remembered: note whether the window was closed with the X or with Export; set INCONCLUSIVE.'] },
+{ id: 'I2', part: 'I', title: 'File names: default-scope export with {SheetNumber} - {SheetName}', where: 'Revit + PowerShell',
+  purpose: 'After a successful export the status window creates `named` in the run folder with hard links of every PDF, DWG, IFC and 3D view folder under the template\'s names. The original `output` folder must stay unchanged.',
+  prereq: ['I1 done. A sample copy with sheets (the kit\'s sample A).', 'Template `{SheetNumber} - {SheetName}`; the split checkbox off.'],
+  steps: ['Click **Export**, tick the sample, type the template, leave the default scope and click **Export**.', 'Watch the status row: it says "Naming files: x of y" for a moment, then Done. In its row menu, **Show named files in File Explorer** opens the `named` folder.', 'Run block 1: it prints counts only.', 'Click **Open in Analyzer** on the run: it must open `output` exactly as before.', 'Look at three files in `named` by eye: do their names read sensibly (sheet number, dash, sheet name)? Record only pass or fail.'],
+  cmds: function () { return [NAMEDCMD('I2')]; },
+  expect: ['named.json present 1 and named folder present 1; named.json state: done.', 'counts: failed 0.', 'The files checked under named all have a second hard link.', 'The longest full path is 259 or less.', 'The Analyzer opens output as before.', 'Three file names read sensibly.'],
+  fields: [NSTATE, NCOUNTS.total, NCOUNTS.linked, NCOUNTS.copied, NCOUNTS.failed, NCOUNTS.untied, NCOUNTS.notes, { k: 'rowseen', l: 'The row said "Naming files"', t: 'choice', o: YN }, { k: 'analyzer', l: 'Analyzer opens output as before', t: 'choice', o: YN }, { k: 'names', l: 'Three names read sensibly', t: 'choice', o: YN }, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The kit\'s printed counts and the answers. No file or sheet names.',
+  trouble: ['A high untied count: the sheet values could not be tied (the viewable ids do not match). Record the counts and set INCONCLUSIVE; files then keep their original names.', 'A note says the names were not recognised, or the names look unchanged: Revit\'s language is probably not English. Record the language, set INCONCLUSIVE and run I0 with --show-names.', 'No named folder and no row: the template was empty or the export did not end OK.'] },
+{ id: 'I3', part: 'I', title: 'File names: a custom parameter', where: 'Revit + PowerShell',
+  purpose: 'A custom sheet parameter of your model works as `{param:<name>}`.',
+  prereq: ['I2 done. Know the exact name of one of your own sheet parameters. Type it only into the Export window; never send it.'],
+  steps: ['Set the template to `{SheetNumber} - {param:<your parameter name>}` and export the default scope again.', 'Run block 1 and look at three files by eye: do they hold the parameter\'s values? Record pass or fail.'],
+  cmds: function () { return [NAMEDCMD('I3')]; },
+  expect: ['state: done, failed 0.', 'Three files hold the parameter\'s values.'],
+  fields: [NSTATE, NCOUNTS.untied, NCOUNTS.notes, { k: 'values', l: 'Three files hold the parameter values', t: 'choice', o: YN }, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The counts and the answer. Never the parameter name.',
+  trouble: ['Empty values: the parameter is not in the export\'s property data (it must be a sheet instance parameter). Record the counts and set INCONCLUSIVE.'] },
+{ id: 'I4', part: 'I', title: 'File names: clash numbering', where: 'Revit + PowerShell',
+  purpose: 'When many files get the same name, the clash numbering adds " (2)", " (3)" ... so no file overwrites another.',
+  prereq: ['I2 done. A sample with several sheets.'],
+  steps: ['Set the template to `{Year}` only and export the default scope.', 'Run block 1: the number of files under named must equal the number of PDFs of the export (no file lost).'],
+  cmds: function () { return [NAMEDCMD('I4')]; },
+  expect: ['counts: total equals linked plus copied; failed 0.', 'named holds as many files as the export has PDFs.'],
+  fields: [NCOUNTS.total, NCOUNTS.failed, { k: 'files', l: 'named: files', t: 'int' }, { k: 'pdfs', l: 'PDF files in the export', t: 'int' }, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The counts.',
+  trouble: ['Fewer files than PDFs: record both numbers and set FAIL.'] },
+{ id: 'I5', part: 'I', title: 'File names: a 200-character template on a deep folder', where: 'Revit + PowerShell',
+  purpose: 'Names are cut so that no path under named is longer than 259 characters.',
+  prereq: ['I2 done. An output folder about 120 characters deep (create nested folders by hand and choose it in the Export window).'],
+  steps: ['Type a template of about 200 characters (for example `{SheetNumber}` followed by 190 letters) and export the default scope.', 'Run block 1: the longest full path must be 259 or less.'],
+  cmds: function () { return [NAMEDCMD('I5')]; },
+  expect: ['The longest full path under named is 259 or less.', 'state: done or partial with notes; failed 0.'],
+  fields: [{ k: 'longest', l: 'Longest full path under named', t: 'int' }, NSTATE, NCOUNTS.failed, { k: 'templen', l: 'Template length (kit line)', t: 'int' }, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The counts.',
+  trouble: ['The longest path is above 259: mark FAIL and record the number.'] },
+{ id: 'I6', part: 'I', title: 'File names: a 3D view folder', where: 'Revit + PowerShell',
+  purpose: 'A 3D view appears in named as a folder that holds the whole subtree of the view as links.',
+  prereq: ['I2 done, with a scope that includes a 3D view (choose one with **Choose views...**).'],
+  steps: ['Export with the template `{ViewName}` and a 3D view ticked.', 'Run block 1: named must hold at least one folder; its files have second hard links.', 'Run block 2 and compare the file counts (counts only).'],
+  cmds: function () { return [NAMEDCMD('I6'), { t: '2. Files in the 3D view folders: output versus named (counts only)', cwd: 'any', c: P.out + NEWESTRUN + String.raw`
+'Files under output 3D View: ' + @(Get-ChildItem (Join-Path $run.FullName 'output\Resource\3D View') -Recurse -File -ErrorAction SilentlyContinue).Count
+'Files under named (all kinds): ' + @(Get-ChildItem (Join-Path $run.FullName 'named') -Recurse -File -ErrorAction SilentlyContinue).Count` }]; },
+  expect: ['named holds at least one folder.', 'With only a 3D view exported, the file counts of output 3D View and named are equal.'],
+  fields: [{ k: 'folders', l: 'named: folders', t: 'int' }, { k: 'srcfiles', l: 'Files under output 3D View', t: 'int' }, { k: 'namedfiles', l: 'Files under named', t: 'int' }, NSTATE, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The counts.',
+  trouble: ['No folder: the view was skipped (a note says so); look at the notes count and set INCONCLUSIVE.'] },
+{ id: 'I7', part: 'I', title: 'File names: a Cloud (ACC) job', where: 'Revit + PowerShell (Cloud tab)',
+  purpose: 'A Cloud job with a template gets its named copies after the staged copies are cleaned up, and the cache files stay unchanged.',
+  prereq: ['H1 and H4 done.', CLOUDRULE, 'Have the full path of the host cache file (as in H8). Type it only into your own PowerShell; never send it.'],
+  steps: ['Note the size and time of the host cache file: `& $kit -Stamp <file>`.', 'Click **Export**, choose **Cloud (ACC)**, tick the host model, type a template (`{ViewName}`) and export.', 'After the run: run block 1 and `-Stamp` again: both stamp lines must be equal.', 'Run `& $kit -Check` and check that no RevitExtractor process is left.'],
+  cmds: function () { return [NAMEDCMD('I7'), { t: '2. Stamp of the host cache file and processes left (edit the path)', cwd: 'any', c: P.kit + String.raw`
+& $kit -Stamp 'PUT-THE-FULL-PATH-OF-THE-HOST-CACHE-FILE-HERE'
+'RevitExtractor processes: ' + @(Get-Process -Name 'RevitExtractor*' -ErrorAction SilentlyContinue).Count` }]; },
+  expect: ['named appears; state: done; failed 0.', 'The -Stamp lines before and after are equal.', 'RevitExtractor processes: 0.'],
+  fields: [NSTATE, NCOUNTS.failed, { k: 'stamp', l: 'Cache stamp unchanged', t: 'choice', o: YN }, { k: 'left', l: 'RevitExtractor processes left', t: 'int' }, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The counts and the answers. No names.',
+  trouble: ['The stamp changed: mark FAIL and do not repeat on this model.'] },
+{ id: 'I8', part: 'I', title: 'File names: a separate folder for each format', where: 'Revit + PowerShell',
+  purpose: 'With the checkbox "A separate folder for each format" on, named has PDF, DWG, IFC and 3D subfolders (only for the formats the export made).',
+  prereq: ['I2 done. For DWG and IFC, tick them in the Export window if your model offers them.'],
+  steps: ['Tick the checkbox, keep a template, and export a scope that includes PDF and a 3D view (and DWG or IFC if available).', 'Run block 1: it prints the top-level folders under named. Open `named` in File Explorer and check that each format is in its own folder.'],
+  cmds: function () { return [NAMEDCMD('I8'), { t: '2. Top-level folders under named (count only)', cwd: 'any', c: P.out + NEWESTRUN + String.raw`
+'Top-level folders under named: ' + @(Get-ChildItem (Join-Path $run.FullName 'named') -Directory).Count` }]; },
+  expect: ['The top-level folders under named equal the number of formats exported.', 'state: done; failed 0.'],
+  fields: [{ k: 'top', l: 'Top-level folders under named', t: 'int' }, { k: 'split', l: 'Each format is in its own folder', t: 'choice', o: YN }, NSTATE, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The counts and the answers.',
+  trouble: ['No DWG or IFC folder: the export did not make that format; count only the formats it made.'] },
+{ id: 'I9', part: 'I', title: 'File names (optional): close Revit while naming runs', where: 'Revit + PowerShell',
+  purpose: 'If Revit closes during naming, named.json stays "running" and the next Export works normally.',
+  prereq: ['I2 done. A run large enough that naming takes a moment (several seconds). Optional: skip if you cannot catch the moment.'],
+  steps: ['Export; the moment the row says "Naming files", close Revit (File, Exit).', 'Start Revit, run block 1 on that run: the state is running (or done if Revit closed too late).', 'Click **Export** and run a small export: it must work.'],
+  cmds: function () { return [NAMEDCMD('I9')]; },
+  expect: ['named.json state is running (or done if Revit closed too late).', 'The next Export works.'],
+  fields: [NSTATE, { k: 'next', l: 'The next Export worked', t: 'choice', o: YN }, F_ERR],
+  prior: NAMEDPRIOR, evidence: 'The state and the answer.',
+  trouble: ['The next Export refused or hung: record what the status window said (generic words) and set FAIL.'] }
 ];
 
 /* ---------- state ---------- */

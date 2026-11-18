@@ -1,6 +1,6 @@
 # Spec: named-copies
 
-Module of `SPEC.md`. Depends on: `export-runner`, `status-window`, `export-button`, `model-reader`. Status: **written 2026-11-18 from the owner's decisions of that day; not built. Waiting for the owner's answers to the open questions at the end and for the probe run (Phase 2 gate).**
+Module of `SPEC.md`. Depends on: `export-runner`, `status-window`, `export-button`, `model-reader`. Status: **built 2026-11-18; owner verification pending (Part I of `v1-revit-test`).**
 
 ## Objective
 
@@ -86,6 +86,8 @@ Presets, shown in the editable list: `{SheetNumber}`, `{SheetNumber} - {SheetNam
 1. **Viewable:** the GUID folder in the file's path matched against `viewableID`/`guid` in `bubble.json`, as `Analyzer/lib/exports.mjs` does. Otherwise, the stem equal to exactly one viewable `name` in the same top folder under `Resource\`.
 2. **Element:** the viewable's id equal to a value key (UniqueId). Otherwise, for a sheet, the viewable name equal to `"<SheetNumber> - <SheetName>"`; for a view, equal to `ViewName`. The match must be unique within the source's values.
 3. An untied file gets system tokens and `OriginalName` only. The result note counts untied files. Nothing is guessed beyond these rules.
+
+**Observed on a real export layout (2026-11-18):** the view folders are named `<name> <ElementId>`, and a viewable id equals the element's UniqueId, which is the property database's external id. So rule 1 ties by the viewable id and rule 2 by the external id.
 
 The probe (`Analyzer/scripts/probe-export-structure.mjs`) on a real export decides how often rule 1 and rule 2 succeed. That is the Phase 2 gate in the plan.
 

@@ -46,6 +46,18 @@ Settings (folders, output folder) are kept in your pyRevit config file, which th
 
 All text is English and Polish, following pyRevit's language setting (English by default).
 
+## File names
+
+The **File names** row of the model window sets a name template (for example `{SheetNumber} - {SheetName}`). **Presets** offers ready templates, **Insert** adds a token at the cursor, **Clear** empties the field, and a line shows an example name. An invalid template shows its error and **Export** is refused; the ticks stay. The template and the checkbox are remembered per user.
+
+After a **successful** export the status window creates `named` in the run folder (the row says "Naming files: x of y"; its menu has **Show named files in File Explorer**) and `named.json` (state, counts, notes; no paths). `named` holds every PDF, DWG, IFC and each 3D view folder under the template's names. `output` is not touched, so the Analyzer opens the export as before.
+- **Tokens:** sheet and view values (sheet number and name, current revision and its date and description, issue date, drawn/checked/designed/approved by, sheet size, view name, title on sheet, scale, detail level, discipline, phase, view template, number of the sheet the view is on, element id); any parameter as `{param:<name>}`; system values (year, month, day, hour, minute, second, date, short and long date in the Windows regional format, model name, Windows user, Revit user); and `{OriginalName}`. `{{` and `}}` give literal braces.
+- **Hard links:** the entries are hard links (a second name for the same file on the same drive), so they use no extra disk space. A file is copied only when a link cannot be made (another drive, a file system without links). Editing a named file in place changes the original too; saving a new file instead of overwriting does not.
+- **Optional split:** the checkbox "A separate folder for each format" makes `named\PDF`, `DWG`, `IFC` and `3D` instead of one flat folder.
+- Names are cleaned for Windows, a name already used gets " (2)", " (3)" ..., and names are cut to the path limits.
+- **Limits:** only after a successful export, once per run (not for failed, cancelled or adopted runs). Sheet and view values come from the export's own property data (on by default) and are looked up by **English** attribute names; with a localised Revit they may not be recognised, then the files keep their original name and a note says so. Other languages are not added yet.
+- **Verified:** unit tests (1224 OK) and one real Extractor run on the Dynamo sample (counts: files, hard links, path length). **Not verified:** everything inside Revit (Part I of `specs/v1-revit-test.md`), IronPython 2.7, real sheet values on a real model, a Cloud job with a template.
+
 ## Validation
 
 2026-11-11, main machine (Revit 2023, no pyRevit, CPython 3):

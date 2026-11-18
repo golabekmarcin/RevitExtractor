@@ -27,6 +27,14 @@ Pomocnik do jednej sesji testowej wlasciciela (specs/v1-revit-test.md).
       Prints the size and last-write time of one file (no name, no path), to compare before
       and after a step.
 
+  ... -Named <run folder>
+      Read-only counts for the named copies of one run (Part I): entries under named\ (files,
+      folders), how many of the files have a second hard link (sample of at most 300 files, via
+      fsutil hardlink list), the longest full path under named\, the files under output\, and from
+      named.json: the state, the counts, the number of notes and the length of the template (never the
+      template text). Never prints a file, folder, model or sheet name or a path.
+      Not yet run against a Revit-made run. / Jeszcze nie uruchomione na eksporcie z Revita.
+
 All user-facing text is English and Polish. The script is ASCII only, so Windows PowerShell
 5.1 reads it correctly; Polish letters are built from character codes.
 Exit code: 0 = done (and every run OK for -Check), 1 = a run failed or an error.
@@ -44,7 +52,9 @@ param(
     [Parameter(ParameterSetName = 'Check', Position = 0)][string]$Folder,
     [Parameter(ParameterSetName = 'Check')][string]$LocalAppData = $env:LOCALAPPDATA,
     [Parameter(ParameterSetName = 'Check')][string]$AppData = $env:APPDATA,
-    [Parameter(ParameterSetName = 'Stamp', Mandatory)][string]$Stamp
+    [Parameter(ParameterSetName = 'Stamp', Mandatory)][string]$Stamp,
+    [Parameter(ParameterSetName = 'Named', Mandatory)][switch]$Named,
+    [Parameter(ParameterSetName = 'Named', Position = 0, Mandatory)][string]$RunFolder
 )
 
 Set-StrictMode -Version Latest
@@ -350,7 +360,54 @@ function Invoke-Check {
     return $bad
 }
 
+# ---------------------------------------------------------------- -Named
+function Invoke-Named {
+    Write-Host '== Machine / Komputer'
+    Write-Host "Print Spooler: $(Get-Spooler)"
+    Write-Host "RevitExtractor processes left / procesy RevitExtractor: $(@(Get-Process -Name 'RevitExtractor*' -ErrorAction SilentlyContinue).Count)"
+    $run = $RunFolder.Trim('"')
+    if (!(Test-Path -LiteralPath $run -PathType Container)) { throw 'The folder was not found. / Nie znaleziono folderu.' }
+    $named = Join-Path $run 'named'
+    $json = Join-Path $run 'named.json'
+    $hasDir = Test-Path -LiteralPath $named -PathType Container
+    $hasJson = Test-Path -LiteralPath $json -PathType Leaf
+    Write-Host "`n== Named copies / Nazwane kopie (counts only / tylko liczby)"
+    Write-Host ('named.json present {0}; named folder present {1}  (1 = yes, 0 = no)' -f [int]$hasJson, [int]$hasDir)
+    if ($hasDir) {
+        $files = @(Get-ChildItem -LiteralPath $named -Recurse -File -ErrorAction SilentlyContinue)
+        $dirs = @(Get-ChildItem -LiteralPath $named -Recurse -Directory -ErrorAction SilentlyContinue)
+        $sample = @($files | Select-Object -First 300)
+        $linked = 0; $unknown = 0
+        foreach ($f in $sample) {
+            try {
+                $n = @(& fsutil hardlink list $f.FullName 2>$null | Where-Object { $_ -and $_.Trim() }).Count
+                if ($LASTEXITCODE -ne 0 -or $n -eq 0) { $unknown++ } elseif ($n -ge 2) { $linked++ }
+            } catch { $unknown++ }
+        }
+        $longest = 0
+        foreach ($i in @($files) + @($dirs)) { if ($i.FullName.Length -gt $longest) { $longest = $i.FullName.Length } }
+        Write-Host ('named: {0} files, {1} folders' -f $files.Count, $dirs.Count)
+        Write-Host ('files with a second hard link: {0} of {1} checked (sample capped at 300 files; unknown {2})' -f $linked, $sample.Count, $unknown)
+        Write-Host ('longest full path under named: {0} characters (limit 259)' -f $longest)
+    }
+    $outFiles = @(Get-ChildItem -LiteralPath (Join-Path $run 'output') -Recurse -File -ErrorAction SilentlyContinue).Count
+    Write-Host ('output: {0} files' -f $outFiles)
+    if ($hasJson) {
+        try {
+            $j = Get-Content -LiteralPath $json -Raw -Encoding UTF8 | ConvertFrom-Json
+            $c = $j.counts
+            $tl = if ($j.PSObject.Properties['template'] -and $j.template) { ([string]$j.template).Length } else { 0 }
+            $notes = if ($j.PSObject.Properties['notes'] -and $j.notes) { @($j.notes).Count } else { 0 }
+            Write-Host ('named.json state: {0}' -f $j.state)
+            if ($c) { Write-Host ('counts: total {0}, linked {1}, copied {2}, failed {3}, untied {4}' -f $c.total, $c.linked, $c.copied, $c.failed, $c.untied) }
+            Write-Host ('notes: {0}; template length: {1} characters' -f $notes, $tl)
+        } catch { Write-Host 'named.json could not be read. / Nie mozna odczytac named.json.' }
+    }
+    Write-Host "`nSend this output as it is. It holds no paths or names. / Wyslij ten wynik bez zmian. Nie zawiera sciezek ani nazw."
+}
+
 # ---------------------------------------------------------------- main
+if ($PSCmdlet.ParameterSetName -eq 'Named') { Invoke-Named; exit 0 }
 if ($PSCmdlet.ParameterSetName -eq 'Setup') { Invoke-Setup; exit 0 }
 if ($PSCmdlet.ParameterSetName -eq 'Stamp') {
     $p = $Stamp.Trim('"')

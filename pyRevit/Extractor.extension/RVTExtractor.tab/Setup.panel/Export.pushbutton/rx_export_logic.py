@@ -27,9 +27,10 @@ except NameError:
 CONFIG_SECTION = "RevitExtractorExport"
 SETTING_NAMES = ("roots", "output_parent", "max_parallel", "shared_index_path", "subfolders",
                  "name_template", "name_split_by_format")
-# The File names row of the window (named copies, specs/SPEC-named-copies.md) is hidden until
-# the runner side is built and verified; tests switch it on.
-NAMED_COPIES_READY = False
+# The File names row of the window (named copies, specs/SPEC-named-copies.md). On since
+# 2026-11-18 (built and unit-tested; the live check is Part I of the test guide). With an empty
+# template nothing changes for an export. False hides the row and ignores a saved template.
+NAMED_COPIES_READY = True
 _VIEW_ID_KEYS = ("view_ids", "view_unique_ids")
 
 

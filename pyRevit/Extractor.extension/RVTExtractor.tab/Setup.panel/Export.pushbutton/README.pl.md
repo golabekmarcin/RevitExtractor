@@ -46,6 +46,18 @@ Ustawienia (foldery, folder wyników) są w pliku konfiguracji pyRevit, który w
 
 Cały tekst jest po angielsku i po polsku, według ustawienia języka pyRevit (domyślnie angielski).
 
+## Nazwy plików
+
+Wiersz **Nazwy plików** w oknie modelu ustawia szablon nazwy (na przykład `{SheetNumber} - {SheetName}`). **Gotowe wzory** podają gotowe szablony, **Wstaw** dodaje token w miejscu kursora, **Wyczyść** opróżnia pole, a linia pokazuje przykładową nazwę. Błędny szablon pokazuje błąd i **Eksportuj** jest odrzucany; zaznaczenia zostają. Szablon i pole wyboru są zapamiętywane dla użytkownika.
+
+Po **udanym** eksporcie okno statusu tworzy w folderze eksportu `named` (wiersz pokazuje „Nadawanie nazw: x z y”; w jego menu jest **Pokaż pliki z nazwami w Eksploratorze**) oraz `named.json` (stan, liczby, uwagi; bez ścieżek). `named` zawiera każdy PDF, DWG, IFC i każdy folder widoku 3D pod nazwami z szablonu. `output` nie jest zmieniany, więc Analyzer otwiera eksport jak dotąd.
+- **Tokeny:** wartości arkusza i widoku (numer i nazwa arkusza, bieżąca rewizja oraz jej data i opis, data wydania, rysował/sprawdził/projektował/zatwierdził, format arkusza, nazwa widoku, tytuł na arkuszu, skala, poziom szczegółowości, branża, faza, szablon widoku, numer arkusza, na którym jest widok, id elementu); dowolny parametr jako `{param:<nazwa>}`; wartości systemowe (rok, miesiąc, dzień, godzina, minuta, sekunda, data, data krótka i długa w formacie regionalnym Windows, nazwa modelu, użytkownik Windows, użytkownik Revita); oraz `{OriginalName}`. `{{` i `}}` dają dosłowne nawiasy.
+- **Twarde dowiązania:** wpisy są twardymi dowiązaniami (drugą nazwą tego samego pliku na tym samym dysku), więc nie zajmują dodatkowego miejsca. Plik jest kopiowany tylko wtedy, gdy dowiązania nie da się utworzyć (inny dysk, system plików bez dowiązań). Edycja nazwanego pliku w miejscu zmienia także oryginał; zapis nowego pliku zamiast nadpisania — nie.
+- **Opcjonalny podział:** pole „Osobny folder dla każdego formatu” daje `named\PDF`, `DWG`, `IFC` i `3D` zamiast jednego płaskiego folderu.
+- Nazwy są oczyszczane dla Windows, zajęta nazwa dostaje „ (2)”, „ (3)” ..., a nazwy są przycinane do limitów ścieżek.
+- **Ograniczenia:** tylko po udanym eksporcie, raz na eksport (nie dla nieudanych, anulowanych ani przejętych). Wartości arkuszy i widoków pochodzą z własnych danych właściwości eksportu (domyślnie włączonych) i są wyszukiwane po **angielskich** nazwach atrybutów; w zlokalizowanym Revicie mogą nie zostać rozpoznane — wtedy pliki zachowują oryginalną nazwę, a uwaga o tym informuje. Inne języki nie są jeszcze dodane.
+- **Zweryfikowano:** testy jednostkowe (1224 OK) i jeden prawdziwy przebieg Extractora na próbce Dynamo (liczby: pliki, twarde dowiązania, długość ścieżki). **Niezweryfikowano:** wszystko w Revicie (część I `specs/v1-revit-test.md`), IronPython 2.7, prawdziwe wartości arkuszy na prawdziwym modelu, zadanie z chmury z szablonem.
+
 ## Weryfikacja
 
 2026-11-11, główny komputer (Revit 2023, bez pyRevit, CPython 3):

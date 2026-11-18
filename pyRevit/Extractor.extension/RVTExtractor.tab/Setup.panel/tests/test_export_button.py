@@ -1055,10 +1055,10 @@ class ModelWindowHarness(object):
         combo.SelectedItem = item
         combo.SelectionChanged.fire(combo, None)
 
-    def test_the_file_names_row_is_hidden_until_the_feature_is_ready(self):
-        self.assertEqual(self.open().naming_panel.Visibility, "Collapsed")
-        with patch.object(logic, "NAMED_COPIES_READY", True):
-            self.assertEqual(self.open().naming_panel.Visibility, "Visible")
+    def test_the_file_names_row_follows_the_readiness_switch(self):
+        self.assertEqual(self.open().naming_panel.Visibility, "Visible")
+        with patch.object(logic, "NAMED_COPIES_READY", False):
+            self.assertEqual(self.open().naming_panel.Visibility, "Collapsed")
 
     def test_presets_and_tokens_are_listed_with_translated_labels(self):
         window = self.names_window()

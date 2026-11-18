@@ -18,6 +18,9 @@ Shared modules for every button of this extension. pyRevit puts this folder on `
 | `rx_runner.py` | export-runner | run folder, Extractor process through `cmd.exe`, queue (one at a time), cancel with `taskkill /T /F`, success check. A cloud job also has a time-sliced `staging` state that copies the cache files into `<run>\model` before the Extractor starts, and deletes the copies after the process tree has exited (`model\stage.json` stays) |
 | `rx_cloud.py` | cloud-catalog | pure logic of the Cloud source: reads Revit journals (UTF-16, UTF-8, ANSI) for project and file names, scans `%LOCALAPPDATA%\Autodesk\Revit\Autodesk Revit <year>\CollaborationCache`, joins them by project GUID + model GUID, keeps selection, names and link lists in `%APPDATA%\RevitExtractor\cloud-catalog.json`, and plans which cache files to stage. No Revit, .NET or `clr` import (a test enforces it). **The memory file holds client project and file names: never commit or share it** |
 | `rx_cloud_stage.py` | cloud-catalog | the only file IO of the Cloud source: free-space check and the chunked copy. Sources are opened `rb` only, a destination is never overwritten, and a cache file that changed during the copy fails the job. The cache is never written |
+| `rx_hardlink.py` | cloud-catalog, named-copies | NTFS hard links (`CreateHardLinkW` under IronPython, `os.link` elsewhere); the caller copies when a link fails |
+| `rx_naming.py` | named-copies | file-name template: parser, tokens, presets, name cleaning and path budgets, clash numbering, discovery of the export's deliverables, tying them to sheets and views, and the time-sliced writer of `named\` |
+| `rx_naming_pdb.py` | named-copies | reads sheet and view values from the export's own property database (time-sliced, English attribute names) |
 
 Rules:
 - Every file starts with `rx_`, so it can't clash with another extension's module in a shared IronPython engine.
