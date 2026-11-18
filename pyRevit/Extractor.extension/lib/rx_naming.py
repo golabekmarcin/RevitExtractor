@@ -227,10 +227,15 @@ def file_budget(named_root, ext):
     return min(_MAX_FILE_PATH - len(named_root) - 1 - len(ext), _MAX_COMPONENT - len(ext))
 
 
-def folder_budget(named_root, inner_max):
-    """Most characters for a folder name; `inner_max` is the longest relative path inside it."""
-    return min(_MAX_DIR_PATH - len(named_root) - 1,
-               _MAX_FILE_PATH - len(named_root) - 2 - inner_max, _MAX_COMPONENT)
+def folder_budget(named_root, inner_max, inner_dir_max=0):
+    """Most characters for a folder name; `inner_max` is the longest relative file path inside it
+    and `inner_dir_max` the longest relative path of a folder inside it (a nested folder must stay
+    under the folder limit too)."""
+    budget = min(_MAX_DIR_PATH - len(named_root) - 1,
+                 _MAX_FILE_PATH - len(named_root) - 2 - inner_max, _MAX_COMPONENT)
+    if inner_dir_max > 0:
+        budget = min(budget, _MAX_DIR_PATH - len(named_root) - 2 - inner_dir_max)
+    return budget
 
 
 def fit_name(stem, ext, budget):
@@ -699,6 +704,7 @@ class NamedRun(object):
         system = self._system()
         split = self.naming.get("split") is True
         for item, record in pairs:
+            yield       # one step per deliverable: thousands of sheets must not block the window
             sub = _SPLIT_FOLDERS[item.kind] if split else ""
             root = os.path.join(self._named, sub) if sub else self._named
             base = item.rel.split("/")[-1]
@@ -713,7 +719,8 @@ class NamedRun(object):
                     for _ in self._tree(item.src, files):
                         yield
                     inner = max([len(os.sep.join(f[0])) for f in files] or [0])
-                    budget = folder_budget(root, inner)
+                    inner_dirs = max([len(os.sep.join(f[0][:-1])) for f in files] or [0])
+                    budget = folder_budget(root, inner, inner_dirs)
                 else:
                     original, ext = os.path.splitext(base)
                     st = os.stat(item.src)

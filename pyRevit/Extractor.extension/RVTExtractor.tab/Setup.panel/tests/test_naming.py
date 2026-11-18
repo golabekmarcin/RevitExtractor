@@ -243,6 +243,13 @@ class Lengths(unittest.TestCase):
         self.assertEqual(file_budget("C:\\x", ".rvt"), 259 - 4 - 1 - 4)
         self.assertEqual(file_budget("", ".rvt"), 255 - 4)
         self.assertEqual(folder_budget("", 0), 246)
+    def test_a_nested_folder_must_stay_under_the_folder_limit_too(self):
+        root = "C" * 100
+        # root + "\\" + name + "\\" + a 14-character nested folder path must stay <= 247
+        self.assertEqual(folder_budget(root, 20, 14), 247 - 100 - 2 - 14)
+        self.assertLess(folder_budget(root, 20, 14), folder_budget(root, 20, 0))
+        self.assertEqual(folder_budget(root, 20, 0), folder_budget(root, 20))
+
     def test_300_chars_under_150_root_fits(self):
         root = "C" * 150
         stem = "n" * 300
@@ -771,6 +778,34 @@ class WriterCase(unittest.TestCase):
     def assertSameBytes(self, a, b):
         with io.open(a, "rb") as fa, io.open(b, "rb") as fb:
             self.assertEqual(fa.read(), fb.read())
+
+
+class PlanningSteps(WriterCase):
+    def test_every_deliverable_is_one_step_so_the_window_is_never_blocked(self):
+        for number in range(40):
+            touch(self.out, "Resource/Sheet/S%03d %d/pdf/S%03d.pdf" % (number, 100 + number, number), b"p")
+        touch(self.out, "bubble.json", json.dumps(manifest_of()).encode("utf-8"))
+        run = rx_naming.NamedRun(self.paths, dict(ORIGINALS, template="{OriginalName}"), link=copy_link)
+        gen = run.steps()
+        first_write = None
+        yields_before_writing = 0
+        for step in gen:
+            if os.path.isdir(os.path.join(self.root, "named")):
+                first_write = step
+                break
+            yields_before_writing += 1
+        gen.close()
+        self.assertGreaterEqual(yields_before_writing, 40, "planning yields at least once per file")
+
+    def test_a_deep_view_folder_name_is_cut_for_its_nested_folders(self):
+        deep = "d" * 60
+        touch(self.out, "Resource/3D View/V 5/%s/%s/m.svf" % (deep, deep), b"s")
+        touch(self.out, "bubble.json", json.dumps(manifest_of()).encode("utf-8"))
+        long_template = "n" * 200
+        run = self.run_named(dict(ORIGINALS, template=long_template))
+        self.assertIn(run.state, ("done", "partial"))
+        for folder, _dirs, _files in os.walk(os.path.join(self.root, "named")):
+            self.assertLessEqual(len(folder), 247, "no nested folder path is over the limit")
 
 
 class WriterTests(WriterCase):
