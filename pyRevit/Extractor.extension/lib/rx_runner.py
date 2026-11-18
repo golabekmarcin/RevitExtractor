@@ -27,6 +27,7 @@ import uuid
 from collections import namedtuple
 
 import rx_dotnet
+import rx_naming
 from rx_cloud import safe_file_name
 from rx_cloud_stage import check_space, copy_steps
 from rx_cloud_stage import _in_cache, _items as _stage_items
@@ -56,6 +57,11 @@ FAILED = "failed"
 CANCELLED = "cancelled"
 
 KILL_TIMEOUT_MS = 60000
+
+# Named copies (specs/SPEC-named-copies.md): Job.naming_state after an ok export.
+NAMING_PENDING = "pending"
+NAMING_RUNNING = "running"
+NAMING_ENDS = ("done", "partial", "failed")
 
 # Staging (cloud jobs). poll() copies for at most STAGE_BUDGET seconds (checked after each
 # chunk, so one chunk may run over). 1 MiB keeps a chunk well under the budget on a local disk.
@@ -475,11 +481,19 @@ class Job(object):
     host first, as rx_cloud.plan_stage gives it), `model_name` (the host's staged file name) and
     `model_key` (rx_cloud's row key). It goes queued -> staging -> running: the items are copied
     into <run>\\model and the Extractor opens <run>\\model\\<model_name>.
+
+    `naming` ({"template", "system", "values"}, rx_naming.check_naming): once the job ends ok,
+    the queue makes <run>\\named from output\\; `naming_state` goes pending -> running ->
+    done | partial | failed. It never changes `state`.
     """
 
     def __init__(self, model_path, index, revit_dir, output_parent, stage=None,
-                 model_name=None, model_key=None):
+                 model_name=None, model_key=None, naming=None):
         self.id = None
+        self.naming = naming
+        self.naming_state = None    # None | pending | running | done | partial | failed
+        self.naming_done = 0
+        self.naming_total = 0
         self.model_path = model_path
         self.index = index
         self.revit_dir = revit_dir
@@ -522,6 +536,9 @@ class Job(object):
             "stage_total": self.stage_total, "stage_ready": self.stage_ready,
             "stage_modes": dict(self.stage_modes),
             "cleanup": self.cleanup, "cleanup_error": self.cleanup_error, "foreign": self.foreign,
+            # not `naming` itself: it can hold model values and names
+            "naming_state": self.naming_state, "naming_done": self.naming_done,
+            "naming_total": self.naming_total,
         }
 
 
@@ -553,11 +570,17 @@ class Queue(object):
       are deleted only after the job's process has exited and this is false;
     - `remove(path)`: os.remove; `rmtree(path)`: shutil.rmtree, for the <name>_backup folder
       Revit leaves beside an opened copy; `copier`: rx_cloud_stage.copy_steps.
+
+    Named copies (Job.naming): `namer(run_paths, naming)` -> an object with steps() (generator),
+    state, done, total and result_message(), default rx_naming.NamedRun. poll() advances it after
+    staging, in what is left of the same budget (at least one step), one job at a time in
+    order. It never takes the run lock and never holds back the next export.
     """
 
     def __init__(self, starter, clock, max_parallel=1, system_root=None, token=None, hold=None,
                  stage_clock=None, stage_budget=STAGE_BUDGET, stage_chunk=STAGE_CHUNK,
-                 free_space=None, tree_running=None, remove=None, copier=None, lock=None, rmtree=None):
+                 free_space=None, tree_running=None, remove=None, copier=None, lock=None, rmtree=None,
+                 namer=None):
         if (isinstance(max_parallel, bool) or not isinstance(max_parallel, _INTEGER_TYPES)
                 or max_parallel < 1):
             raise RunnerError(tr("Invalid number of parallel exports: {0}",
@@ -589,6 +612,11 @@ class Queue(object):
         self._staged = {}       # job id -> names this job copied into <run>\model
         self._cleanups = []     # finished jobs whose staged copies still wait for deletion
         self._cleanup_since = {}
+        self._namer = namer or (lambda paths, naming: rx_naming.NamedRun(
+            paths, naming, free_space=free_space))
+        self._namings = []      # ok jobs whose named copies are still to make, in order
+        self._runs = {}         # job id -> (namer object, its steps() generator)
+        self._stage_used = 0    # seconds of the budget the last _advance_staging used
 
     def _root(self):
         if self._system_root is None:
@@ -617,6 +645,15 @@ class Queue(object):
         else:
             job.stage = _checked_stage(job)
             job.stage_total = sum(item["size"] for item in job.stage["items"])
+        if job.naming is not None:
+            if job.foreign:
+                raise RunnerError(tr("A run from an earlier Revit session gets no named copies.",
+                                     "Eksport z wcześniejszej sesji Revita nie dostaje kopii z "
+                                     "nazwami."))
+            try:
+                rx_naming.check_naming(job.naming)
+            except Exception as error:  # fail closed: the job is refused
+                raise RunnerError(_error_text(error))
         self._counter += 1
         job.id = "job-%d" % self._counter
         job.state = QUEUED
@@ -652,18 +689,22 @@ class Queue(object):
     def clear_finished(self):
         """Forget every finished job (OK, FAILED, CANCELLED); queued and running jobs keep their
         order and ids, and ids are never reused. Touches nothing on disk (a pending deletion of
-        staged copies goes on). Returns the removed ids in queue order."""
+        staged copies goes on). A job whose named copies are still being made stays until that
+        ends. Returns the removed ids in queue order."""
         done = (OK, FAILED, CANCELLED)
-        removed = [job.id for job in self._jobs if job.state in done]
+
+        def finished(job):
+            return job.state in done and job.naming_state not in (NAMING_PENDING, NAMING_RUNNING)
+        removed = [job.id for job in self._jobs if finished(job)]
         if removed:
-            self._jobs = [job for job in self._jobs if job.state not in done]
+            self._jobs = [job for job in self._jobs if not finished(job)]
         return removed
 
     def busy(self):
-        """True while a job waits, copies or runs, staged copies still wait for deletion, or the
-        run lock is still ours (poll() gives it back)."""
+        """True while a job waits, copies or runs, staged copies still wait for deletion, named
+        copies are still being made, or the run lock is still ours (poll() gives it back)."""
         return (any(job.state in (QUEUED, STAGING, RUNNING) for job in self._jobs)
-                or bool(self._cleanups) or self._locked)
+                or bool(self._cleanups) or bool(self._namings) or self._locked)
 
     def _find(self, job_id):
         for job in self._jobs:
@@ -674,7 +715,7 @@ class Queue(object):
     def poll(self):
         """Finish exited jobs, delete staged copies whose process tree has exited, start the
         Extractor for copied jobs and queued ones up to the limit, then copy for at most the
-        stage budget. Returns changed ids."""
+        stage budget and make named copies in what is left of it. Returns changed ids."""
         changed = []
         for job in self._jobs:
             if job.state == RUNNING and self._finish_if_exited(job):
@@ -696,7 +737,7 @@ class Queue(object):
                 else:
                     self._begin_stage(job)
                 changed.append(job.id)
-        for job_id in self._advance_staging():
+        for job_id in self._advance_staging() + self._advance_namings():
             if job_id not in changed:
                 changed.append(job_id)
         self._release_if_idle()
@@ -847,7 +888,9 @@ class Queue(object):
         job.state = STAGING
 
     def _advance_staging(self):
-        """Copy chunks of the staging jobs until the budget is used (at least one step)."""
+        """Copy chunks of the staging jobs until the budget is used (at least one step). Sets
+        _stage_used to the seconds used, as of its last clock reading (0 when nothing copies)."""
+        self._stage_used = 0
         staging = [job for job in self._jobs if job.state == STAGING and not job.stage_ready]
         if not staging:
             return []
@@ -869,12 +912,80 @@ class Queue(object):
                     break
                 self._staged[job.id].add(item.name)
                 job.stage_done = done
-                if self._stage_clock() - start >= self._stage_budget:
+                self._stage_used = self._stage_clock() - start
+                if self._stage_used >= self._stage_budget:
                     out_of_time = True
                     break
             if out_of_time:
                 break
         return changed
+
+    # -- named copies (after an ok export)
+
+    def _advance_namings(self):
+        """Make named copies, one job at a time in order, in what staging left of the budget;
+        at least one step while a job waits. Returns the ids whose naming changed."""
+        if not self._namings:
+            return []
+        changed = []
+        start = self._stage_clock()
+        while self._namings:
+            job = self._namings[0]
+            if job.id not in changed:
+                changed.append(job.id)
+            self._naming_step(job)
+            if self._stage_used + self._stage_clock() - start >= self._stage_budget:
+                break
+        return changed
+
+    def _naming_step(self, job):
+        """One step of the job's namer; ends the naming when it is over or raises."""
+        try:
+            entry = self._runs.get(job.id)
+            if entry is None:
+                run = self._namer(job.paths, job.naming)
+                entry = self._runs[job.id] = (run, run.steps())
+                job.naming_state = NAMING_RUNNING
+            run, steps = entry
+            try:
+                next(steps)
+            except StopIteration:
+                if run.state not in NAMING_ENDS:
+                    raise RunnerError(tr("The naming step ended without a result.",
+                                         "Krok nadawania nazw zakończył się bez wyniku."))
+                job.naming_done, job.naming_total = run.done, run.total
+                self._end_naming(job, run.state, run.result_message())
+                return
+            job.naming_done, job.naming_total = run.done, run.total
+        except Exception as error:  # this job's naming only; the queue goes on
+            self._end_naming(job, "failed", tr("Named copies were not made: {0}",
+                                               "Nie utworzono kopii z nazwami: {0}")
+                             .format(_error_text(error)))
+
+    def _end_naming(self, job, state, message):
+        self._close_naming(job)
+        job.naming_state = state
+        if message:
+            job.result = _with_message(job.result, message)
+
+    def _close_naming(self, job):
+        """Drop the job from the naming queue and close its generator (named.json then stays as
+        it was last written)."""
+        if job in self._namings:
+            self._namings.remove(job)
+        entry = self._runs.pop(job.id, None)
+        if entry is not None:
+            try:
+                entry[1].close()
+            except Exception:
+                pass
+
+    def close(self):
+        """Stop making named copies (the owner drops the queue): every naming generator is
+        closed, and a job not yet finished keeps naming_state pending or running. Exports and
+        the run lock are not touched."""
+        for job in list(self._namings):
+            self._close_naming(job)
 
     def _record_modes(self, job):
         """Rewrite stage.json with how each file was staged (linked or copied)."""
@@ -1073,6 +1184,9 @@ class Queue(object):
             job.cleanup = "pending"
             self._cleanups.append(job)
             self._cleanup_since[job.id] = job.ended_at
+        if job.state == OK and job.naming is not None and not job.foreign:
+            job.naming_state = NAMING_PENDING   # reads output\ only: no wait for the clean-up
+            self._namings.append(job)
         del self._handles[job.id]
         try:
             handle.close()

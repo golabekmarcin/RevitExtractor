@@ -2346,6 +2346,436 @@ class QueueStagingTest(TempDirTest):
         self.assertIsNone(job.staged_model)
         self.assertIsNone(job.cleanup)
 
+    def test_naming_gets_one_step_when_staging_uses_the_whole_budget(self):
+        # named copies (Task 5): the copy budget is shared; naming does not wait for the clean-up
+        namer = FakeNamer(steps=4)
+        self.tree.value = True            # the staged copies cannot be deleted yet
+        queue = self.queue(namer=namer)
+        first = self.staged_job()
+        first.naming = dict(NAMING)
+        a = queue.add(first)
+        job_a = self.poll_until(queue, a, ("running",))
+        b = queue.add(self.staged_job())  # same model: starts once a has ended
+        self.exit(job_a)
+        queue.poll()      # a ends; b starts staging and copies for the whole budget
+        self.assertEqual(job_a.state, "ok")
+        self.assertEqual(job_a.cleanup, "pending")
+        self.assertEqual(self.job(queue, b).state, "staging")
+        counts = [len(namer.log)]
+        while self.job(queue, b).state == "staging" and job_a.naming_state == "running":
+            before = len(namer.log)
+            queue.poll()
+            counts.append(len(namer.log) - before)
+        self.assertEqual(counts[:2], [1, 1], "staging used the budget: one naming step each")
+        while job_a.naming_state == "running":
+            queue.poll()
+        self.assertEqual((job_a.state, job_a.naming_state), ("ok", "done"))
+        self.assertEqual(job_a.cleanup, "pending", "naming did not wait for the clean-up")
+        self.tree.value = False
+        queue.cancel(b)
+        for _ in range(3):
+            queue.poll()
+
+
+# --- Named copies, Task 5 (SPEC-named-copies.md criterion 7) ---------------------------------
+
+import rx_naming  # noqa: E402
+
+NAMING = {"template": "{OriginalName}", "system": {}, "values": None}
+
+
+class FakeRun(object):
+    """Stands for rx_naming.NamedRun: `steps` steps, then `final`; logs every step."""
+
+    def __init__(self, namer, paths, naming):
+        self.namer, self.paths, self.naming = namer, paths, naming
+        self.state = None
+        self.done = 0
+        self.total = namer.steps
+        self.messages = 0
+        self.closed = False
+
+    def steps(self):
+        self.state = "running"
+        try:
+            for number in range(self.total):
+                if self.namer.raise_at == number:
+                    raise OSError("step failed")
+                self.done = number + 1
+                self.namer.log.append((self.paths.root, number))
+                yield self.done, self.total
+        except GeneratorExit:
+            self.closed = True
+            raise
+        self.state = self.namer.final
+
+    def result_message(self):
+        self.messages += 1
+        return "Named: %s." % self.state
+
+
+class FakeNamer(object):
+    def __init__(self, steps=3, final="done", raise_at=None, fail_create=False):
+        self.steps, self.final, self.raise_at, self.fail_create = steps, final, raise_at, fail_create
+        self.calls = []
+        self.runs = []
+        self.log = []
+
+    def __call__(self, paths, naming):
+        self.calls.append((paths, naming))
+        if self.fail_create:
+            raise ValueError("namer broke")
+        run = FakeRun(self, paths, naming)
+        self.runs.append(run)
+        return run
+
+
+class NamingQueueTest(TempDirTest):
+    """Named copies after an ok export: queue state, shared budget, failure isolation."""
+    # QueueTest's fixtures and helpers without re-running its tests.
+    model = QueueTest.model
+    job = QueueTest.job
+    finish = QueueTest.finish
+
+    def setUp(self):
+        super(NamingQueueTest, self).setUp()
+        self.revit = os.path.join(self.tmp, "Revit")
+        os.makedirs(os.path.join(self.revit, "RevitExtractor"))
+        open(os.path.join(self.revit, "RevitExtractor", "RevitExtractor.exe"), "w").close()
+        self.out = os.path.join(self.tmp, "out")
+        self.starter = FakeStarter()
+        self.tokens = iter("%08x" % n for n in range(1, 1000))
+        self.namer = FakeNamer()
+        self.ticker = StageTicker()     # 0.015 s per reading; STAGE_BUDGET 0.04
+
+    def queue(self, max_parallel=1, **kwargs):
+        kwargs.setdefault("namer", self.namer)
+        return Queue(self.starter, FakeClock(), max_parallel=max_parallel,
+                     system_root=SYSTEM_ROOT, token=lambda: next(self.tokens),
+                     stage_clock=self.ticker, **kwargs)
+
+    def add(self, queue, name, naming=NAMING):
+        return queue.add(rx_runner.Job(self.model(name), SAMPLE_INDEX, self.revit, self.out,
+                                       naming=dict(naming) if naming else None))
+
+    def finished_ok(self, queue, name="a"):
+        job_id = self.add(queue, name)
+        queue.poll()
+        self.finish(queue, job_id)
+        return job_id
+
+    def poll_naming(self, queue, job_id, limit=50):
+        for _ in range(limit):
+            queue.poll()
+            if self.job(queue, job_id).naming_state in ("done", "partial", "failed"):
+                return self.job(queue, job_id)
+        self.fail("naming never ended")
+
+    def test_an_ok_job_with_naming_is_named_and_its_state_never_changes(self):
+        queue = self.queue()
+        a = self.finished_ok(queue)
+        changed = queue.poll()
+        job = self.job(queue, a)
+        self.assertIn(a, changed)
+        self.assertEqual(job.state, "ok")
+        self.assertEqual(len(self.namer.calls), 1)
+        self.assertEqual(self.namer.calls[0], (job.paths, NAMING))
+        self.assertIn(job.naming_state, ("running", "done"))
+        job = self.poll_naming(queue, a)
+        self.assertEqual((job.state, job.naming_state), ("ok", "done"))
+        self.assertEqual((job.naming_done, job.naming_total), (3, 3))
+        self.assertEqual(self.namer.runs[0].messages, 1)
+        self.assertTrue(job.result.message.endswith(" Named: done."), job.result.message)
+        self.assertEqual(job.result.message.count("Named:"), 1)
+        for _ in range(3):
+            queue.poll()
+        self.assertEqual(job.result.message.count("Named:"), 1, "appended once")
+        self.assertEqual(len(self.namer.calls), 1)
+        self.assertFalse(queue.busy())
+
+    def test_a_partial_or_failed_naming_keeps_the_job_ok(self):
+        for final in ("partial", "failed"):
+            with self.subTest(final):
+                self.namer = FakeNamer(final=final)
+                queue = self.queue()
+                job = self.poll_naming(queue, self.finished_ok(queue))
+                self.assertEqual((job.state, job.result.state, job.naming_state),
+                                 ("ok", "ok", final))
+                self.assertIn("Named: %s." % final, job.result.message)
+
+    def test_failed_cancelled_and_plain_jobs_are_never_named(self):
+        queue = self.queue()
+        failed = self.add(queue, "a")
+        queue.poll()
+        self.finish(queue, failed, code=1)
+        queue.poll()
+        cancelled = self.add(queue, "b")
+        queue.cancel(cancelled)      # before it starts
+        incomplete = self.add(queue, "c")
+        plain = self.add(queue, "d", naming=None)
+        for job_id, kwargs in ((incomplete, {"complete": False}), (plain, {})):
+            self.poll_until_running(queue, job_id)
+            self.finish(queue, job_id, **kwargs)
+        for _ in range(3):
+            queue.poll()
+        states = dict((j.id, (j.state, j.naming_state)) for j in queue.jobs())
+        self.assertEqual(states[failed], ("failed", None))
+        self.assertEqual(states[cancelled], ("cancelled", None))
+        self.assertEqual(states[incomplete], ("failed", None))
+        self.assertEqual(states[plain], ("ok", None))
+        self.assertEqual(self.namer.calls, [], "a job without naming never calls the namer")
+        self.assertFalse(queue.busy())
+
+    def poll_until_running(self, queue, job_id, limit=10):
+        for _ in range(limit):
+            queue.poll()
+            if self.job(queue, job_id).state == "running":
+                return
+        self.fail("never started")
+
+    def test_a_running_job_cancelled_is_never_named(self):
+        queue = self.queue()
+        a = self.add(queue, "a")
+        queue.poll()
+        self.assertTrue(queue.cancel(a))
+        self.finish(queue, a)
+        queue.poll()
+        queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual((job.state, job.naming_state), ("cancelled", None))
+        self.assertEqual(self.namer.calls, [])
+
+    def test_each_poll_names_within_the_budget_and_at_least_one_step(self):
+        self.namer = FakeNamer(steps=10)
+        queue = self.queue()
+        a = self.finished_ok(queue)
+        queue.poll()     # finishes the export; naming starts in the same poll
+        per_poll = [len(self.namer.log)]
+        while self.job(queue, a).naming_state == "running":
+            before = len(self.namer.log)
+            queue.poll()
+            per_poll.append(len(self.namer.log) - before)
+        # one reading at the start, then one per step: 0.015, 0.030, 0.045 >= 0.04 -> 3 steps
+        self.assertEqual(per_poll[:3], [3, 3, 3])
+        self.assertEqual(sum(per_poll), 10)
+        self.assertEqual(self.job(queue, a).naming_state, "done")
+
+    def test_a_tiny_budget_still_makes_one_step_per_poll(self):
+        queue = self.queue(stage_budget=0.0)
+        a = self.finished_ok(queue)
+        counts = []
+        for _ in range(4):
+            before = len(self.namer.log)
+            queue.poll()
+            counts.append(len(self.namer.log) - before)
+        self.assertEqual(counts[:3], [1, 1, 1])
+        self.assertEqual(self.job(queue, a).naming_state, "done")
+
+    def test_several_jobs_are_named_one_after_another_in_order(self):
+        queue = self.queue()
+        a, b = self.add(queue, "a"), self.add(queue, "b")
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()         # a ends; b starts
+        self.finish(queue, b)
+        queue.poll()         # b ends too
+        roots = [root for root, _ in self.namer.log]
+        root_a, root_b = self.job(queue, a).paths.root, self.job(queue, b).paths.root
+        while queue.busy():
+            queue.poll()
+            roots = [root for root, _ in self.namer.log]
+        self.assertEqual(roots, [root_a] * 3 + [root_b] * 3, "FIFO, one at a time")
+        self.assertEqual([self.job(queue, j).naming_state for j in (a, b)], ["done", "done"])
+
+    def test_the_next_export_starts_and_runs_while_the_last_is_named(self):
+        self.namer = FakeNamer(steps=50)
+        lock = FakeLock(LockState())
+        queue = self.queue(lock=lock)
+        a, b = self.add(queue, "a"), self.add(queue, "b")
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()
+        self.assertEqual(self.job(queue, a).naming_state, "running")
+        self.assertEqual(self.job(queue, b).state, "running", "naming never holds back an export")
+        self.finish(queue, b)
+        queue.poll()
+        self.assertEqual(self.job(queue, b).state, "ok")
+        self.assertEqual(self.job(queue, a).naming_state, "running")
+        self.assertFalse(lock.state.owner, "the run lock is given back while naming goes on")
+        self.assertTrue(queue.busy())
+
+    def test_busy_and_clear_finished_wait_for_naming(self):
+        queue = self.queue()
+        a = self.finished_ok(queue)
+        done = self.add(queue, "plain", naming=None)
+        self.poll_until_running(queue, done)
+        self.assertEqual(self.poll_naming(queue, a).naming_state, "done")
+        self.finish(queue, done)
+        self.namer.steps = 9
+        c = self.add(queue, "c")
+        self.poll_until_running(queue, c)
+        self.finish(queue, c)
+        queue.poll()
+        self.assertEqual(self.job(queue, c).naming_state, "running")
+        self.assertTrue(queue.busy())
+        self.assertEqual(sorted(queue.clear_finished()), sorted([a, done]))
+        self.assertEqual([j.id for j in queue.jobs()], [c], "its row stays while it is named")
+        self.poll_naming(queue, c)
+        self.assertFalse(queue.busy())
+        self.assertEqual(queue.clear_finished(), [c])
+
+    def test_a_namer_that_raises_at_creation_fails_the_naming_only(self):
+        self.namer = FakeNamer(fail_create=True)
+        queue = self.queue()
+        a, b = self.add(queue, "a"), self.add(queue, "b")
+        queue.poll()
+        self.finish(queue, a)
+        queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual((job.state, job.naming_state), ("ok", "failed"))
+        self.assertTrue(job.result.message.endswith("Named copies were not made: namer broke"))
+        self.assertEqual(self.job(queue, b).state, "running", "the queue goes on")
+        self.finish(queue, b)
+        queue.poll()
+        self.assertEqual(self.job(queue, b).naming_state, "failed")
+        self.assertEqual(len(self.namer.calls), 2)
+
+    def test_a_step_that_raises_fails_the_naming_only_and_is_closed(self):
+        self.namer = FakeNamer(steps=5, raise_at=2)
+        queue = self.queue()
+        job = self.poll_naming(queue, self.finished_ok(queue))
+        self.assertEqual((job.state, job.naming_state), ("ok", "failed"))
+        self.assertIn("Named copies were not made: step failed", job.result.message)
+        self.assertEqual(job.result.message.count("Named copies were not made"), 1)
+        self.assertEqual(job.naming_done, 2)
+        self.assertFalse(queue.busy())
+
+    def test_a_run_without_an_end_state_is_failed(self):
+        self.namer = FakeNamer(final="running")
+        queue = self.queue()
+        job = self.poll_naming(queue, self.finished_ok(queue))
+        self.assertEqual(job.naming_state, "failed")
+        self.assertIn("without a result", job.result.message)
+
+    def test_the_failure_note_is_polish_too(self):
+        self.namer = FakeNamer(fail_create=True)
+        with patch.dict(sys.modules, polish()):
+            queue = self.queue()
+            job = self.poll_naming(queue, self.finished_ok(queue))
+        self.assertIn("Nie utworzono kopii z nazwami: namer broke", job.result.message)
+
+    def test_close_closes_the_naming_generator(self):
+        self.namer = FakeNamer(steps=50)
+        queue = self.queue()
+        a = self.finished_ok(queue)
+        queue.poll()
+        self.assertEqual(self.job(queue, a).naming_state, "running")
+        queue.close()
+        self.assertTrue(self.namer.runs[0].closed)
+        self.assertFalse(queue.busy())
+        before = len(self.namer.log)
+        queue.poll()
+        self.assertEqual(len(self.namer.log), before, "nothing resumes it")
+
+    def test_a_bad_naming_refuses_the_job_in_english_and_polish(self):
+        bad = {"template": "{Nope}", "system": {}, "values": None}
+        for modules in ({}, polish()):
+            with patch.dict(sys.modules, modules):
+                with self.assertRaises(rx_naming.NamingError) as expected:
+                    rx_naming.check_naming(bad)
+                queue = self.queue()
+                for naming in (bad, {"template": "{OriginalName}", "system": {"A": 1}},
+                               "not a dict"):
+                    with self.subTest(naming=naming):
+                        job = rx_runner.Job(self.model("a"), SAMPLE_INDEX, self.revit, self.out,
+                                            naming=naming)
+                        with self.assertRaises(RunnerError):
+                            queue.add(job)
+                        self.assertIsNone(job.id)
+                message = message_of(queue.add, rx_runner.Job(
+                    self.model("a"), SAMPLE_INDEX, self.revit, self.out, naming=bad))
+                self.assertEqual(message, str(expected.exception))
+                self.assertEqual(queue.jobs(), [])
+        self.assertNotEqual(message_of(self.queue().add, rx_runner.Job(
+            self.model("a"), SAMPLE_INDEX, self.revit, self.out, naming=bad)), message)
+
+    def test_a_foreign_job_is_never_named(self):
+        queue = self.queue()
+        job = rx_runner.Job(self.model("a"), SAMPLE_INDEX, self.revit, self.out, naming=NAMING)
+        job.foreign = True
+        with self.assertRaises(RunnerError):
+            queue.add(job)
+        # an adopted run never gets naming, even if one is set on it afterwards
+        root = os.path.join(self.out, "export-20261118-110000-bbbbbbbb")
+        os.makedirs(os.path.join(root, "output", "Resource"))
+        open(os.path.join(root, "output", "bubble.json"), "w").close()
+        with open(os.path.join(root, "console.log"), "w") as handle:
+            handle.write(SUMMARY_OK)
+        running = Hold(True)
+        adopted = queue.adopt_run(rx_runner.run_paths_for(root), running=running)
+        self.job(queue, adopted).naming = dict(NAMING)
+        running.value = False
+        queue.poll()
+        queue.poll()
+        job = self.job(queue, adopted)
+        self.assertEqual((job.state, job.naming_state), ("ok", None))
+        self.assertEqual(self.namer.calls, [])
+
+    def test_as_dict_has_the_naming_fields_but_not_the_naming(self):
+        queue = self.queue()
+        a = self.finished_ok(queue)
+        data = self.job(queue, a).as_dict()
+        self.assertEqual((data["naming_state"], data["naming_done"], data["naming_total"]),
+                         (None, 0, 0))
+        self.assertNotIn("naming", data)
+        job = self.poll_naming(queue, a)
+        data = job.as_dict()
+        self.assertEqual((data["naming_state"], data["naming_done"], data["naming_total"]),
+                         ("done", 3, 3))
+        self.assertNotIn("{OriginalName}", json.dumps(data))
+
+    def test_the_default_namer_is_the_real_named_run(self):
+        queue = Queue(self.starter, FakeClock(), system_root=SYSTEM_ROOT,
+                      token=lambda: next(self.tokens))
+        a = queue.add(rx_runner.Job(self.model("a"), SAMPLE_INDEX, self.revit, self.out,
+                                    naming=dict(NAMING)))
+        queue.poll()
+        job = self.job(queue, a)
+        self.finish(queue, a)         # an empty bubble.json: NamedRun refuses, changes nothing
+        before = snapshot(job.paths.output)
+        for _ in range(20):
+            queue.poll()
+            if job.naming_state not in ("pending", "running"):
+                break
+        self.assertEqual((job.state, job.naming_state), ("ok", "failed"))
+        self.assertIn("Named copies were not made: bubble.json could not be read",
+                      job.result.message)
+        self.assertEqual(snapshot(job.paths.output), before)
+        self.assertFalse(os.path.exists(os.path.join(job.paths.root, "named")))
+
+    def test_the_real_named_run_makes_named_copies_after_an_ok_export(self):
+        queue = Queue(self.starter, FakeClock(), system_root=SYSTEM_ROOT,
+                      token=lambda: next(self.tokens))
+        a = queue.add(rx_runner.Job(self.model("a"), SAMPLE_INDEX, self.revit, self.out,
+                                    naming=dict(NAMING)))
+        queue.poll()
+        job = self.job(queue, a)
+        self.finish(queue, a)
+        with open(os.path.join(job.paths.output, "bubble.json"), "w") as handle:
+            handle.write("{}")
+        with open(os.path.join(job.paths.output, "Model.ifc"), "wb") as handle:
+            handle.write(b"ifc" * 10)
+        before = snapshot(job.paths.output)
+        for _ in range(20):
+            queue.poll()
+            if job.naming_state not in ("pending", "running"):
+                break
+        self.assertEqual((job.state, job.naming_state), ("ok", "done"))
+        self.assertEqual((job.naming_done, job.naming_total), (1, 1))
+        self.assertIn("Named copies: 1 in named\\", job.result.message)
+        self.assertTrue(os.path.isfile(os.path.join(job.paths.root, "named", "Model.ifc")))
+        self.assertEqual(snapshot(job.paths.output), before, "output\\ is never changed")
+
 
 if __name__ == "__main__":
     unittest.main()
