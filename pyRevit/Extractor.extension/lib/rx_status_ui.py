@@ -225,6 +225,7 @@ class StatusWindow(_WINDOW_BASE):
         self.jobs_lv.ContextMenuOpening += self._on_menu_opening
         self.menu_show_model.Click += self._on_show_model
         self.menu_show_folder.Click += self._on_show_folder
+        self.menu_show_named.Click += self._on_show_named
         self.cancel_btn.Click += self._on_cancel
         self.open_folder_btn.Click += self._on_open_folder
         self.open_analyzer_btn.Click += self._on_open_analyzer
@@ -248,6 +249,7 @@ class StatusWindow(_WINDOW_BASE):
         try:
             self.menu_show_model.Header = self.Resources["status_menu_model"]
             self.menu_show_folder.Header = self.Resources["status_menu_folder"]
+            self.menu_show_named.Header = self.Resources["status_menu_named"]
         except Exception:
             pass
 
@@ -374,6 +376,7 @@ class StatusWindow(_WINDOW_BASE):
             else:
                 self.menu_show_model.IsEnabled = bool(view.get("model_path"))
                 self.menu_show_folder.IsEnabled = bool(view.get("can_open_folder"))
+                self.menu_show_named.IsEnabled = bool(view.get("named_folder"))
             self._menu_on_empty = False
         except Exception as error:
             self._report(error)
@@ -387,6 +390,11 @@ class StatusWindow(_WINDOW_BASE):
         view = self.selected_view()
         if view and view.get("can_open_folder"):
             self._guard(self._actions.show_run_folder, view)
+
+    def _on_show_named(self, sender, args):
+        view = self.selected_view()
+        if view and view.get("named_folder"):
+            self._guard(self._actions.show_named_folder, view)
 
     def _on_cancel(self, sender, args):
         view = self.selected_view()
@@ -518,9 +526,11 @@ class Session(object):
             self.window._report(error)
 
     def _set_pace(self):
-        """Faster ticks while a job copies from the cache (and is not just waiting to launch);
-        the normal pace otherwise. The interval is only set when the pace changes."""
-        fast = any(job.state == STAGING and not getattr(job, "stage_ready", False)
+        """Faster ticks while a job copies from the cache (and is not just waiting to launch) or
+        its named copies are being made; the normal pace otherwise. The interval is only set
+        when the pace changes."""
+        fast = any((job.state == STAGING and not getattr(job, "stage_ready", False))
+                   or getattr(job, "naming_state", None) in ("pending", "running")
                    for job in self.queue.jobs())
         if fast != self._fast:
             self._timer.Interval = self._interval(STAGING_TICK_SECONDS if fast else TICK_SECONDS)
@@ -573,6 +583,11 @@ class Session(object):
         if not folder:
             return
         self._shell(folder)
+
+    def show_named_folder(self, view):
+        """Context menu: the run's "named" folder (only offered once naming made it)."""
+        if view.get("named_folder"):
+            self._shell(view["named_folder"])
 
     def show_model(self, view):
         """Context menu: select the model in Explorer; else open its folder; else say so."""

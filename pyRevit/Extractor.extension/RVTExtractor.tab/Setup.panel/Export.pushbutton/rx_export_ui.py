@@ -903,6 +903,20 @@ class ModelWindow(forms.WPFWindow):
         self._name_split = bool(self.name_split_cb.IsChecked)
         self._persist()
 
+    def _with_naming(self, jobs):
+        """Copies of the jobs that carry the file-name template when one is set (and the
+        feature is on). The jobs the window keeps for a retry stay as they were, so a later
+        retry uses the template of that moment."""
+        template = self._name_template.strip()
+        if not rx_export_logic.NAMED_COPIES_READY or not template:
+            return jobs
+        named = []
+        for job in jobs:
+            copy = dict(job)
+            copy["naming"] = {"template": template, "split": bool(self._name_split)}
+            named.append(copy)
+        return named
+
     def _name_template_ok(self):
         """False (with the reason on the error line) when the template is not valid. Off until
         the feature is ready."""
@@ -1078,7 +1092,7 @@ class ModelWindow(forms.WPFWindow):
                 if self._submit is None:
                     raise RuntimeError(tr("The export queue is not available.",
                                           "Kolejka eksportów jest niedostępna."))
-                result = self._submit(jobs, self.output_parent)
+                result = self._submit(self._with_naming(jobs), self.output_parent)
             except Exception as error:
                 if retain:
                     for row, job in zip(models, jobs):

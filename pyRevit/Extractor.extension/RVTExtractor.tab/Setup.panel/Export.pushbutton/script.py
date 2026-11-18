@@ -10,6 +10,7 @@ no function, window or Revit object of this command outlives it. Button title an
 """
 from __future__ import unicode_literals
 
+import datetime
 import json
 import os
 import re
@@ -30,6 +31,7 @@ from rx_export_logic import CONFIG_SECTION, load_settings, save_settings
 from rx_export_ui import ModelWindow
 from rx_i18n import tr
 from rx_json import dumps_ascii
+from rx_naming import system_values
 from rx_runner import DotNetStarter, extractor_exe, find_orphan_run
 from rx_status import find_session
 from rx_status_ui import open_session
@@ -134,23 +136,56 @@ def _failed_positions(errors):
     return sorted(set(positions))
 
 
-def _job_request(job, revit_dir, output_parent):
+def _windows_dates():
+    """The short and the long date in this user's Windows regional settings (.NET current
+    culture), or two empty texts when .NET cannot say."""
+    try:
+        from System import DateTime
+        now = DateTime.Now
+        return "%s" % now.ToString("d"), "%s" % now.ToString("D")
+    except Exception:
+        return "", ""
+
+
+def _system_tokens(app, job, now=None, environ=None, dates=None):
+    """The system tokens of the file-name template, captured once when the export is
+    submitted: time parts, the regional dates, Windows user, Revit user and the model name
+    (a cloud job: its real file name, never the GUID-named cache file)."""
+    now = now or datetime.datetime.now()
+    environ = os.environ if environ is None else environ
+    short, long_ = (dates or _windows_dates)()
+    try:
+        revit_user = "%s" % (app.Username or "")
+    except Exception:
+        revit_user = ""
+    name = job.get("model_name") or os.path.basename(job.get("model_path") or "")
+    stem = os.path.splitext(name)[0]
+    return system_values(now, environ.get("USERNAME") or "", revit_user, stem, short, long_)
+
+
+def _job_request(job, revit_dir, output_parent, system=None):
     """One job of the submit request. A cloud job also carries its staging plan, the real file
-    name of the model and the catalog key (all plain JSON values)."""
+    name of the model and the catalog key (all plain JSON values). A job with a file-name
+    template carries it with the system tokens (`system(job)`; the values of sheets and
+    views are not known yet: None)."""
     entry = {"model_path": job["model_path"], "index": job["index"], "revit_dir": revit_dir,
              "output_parent": output_parent}
     for name in ("stage", "model_name", "model_key"):
         if job.get(name) is not None:
             entry[name] = job[name]
+    naming = job.get("naming")
+    if isinstance(naming, dict) and naming.get("template") and system is not None:
+        entry["naming"] = {"template": naming["template"], "split": bool(naming.get("split")),
+                           "system": system(job), "values": None}
     return entry
 
 
-def _hand_over(jobs, revit_dir, output_parent, max_parallel):
+def _hand_over(jobs, revit_dir, output_parent, max_parallel, system=None):
     """Hand the jobs to the status window's queue. Returns {"queued": n, "failed": [job
     positions], "warning": text}. Raises RuntimeError with a ready, translated message when the
     session cannot be reached or refuses; the model window shows it on its error line."""
     request = {"op": "submit", "jobs": [
-        _job_request(job, revit_dir, output_parent) for job in jobs]}
+        _job_request(job, revit_dir, output_parent, system) for job in jobs]}
     try:
         handler = open_session(max_parallel)
         answer = json.loads(handler(dumps_ascii(request)))
@@ -240,7 +275,8 @@ def main():
             script.save_config()
 
     def submit(jobs, output_parent):
-        return _hand_over(jobs, revit_dir, output_parent, settings["max_parallel"])
+        return _hand_over(jobs, revit_dir, output_parent, settings["max_parallel"],
+                          system=lambda job: _system_tokens(app, job))
 
     cloud = None
     local_appdata = os.environ.get("LOCALAPPDATA")

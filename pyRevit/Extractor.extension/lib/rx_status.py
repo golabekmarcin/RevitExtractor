@@ -32,7 +32,7 @@ except NameError:
     _INTEGER_TYPES = (int,)
 
 SESSION_KEY = "RevitExtractor.StatusSession"
-PROTOCOL = 1
+PROTOCOL = 2  # 2: submit jobs may carry "naming" (named copies); find_session reuses only an equal one
 WEBSITE_URL = "https://kopecp.github.io/RevitExtractor/"  # D9, the launcher's URL
 NODE_MIN_MAJOR = 24
 
@@ -75,6 +75,8 @@ UI_TEXT = {
     "status_menu_model": ("Show model in File Explorer", "Pokaż model w Eksploratorze plików"),
     "status_menu_folder": ("Show export folder in File Explorer",
                            "Pokaż folder eksportu w Eksploratorze plików"),
+    "status_menu_named": ("Show named files in File Explorer",
+                          "Pokaż pliki z nazwami w Eksploratorze"),
     "status_close": ("Close", "Zamknij"),
     "status_close_tip": ("Exports keep running. While any is queued or running the window is "
                          "minimised, not closed.",
@@ -361,11 +363,25 @@ def _shown_model(job):
     return name, getattr(job, "staged_model", None)
 
 
-def job_view(job, info, now, position, held=False):
+def _naming_text(job):
+    """The progress text of an ok job whose named copies are still to be made, else None."""
+    naming = getattr(job, "naming_state", None)
+    if naming == "pending":
+        return tr("Waiting to name files…", "Oczekiwanie na nadanie nazw plikom…")
+    if naming == "running":
+        if not job.naming_total:
+            return tr("Preparing file names…", "Przygotowanie nazw plików…")
+        return tr("Naming files: {0} of {1}", "Nadawanie nazw: {0} z {1}").format(
+            job.naming_done, job.naming_total)
+    return None
+
+
+def job_view(job, info, now, position, held=False, isdir=os.path.isdir):
     """Plain dict for one row: its texts, and which footer buttons apply.
 
     job: an rx_runner.Job. info: progress_info() of a running job, or None. position: 1-based
     place among queued jobs, or None. held: Queue.held (another Extractor is running).
+    isdir: for "named_folder" (the run's named\\ folder, once naming is done or partial).
     """
     state = job.state
     paths = job.paths
@@ -407,7 +423,7 @@ def job_view(job, info, now, position, held=False):
                           "Z wcześniejszej sesji Revita; nie można go tu anulować. ") + progress
     elif state == OK:
         state_text = tr("Done", "Gotowe")
-        progress = message
+        progress = _naming_text(job) or message
     elif state == FAILED:
         state_text = tr("Failed", "Błąd")
         progress = message
@@ -422,8 +438,15 @@ def job_view(job, info, now, position, held=False):
         state_text = "%s" % (state,)
         progress = message
 
+    named = None
+    if (state == OK and paths is not None
+            and getattr(job, "naming_state", None) in ("done", "partial")):
+        named = os.path.join(paths.root, "named")
+        if not isdir(named):
+            named = None
     model, model_path = _shown_model(job)
     return {
+        "named_folder": named,
         "id": job.id, "state": state, "model": model,
         "model_path": model_path, "state_text": state_text, "progress": progress,
         "started": _clock_text(job.started_at), "time": elapsed,
@@ -618,6 +641,8 @@ def _job_from(data):
     for name in ("model_name", "model_key"):
         if data.get(name) is not None and not _is_text(data.get(name)):
             bad.append(name)
+    if data.get("naming") is not None and not isinstance(data.get("naming"), dict):
+        bad.append("naming")
     if bad:
         raise _RequestError(tr("Missing or invalid field: {0}",
                                "Brak pola lub nieprawidłowe pole: {0}").format(", ".join(bad)))
@@ -626,7 +651,8 @@ def _job_from(data):
             clean_path(item.get("src"))  # RunnerError for a missing, relative or unsafe path
     # Queue.add checks the rest (names, sizes, host first) and copies the stage.
     return Job(data["model_path"], data["index"], data["revit_dir"], data["output_parent"],
-               stage=stage, model_name=data.get("model_name"), model_key=data.get("model_key"))
+               stage=stage, model_name=data.get("model_name"), model_key=data.get("model_key"),
+               naming=data.get("naming"))
 
 
 class SessionCore(object):
@@ -635,7 +661,8 @@ class SessionCore(object):
     ops: {"op": "ping"} -> {"ok", "protocol", "busy", "jobs", "since"};
          {"op": "submit", "jobs": [{"model_path", "index", "revit_dir", "output_parent"}]}
             -> {"ok", "added", "errors"}; a cloud job adds "stage" ({"items": [{src, name, size,
-            mtime}], "notes"}), "model_name" and optionally "model_key";
+            mtime}], "notes"}), "model_name" and optionally "model_key"; any job may carry
+            "naming" ({"template", "system", "values", "split"}, checked by Queue.add);
          {"op": "show"} -> {"ok"}.
     listener (optional): on_submit(ids) and on_show(), the window side. handle() never raises.
     """

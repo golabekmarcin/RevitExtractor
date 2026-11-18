@@ -1475,6 +1475,82 @@ class WindowTest(unittest.TestCase):
         self.pick("menu_show_folder")
         self.assertIn("cannot open", self.window.error_text.Text)
 
+    # -- named copies (menu item, pace, minimise)
+
+    def named_row(self, naming_state, make_folder=True):
+        """A finished export whose naming is in `naming_state`; the namer itself is switched off."""
+        self.submit("a")
+        self.finish(0)
+        self.tick()
+        job = self.queue.jobs()[0]
+        job.naming_state = naming_state
+        job.naming_done, job.naming_total = 1, 4
+        if naming_state in ("pending", "running"):
+            self.queue._namings.append(job)
+            self.queue._advance_namings = lambda: []
+        if make_folder:
+            os.makedirs(os.path.join(job.paths.root, "named"), exist_ok=True)
+        self.tick()
+        return job
+
+    def test_named_menu_item_is_localised_and_off_for_a_plain_row(self):
+        self.assertEqual(self.window.menu_show_named.Header, "Show named files in File Explorer")
+        under_polish(self.window.apply_resources)
+        self.assertEqual(self.window.menu_show_named.Header,
+                         "Pokaż pliki z nazwami w Eksploratorze")
+        self.window.apply_resources()
+        self.submit("b")
+        self.right_click(0)
+        self.assertFalse(self.window.menu_show_named.IsEnabled)
+
+    def test_named_menu_item_opens_the_named_folder(self):
+        job = self.named_row("done")
+        self.right_click(0)
+        self.assertTrue(self.window.menu_show_named.IsEnabled)
+        self.pick("menu_show_named")
+        self.assertEqual(self.shell.opened, [os.path.join(job.paths.root, "named")])
+        self.assertEqual(self.window.error_text.Text, "")
+
+    def test_named_menu_item_disabled_while_naming(self):
+        self.named_row("running")
+        self.right_click(0)
+        self.assertFalse(self.window.menu_show_named.IsEnabled)
+        self.pick("menu_show_named")
+        self.assertEqual(self.shell.opened, [])
+
+    def test_named_menu_item_follows_the_folder_on_disk(self):
+        job = self.named_row("partial", make_folder=False)
+        self.right_click(0)
+        self.assertFalse(self.window.menu_show_named.IsEnabled)
+        os.makedirs(os.path.join(job.paths.root, "named"))
+        self.tick()
+        self.right_click(0)
+        self.assertTrue(self.window.menu_show_named.IsEnabled)
+
+    def test_timer_is_fast_while_naming_and_slow_after(self):
+        job = self.named_row("pending")
+        self.assertEqual(self.timer.Interval, ("seconds", self.ui.STAGING_TICK_SECONDS))
+        self.assertIn("Waiting to name files", self.rows()[0].Progress)
+        job.naming_state = "running"
+        self.tick()
+        self.assertEqual(self.timer.Interval, ("seconds", self.ui.STAGING_TICK_SECONDS))
+        self.assertIn("Naming files: 1 of 4", self.rows()[0].Progress)
+        job.naming_state = "done"
+        self.queue._namings.remove(job)
+        self.tick()
+        self.assertEqual(self.timer.Interval, ("seconds", self.ui.TICK_SECONDS))
+
+    def test_window_is_minimised_not_hidden_while_naming(self):
+        job = self.named_row("running")
+        self.assertTrue(self.queue.busy())
+        self.session.close_window()
+        self.assertEqual((self.window.hides, self.window.WindowState), (0, "Minimized"))
+        job.naming_state = "done"
+        self.queue._namings.remove(job)
+        self.assertFalse(self.queue.busy())
+        self.session.close_window()
+        self.assertEqual(self.window.hides, 1)
+
     def test_open_in_analyzer_starts_once_then_reuses_the_url(self):
         self.submit("a")
         self.finish(0)
@@ -2145,6 +2221,116 @@ class StagingWindow(unittest.TestCase):
         before = self.window.jobs_lv.Items.refreshes
         self.tick()
         self.assertLessEqual(self.window.jobs_lv.Items.refreshes - before, 1)
+
+
+# --- Named copies: protocol 2, naming in submit, row texts --------------------------------------
+
+NAMING = {"template": "{Date}", "system": {"Date": "2026-11-18"}, "values": None}
+NAMING_MESSAGE = "Export finished. Named copies: 3 files."
+
+
+def naming_job(naming_state, done=0, total=0, state="ok"):
+    job = make_job(state, NOW, at(2), result(state, NAMING_MESSAGE))
+    job.naming_state = naming_state
+    job.naming_done = done
+    job.naming_total = total
+    return job
+
+
+class NamingProtocol(unittest.TestCase):
+    def setUp(self):
+        self.queue = new_queue()
+        self.core = SessionCore(self.queue, lambda: NOW, Listener())
+
+    def test_protocol_is_2(self):
+        self.assertEqual(PROTOCOL, 2)
+        self.assertEqual(call(self.core, {"op": "ping"})["protocol"], 2)
+
+    def test_a_handler_with_protocol_1_is_not_reused(self):
+        domain = FakeDomain({SESSION_KEY: answering(json.dumps(
+            {"ok": True, "protocol": 1, "busy": False}))})
+        self.assertIsNone(find_session(domain))
+
+    def test_submit_passes_naming_to_the_job(self):
+        answer = call(self.core, {"op": "submit", "jobs": [job_data(naming=NAMING), job_data()]})
+        self.assertEqual(answer["errors"], [])
+        first, second = self.queue.jobs()
+        self.assertEqual(first.naming, NAMING)
+        self.assertIsNone(second.naming)
+
+    def test_naming_that_is_not_an_object_is_that_jobs_error(self):
+        for bad in ("{Date}", ["x"], 5, True):
+            with self.subTest(naming=bad):
+                queue = new_queue()
+                answer = call(SessionCore(queue, lambda: NOW),
+                              {"op": "submit", "jobs": [job_data(naming=bad)]})
+                self.assertEqual(answer["added"], [])
+                self.assertIn("naming", answer["errors"][0])
+                self.assertEqual(queue.jobs(), [])
+        answer = call(self.core, {"op": "submit", "jobs": [job_data(naming="x"), job_data()]})
+        self.assertEqual((len(answer["added"]), len(answer["errors"])), (1, 1))
+        polish_error = under_polish(lambda: call(
+            SessionCore(new_queue(), lambda: NOW),
+            {"op": "submit", "jobs": [job_data(naming="x")]})["errors"][0])
+        self.assertNotEqual(polish_error, answer["errors"][0])
+        self.assertIn("Brak pola", polish_error)
+
+
+class NamingJobView(unittest.TestCase):
+    def view(self, *args, **kwargs):
+        return job_view(naming_job(*args, **kwargs), None, at(9), None, isdir=lambda p: True)
+
+    def test_progress_texts(self):
+        cases = (("pending", 0, 0, "Waiting to name files…"),
+                 ("running", 0, 0, "Preparing file names…"),
+                 ("running", 2, 7, "Naming files: 2 of 7"))
+        for naming_state, done, total, text in cases:
+            with self.subTest(naming_state=naming_state, total=total):
+                view = self.view(naming_state, done, total)
+                self.assertEqual(view["progress"], text)
+                self.assertEqual(view["state_text"], "Done")
+                self.assertFalse(view["can_cancel"])
+                self.assertTrue(view["can_open_analyzer"])
+                self.assertEqual(view["output"], naming_job("pending").paths.output)
+                self.assertTrue(view["can_open_folder"])
+                self.assertIsNone(view["named_folder"])
+
+    def test_progress_texts_in_polish(self):
+        for naming_state, done, total, text in (
+                ("pending", 0, 0, "Oczekiwanie na nadanie nazw plikom…"),
+                ("running", 0, 0, "Przygotowanie nazw plików…"),
+                ("running", 2, 7, "Nadawanie nazw: 2 z 7")):
+            with self.subTest(total=total, naming_state=naming_state):
+                view = under_polish(self.view, naming_state, done, total)
+                self.assertEqual(view["progress"], text)
+                self.assertEqual(view["state_text"], "Gotowe")
+
+    def test_after_naming_the_result_message_shows(self):
+        for naming_state in ("done", "partial", "failed", None):
+            self.assertEqual(self.view(naming_state)["progress"], NAMING_MESSAGE)
+
+    def test_named_folder_only_when_done_or_partial_and_present(self):
+        job = naming_job("done")
+        expected = os.path.join(job.paths.root, "named")
+        seen = []
+
+        def isdir(path):
+            seen.append(path)
+            return True
+        self.assertEqual(job_view(job, None, at(9), None, isdir=isdir)["named_folder"], expected)
+        self.assertEqual(seen, [expected])
+        self.assertEqual(self.view("partial")["named_folder"], expected)
+        for naming_state in ("failed", "pending", "running", None):
+            self.assertIsNone(self.view(naming_state)["named_folder"], naming_state)
+        self.assertIsNone(job_view(job, None, at(9), None, isdir=lambda p: False)["named_folder"])
+
+    def test_plain_jobs_and_other_states_are_unchanged(self):
+        plain = job_view(naming_job(None), None, at(9), None)
+        self.assertIsNone(plain["named_folder"])
+        self.assertEqual(plain["progress"], NAMING_MESSAGE)
+        failed = job_view(naming_job("running", 1, 2, state="failed"), None, at(9), None)
+        self.assertNotIn("Naming files", failed["progress"])
+        self.assertIsNone(failed["named_folder"])
 
 
 if __name__ == "__main__":

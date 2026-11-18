@@ -12,6 +12,7 @@ Structure (one class group per layer, so later layers can be added without touch
 CPython 3 with stubs: passing here does not prove IronPython, pyRevit or Revit behaviour.
 """
 import ast
+import datetime
 import importlib.util
 import io
 import json
@@ -1126,6 +1127,26 @@ class ModelWindowHarness(object):
         window.name_split_cb.IsChecked = True
         self.fire("name_split_cb")
         self.assertIs(self.saved[-1]["name_split_by_format"], True)
+
+    def test_the_template_goes_with_the_jobs_and_a_plain_job_stays_plain(self):
+        window = self.names_window("{SheetNumber} - {SheetName}")
+        window._name_split = True
+        self.tick()
+        row = [r for r in self.rows() if r.Enabled][0]
+        row.set_quietly(True)
+        window._refresh_state()
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.fire("export_btn")
+        sent = self.submitted[-1]["jobs"][0]
+        self.assertEqual(sent["naming"], {"template": "{SheetNumber} - {SheetName}", "split": True})
+        window._name_template = "  "
+        row.set_quietly(True)
+        window._refresh_state()
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.fire("export_btn")
+        self.assertNotIn("naming", self.submitted[-1]["jobs"][0], "an empty template sends nothing")
+        with patch.object(logic, "NAMED_COPIES_READY", False):
+            self.assertEqual(window._with_naming([{"model_path": "x"}]), [{"model_path": "x"}])
 
     def test_the_template_is_read_from_the_settings(self):
         settings_template = "{Date} {OriginalName}"
@@ -2704,6 +2725,41 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(cloud["model_path"], job["model_path"])
         self.assertEqual(sorted(local), ["index", "model_path", "output_parent", "revit_dir"],
                          "a local job is unchanged")
+
+    def test_a_job_with_a_template_carries_it_with_the_system_tokens(self):
+        job = dict(self.job("a.rvt"), naming={"template": "{SheetNumber}", "split": True})
+        self.queue([job, self.job("b.rvt")])
+        with patch.object(self.module, "_windows_dates",
+                          Mock(return_value=("18.11.2026", "środa, 18 listopada 2026"))),                 patch.dict(os.environ, {"USERNAME": "tester"}):
+            self.run_main()
+        submit = [r for r in self.handler.requests if r["op"] == "submit"][0]
+        self.assertTrue(plain(submit), "ASCII JSON only")
+        named, other = submit["jobs"]
+        naming = named["naming"]
+        self.assertEqual((naming["template"], naming["split"], naming["values"]),
+                         ("{SheetNumber}", True, None))
+        self.assertEqual(naming["system"]["ModelName"], "a")
+        self.assertEqual(naming["system"]["DateShort"], "18.11.2026")
+        self.assertEqual(naming["system"]["WindowsUser"], "tester")
+        self.assertEqual(len(naming["system"]["Year"]), 4)
+        self.assertNotIn("naming", other, "a job without a template is unchanged")
+
+    def test_system_tokens_name_the_model_by_its_real_file_name(self):
+        app = types.SimpleNamespace(Username="jan.k")
+        cloud = {"model_path": os.path.join("D:\\", "run", "GUID.rvt"), "model_name": "Alpha-Architecture.rvt"}
+        local = {"model_path": os.path.join("D:\\", "m", "Office tower.rvt")}
+        now = datetime.datetime(2026, 11, 18, 9, 5, 7)
+        got = self.module._system_tokens(app, cloud, now=now, environ={"USERNAME": "u"},
+                                         dates=lambda: ("d", "D"))
+        self.assertEqual((got["ModelName"], got["RevitUser"], got["WindowsUser"]),
+                         ("Alpha-Architecture", "jan.k", "u"))
+        self.assertEqual((got["Hour"], got["Minute"], got["Second"], got["Date"]),
+                         ("09", "05", "07", "2026-11-18"))
+        self.assertEqual((got["DateShort"], got["DateLong"]), ("d", "D"))
+        again = self.module._system_tokens(types.SimpleNamespace(), local, now=now, environ={},
+                                           dates=lambda: ("", ""))
+        self.assertEqual((again["ModelName"], again["RevitUser"], again["WindowsUser"]),
+                         ("Office tower", "", ""))
 
     def test_a_cloud_job_request_is_read_back_by_the_session(self):
         import rx_status

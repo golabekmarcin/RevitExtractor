@@ -26,6 +26,7 @@
                 <ContextMenu>
                     <MenuItem x:Name="menu_show_model" Header="{DynamicResource status_menu_model}"/>
                     <MenuItem x:Name="menu_show_folder" Header="{DynamicResource status_menu_folder}"/>
+                    <MenuItem x:Name="menu_show_named" Header="{DynamicResource status_menu_named}"/>
                 </ContextMenu>
             </ListView.ContextMenu>
             <ListView.View><GridView>
