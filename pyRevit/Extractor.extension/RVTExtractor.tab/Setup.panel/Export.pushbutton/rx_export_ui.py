@@ -14,6 +14,7 @@ from a DispatcherTimer in slices of at most 40 ms, so rows appear while files ar
 """
 from __future__ import unicode_literals
 
+import datetime
 import os
 import time
 import uuid
@@ -33,10 +34,12 @@ from pyrevit import forms
 import rx_cloud
 from rx_cloud import StageError
 from rx_column_filter_ui import ColumnFilterController
+import rx_export_logic
 from rx_export_logic import (inside_onedrive, link_key, load_shared_index, plan_cloud_job, plan_cloud_jobs,
                              plan_jobs, settings_to_save, has_nested_roots, tick_targets, toggled_state)
 from rx_export_text import resources
 from rx_i18n import tr
+from rx_naming import PRESETS, TOKENS, NamingError, format_name, parse_template, system_values
 from rx_index import SetupError, build_index, database_warning, defaults, to_json
 from rx_runner import RunnerError, clean_path
 from rx_search_bar import SearchBar
@@ -148,6 +151,38 @@ def _masked(value):
         return int(value) & 0xFFFFFFFF
     except Exception:
         return None
+
+
+def _sample_values():
+    """Made-up values for the example under the template field (no real model name)."""
+    now = datetime.datetime.now()
+    values = system_values(now, "user", "user", tr("Office tower", "Wieża biurowa"),
+                           now.strftime("%Y-%m-%d"), now.strftime("%d %B %Y"))
+    values.update({
+        "SheetNumber": "A101", "SheetName": tr("Ground floor", "Parter"), "CurrentRevision": "B",
+        "CurrentRevisionDate": "2026-11-01", "CurrentRevisionDescription": tr("Issued", "Wydane"),
+        "SheetIssueDate": "2026-10-15", "DrawnBy": "JK", "CheckedBy": "MN", "DesignedBy": "AB",
+        "ApprovedBy": "PW", "SheetSize": "A1", "ViewName": tr("Level 1", "Poziom 1"),
+        "TitleOnSheet": tr("Floor plan", "Rzut"), "Scale": "100",
+        "DetailLevel": tr("Medium", "Średni"), "Discipline": tr("Architecture", "Architektura"),
+        "Phase": tr("New construction", "Nowa konstrukcja"), "ViewTemplate": "",
+        "ViewSheetNumber": "A101", "ElementId": "312"})
+    return values
+
+
+def name_example(template):
+    """(text under the template field, error text or ""): the template applied to a made-up
+    sheet. An invalid template gives its error instead of an example."""
+    try:
+        parsed = parse_template(template)
+    except NamingError as error:
+        return "", _error_text(error)
+    if not parsed:
+        return tr("No template: names stay as the Extractor wrote them.",
+                  "Brak wzoru: nazwy zostają takie, jak zapisał Extractor."), ""
+    original = tr("A101 - Ground floor", "A101 - Parter")
+    return tr("Example: {0}  →  {1}", "Przykład: {0}  →  {1}").format(
+        original + ".pdf", format_name(parsed, _sample_values(), original) + ".pdf"), ""
 
 
 def _foreground_handle():
@@ -330,6 +365,8 @@ class ModelWindow(forms.WPFWindow):
         self._max_parallel = settings.get("max_parallel", 1)
         self._shared_path = settings.get("shared_index_path") or ""
         self._subfolders = settings.get("subfolders") is not False
+        self._name_template = settings.get("name_template") or ""
+        self._name_split = settings.get("name_split_by_format") is True
         self.output_parent = settings.get("output_parent") or ""
         self.fatal_error = None
         self._generator = None
@@ -419,6 +456,7 @@ class ModelWindow(forms.WPFWindow):
         self.views_btn.Click += self._on_views
         self.export_btn.Click += self._on_export
         self._revit_handle = None
+        self._setup_naming()
         self.Loaded += self._on_loaded
         self.Closed += self._on_closed
         self.error_text.Text = ""
@@ -759,10 +797,127 @@ class ModelWindow(forms.WPFWindow):
 
     # -- settings
 
+    def _settings_values(self, roots):
+        return settings_to_save(roots, self.output_parent, self._max_parallel,
+                                self._shared_path, self._subfolders, self._name_template,
+                                self._name_split)
+
+    # -- file names (named copies)
+
+    def _setup_naming(self):
+        self.naming_panel.Visibility = _shown(rx_export_logic.NAMED_COPIES_READY)
+        self.name_template_tb.Text = self._name_template
+        self.name_split_cb.IsChecked = self._name_split
+        for preset in PRESETS:
+            self.name_presets_cb.Items.Add(preset)
+        for name, (english, polish, _scope) in TOKENS.items():
+            item = ComboBoxItem()
+            item.Content = tr(english, polish)
+            item.Tag = name
+            self.name_token_cb.Items.Add(item)
+        custom = ComboBoxItem()
+        custom.Content = tr("Custom parameter of the model…", "Parametr własny z modelu…")
+        custom.Tag = "param"
+        self.name_token_cb.Items.Add(custom)
+        self.name_template_tb.TextChanged += self._on_name_text
+        self.name_template_tb.LostFocus += self._on_name_lost
+        self.name_presets_cb.SelectionChanged += self._on_name_preset
+        self.name_token_cb.SelectionChanged += self._on_name_token
+        self.name_clear_btn.Click += self._on_name_clear
+        self.name_split_cb.Click += self._on_name_split
+        self._show_name_example()
+
+    def _show_name_example(self):
+        example, problem = name_example(self._name_template)
+        self.name_preview_text.Text = problem or example
+        self.name_preview_text.Foreground = self._brush("RxErrorText" if problem else "RxMutedText")
+
+    def _brush(self, key):
+        try:
+            return self.FindResource(key)
+        except Exception:
+            return None
+
+    @_guarded
+    def _on_name_text(self, sender, args):
+        self._name_template = self.name_template_tb.Text or ""
+        self._show_name_example()
+
+    @_guarded
+    def _on_name_lost(self, sender, args):
+        self._persist()
+
+    def _reset_combo(self, combo, caption_key):
+        """Back to no selection, with its caption showing again (a read-only editable combo
+        shows its Text, which a pick replaces)."""
+        combo.SelectedIndex = -1
+        try:
+            combo.Text = self.Resources[caption_key]
+        except Exception:
+            pass
+
+    def _insert_in_template(self, text, caret_back=0):
+        box = self.name_template_tb
+        current = box.Text or ""
+        start = max(0, min(len(current), int(box.SelectionStart)))
+        length = max(0, int(box.SelectionLength))
+        self._set_template(current[:start] + text + current[start + length:])
+        box.CaretIndex = start + len(text) - caret_back
+        box.Focus()
+
+    def _set_template(self, text):
+        """Put a template into the field. Real WPF raises TextChanged for it; setting the value
+        here too keeps the state right whether or not the event runs first."""
+        self._name_template = text
+        self.name_template_tb.Text = text
+        self._show_name_example()
+
+    @_guarded
+    def _on_name_preset(self, sender, args):
+        chosen = self.name_presets_cb.SelectedItem
+        if chosen is None:
+            return
+        self._set_template("%s" % (chosen,))
+        self._reset_combo(self.name_presets_cb, "names_presets")
+        self._persist()
+
+    @_guarded
+    def _on_name_token(self, sender, args):
+        chosen = self.name_token_cb.SelectedItem
+        if chosen is None:
+            return
+        tag = "%s" % (chosen.Tag,)
+        self._reset_combo(self.name_token_cb, "names_tokens")
+        if tag == "param":
+            self._insert_in_template("{param:}", caret_back=1)     # the caret lands inside
+        else:
+            self._insert_in_template("{%s}" % tag)
+
+    @_guarded
+    def _on_name_clear(self, sender, args):
+        self._set_template("")
+        self._persist()
+
+    @_guarded
+    def _on_name_split(self, sender, args):
+        self._name_split = bool(self.name_split_cb.IsChecked)
+        self._persist()
+
+    def _name_template_ok(self):
+        """False (with the reason on the error line) when the template is not valid. Off until
+        the feature is ready."""
+        if not rx_export_logic.NAMED_COPIES_READY or not self._name_template.strip():
+            return True
+        try:
+            parse_template(self._name_template)
+        except NamingError as error:
+            self._show_error(_error_text(error))
+            return False
+        return True
+
     def _persist(self, values=None):
         if values is None:
-            values = settings_to_save(self._roots, self.output_parent, self._max_parallel,
-                                      self._shared_path, self._subfolders)
+            values = self._settings_values(self._roots)
         try:
             self._save_settings(values)
         except Exception as error:
@@ -772,8 +927,7 @@ class ModelWindow(forms.WPFWindow):
         return True
 
     def _change_roots(self, roots):
-        values = settings_to_save(roots, self.output_parent, self._max_parallel,
-                                  self._shared_path, self._subfolders)
+        values = self._settings_values(roots)
         redundant = self._subfolders and has_nested_roots(values["roots"])
         if redundant or [_key(root) for root in values["roots"]] == [_key(root) for root in self._roots]:
             self._set_status(tr("That folder is already in the list (or inside one that is).",
@@ -865,6 +1019,8 @@ class ModelWindow(forms.WPFWindow):
             return                      # a second click while the hand-over runs
         models = self._ticked()
         if not models:
+            return
+        if not self._name_template_ok():
             return
         if self._source == "cloud":
             self._export_cloud(models)

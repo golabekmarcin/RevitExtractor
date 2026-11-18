@@ -25,7 +25,11 @@ except NameError:
     _TEXT_TYPES = (str,)
 
 CONFIG_SECTION = "RevitExtractorExport"
-SETTING_NAMES = ("roots", "output_parent", "max_parallel", "shared_index_path", "subfolders")
+SETTING_NAMES = ("roots", "output_parent", "max_parallel", "shared_index_path", "subfolders",
+                 "name_template", "name_split_by_format")
+# The File names row of the window (named copies, specs/SPEC-named-copies.md) is hidden until
+# the runner side is built and verified; tests switch it on.
+NAMED_COPIES_READY = False
 _VIEW_ID_KEYS = ("view_ids", "view_unique_ids")
 
 
@@ -100,10 +104,13 @@ def load_settings(config, documents_dir):
         "max_parallel": _max_parallel(_read(config, "max_parallel")),
         "shared_index_path": _text(_read(config, "shared_index_path")),
         "subfolders": _read(config, "subfolders") is not False,
+        "name_template": _text(_read(config, "name_template")),
+        "name_split_by_format": _read(config, "name_split_by_format") is True,
     }
 
 
-def settings_to_save(roots, output_parent, max_parallel, shared_index_path, subfolders=True):
+def settings_to_save(roots, output_parent, max_parallel, shared_index_path, subfolders=True,
+                     name_template="", name_split_by_format=False):
     """The dict to store: normalized roots, trimmed texts, a valid max_parallel. Plain values."""
     return {
         "roots": normalize_roots(roots, nested=True),
@@ -111,6 +118,8 @@ def settings_to_save(roots, output_parent, max_parallel, shared_index_path, subf
         "max_parallel": _max_parallel(max_parallel),
         "shared_index_path": _text(shared_index_path),
         "subfolders": subfolders is not False,
+        "name_template": _text(name_template),
+        "name_split_by_format": name_split_by_format is True,
     }
 
 

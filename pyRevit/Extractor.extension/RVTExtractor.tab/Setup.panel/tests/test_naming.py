@@ -348,5 +348,277 @@ class SourceGuards(unittest.TestCase):
         self.assertTrue(self.SOURCE.startswith("# -*- coding: utf-8 -*-"))
 
 
+# ---- Task 3: discovery and tying (acceptance criterion 4) ----
+import builtins  # noqa: E402
+import io  # noqa: E402
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+
+G1 = "11111111-1111-1111-1111-111111111111"
+G2 = "22222222-2222-2222-2222-222222222222"
+G3 = "33333333-3333-3333-3333-333333333333"
+G4 = "44444444-4444-4444-4444-444444444444"
+
+
+def touch(root, rel, data=b"x"):
+    path = os.path.join(root, *rel.split("/"))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(data)
+
+
+def discover(root, **kw):
+    d = rx_naming.Discovery(root, **kw)
+    for _ in d.steps():
+        pass
+    return d
+
+
+def rels(d):
+    return [(i.kind, i.rel) for i in d.items]
+
+
+class DiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="rxnm-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def test_kinds_and_guid_folders(self):
+        touch(self.root, "Resource/%s/A101 - Ground floor.pdf" % G1)
+        touch(self.root, "Resource/Flat sheet.PDF")
+        touch(self.root, "Model.dwg")
+        touch(self.root, "Resource/Model.IFC")
+        d = discover(self.root)
+        self.assertEqual(rels(d), [
+            ("dwg", "Model.dwg"), ("ifc", "Resource/Model.IFC"),
+            ("pdf", "Resource/%s/A101 - Ground floor.pdf" % G1),
+            ("pdf", "Resource/Flat sheet.PDF")])
+        self.assertEqual([i.viewable for i in d.items], [None, None, G1, None])
+        pdf = d.items[2]
+        self.assertEqual(pdf.src, os.path.join(self.root, "Resource", G1, "A101 - Ground floor.pdf"))
+        self.assertEqual(d.notes, [])
+
+    def test_view_folders(self):
+        touch(self.root, "Resource/3D/%s/0/model.svf" % G1)
+        touch(self.root, "Resource/3D/%s/0/mesh.pf" % G1)
+        touch(self.root, "Resource/%s/sheet.f2d" % G2)
+        touch(self.root, "Resource/Loose view/geo.svf")
+        touch(self.root, "Resource/Loose view/thumbnails/t.png")
+        d = discover(self.root)
+        self.assertEqual(rels(d), [
+            ("view", "Resource/%s" % G2), ("view", "Resource/3D/%s" % G1),
+            ("view", "Resource/Loose view")])
+        self.assertEqual([i.viewable for i in d.items], [G2, G1, None])
+        self.assertEqual(d.items[1].src, os.path.join(self.root, "Resource", "3D", G1))
+
+    def test_outermost_guid_folder(self):
+        touch(self.root, "Resource/%s/%s/a.svf" % (G1, G2))
+        d = discover(self.root)
+        self.assertEqual(rels(d), [("view", "Resource/%s" % G1)])
+
+    def test_shared_view_folder_skipped_with_note(self):
+        touch(self.root, "Resource/%s/a.svf" % G1)
+        touch(self.root, "Resource/%s/sub/b.svf" % G1)
+        touch(self.root, "Resource/%s/inside.pdf" % G1)
+        touch(self.root, "Resource/Other/c.f2d")
+        touch(self.root, "Resource/Other/d.svf")
+        d = discover(self.root)
+        self.assertEqual(d.items, [])
+        self.assertEqual(len(d.notes), 2)
+        self.assertTrue(all("several views" in n for n in d.notes))
+
+    def test_polish_note(self):
+        touch(self.root, "Resource/%s/a.svf" % G1)
+        touch(self.root, "Resource/%s/b.svf" % G1)
+        with unittest.mock.patch.dict(sys.modules, polish()):
+            d = discover(self.root)
+        self.assertEqual(len(d.notes), 1)
+        self.assertNotIn("several views", d.notes[0])
+
+    def test_excluded_never_listed(self):
+        for rel in ("bubble.json", "Resource/objects_ids.json.gz", "Resource/model.sdb",
+                    "Resource/AECModelData.json", "Resource/t.png", "log.txt", "run.log",
+                    "Resource/thumbnails/x.png"):
+            touch(self.root, rel)
+        touch(self.root, "Resource/%s/0/g.svf" % G1)
+        touch(self.root, "Resource/%s/0/bubble.json" % G1)
+        d = discover(self.root)
+        self.assertEqual(rels(d), [("view", "Resource/%s" % G1)])
+
+    def test_symlink_or_junction_skipped(self):
+        outside = tempfile.mkdtemp(prefix="rxnm-out-")
+        self.addCleanup(shutil.rmtree, outside, True)
+        touch(outside, "linked.pdf")
+        link = os.path.join(self.root, "lnk")
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError):
+            r = subprocess.run(["cmd", "/c", "mklink", "/J", link, outside],
+                               capture_output=True) if os.name == "nt" else None
+            if r is None or r.returncode != 0:
+                self.skipTest("cannot create a link or junction here")
+        touch(self.root, "real.pdf")
+        d = discover(self.root)
+        self.assertEqual(rels(d), [("pdf", "real.pdf")])
+
+    def test_injected_islink_skips_file(self):
+        touch(self.root, "a.pdf")
+        touch(self.root, "b.pdf")
+        d = discover(self.root, islink=lambda p: p.endswith("b.pdf"))
+        self.assertEqual(rels(d), [("pdf", "a.pdf")])
+
+    def test_never_opens_a_file(self):
+        touch(self.root, "Resource/%s/a.pdf" % G1)
+        touch(self.root, "Resource/%s/b.svf" % G2)
+
+        def boom(*a, **k):
+            raise AssertionError("open called")
+        with unittest.mock.patch.object(builtins, "open", boom), \
+                unittest.mock.patch.object(io, "open", boom):
+            d = discover(self.root)
+        self.assertEqual(len(d.items), 2)
+
+    def test_steps_is_a_generator_one_directory_per_step(self):
+        touch(self.root, "a/b/x.pdf")
+        d = rx_naming.Discovery(self.root)
+        gen = d.steps()
+        self.assertTrue(hasattr(gen, "__next__"))
+        n = sum(1 for _ in gen)
+        self.assertEqual(n, 3)  # root, a, a/b
+
+    def test_order_sorted_and_stable(self):
+        for rel in ("z.pdf", "B.pdf", "a.pdf", "m.ifc", "k.dwg"):
+            touch(self.root, rel)
+        first = rels(discover(self.root))
+        self.assertEqual([r for _, r in first], ["k.dwg", "m.ifc", "a.pdf", "B.pdf", "z.pdf"])
+        self.assertEqual(first, rels(discover(self.root)))
+
+    def test_fake_listdir(self):
+        tree = {"/o": ["a.pdf", "sub"], "/o/sub": ["b.ifc"]}
+        d = discover("/o", listdir=lambda p: tree[p.replace("\\", "/")],
+                     isdir=lambda p: p.replace("\\", "/") in tree,
+                     islink=lambda p: False)
+        self.assertEqual(rels(d), [("ifc", "sub/b.ifc"), ("pdf", "a.pdf")])
+
+
+def node(kind, name, children=None, vid=None, key="viewableID"):
+    n = {"type": kind, "name": name}
+    if children is not None:
+        n["children"] = children
+    if vid:
+        n[key] = vid
+    return n
+
+
+def manifest_of(*folders):
+    return {"type": "folder", "name": "root", "children": list(folders)}
+
+
+def deliverable(rel, kind="pdf", viewable=None):
+    return rx_naming.Deliverable("/abs/" + rel, rel, kind, viewable)
+
+
+SHEET = {"kind": "sheet", "id": "100", "name": "A101 - Ground floor",
+         "tokens": {"SheetNumber": "A101", "SheetName": "Ground floor"}, "params": {}}
+VIEW = {"kind": "view", "id": "200", "name": "Level 1", "tokens": {"ViewName": "Level 1"},
+        "params": {}}
+
+
+class TieTests(unittest.TestCase):
+    def manifest(self):
+        return manifest_of(
+            node("folder", "Sheets", [
+                node("geometry", "A101 - Ground floor", vid=G1),
+                node("geometry", "A102 - First floor", vid=G2, key="guid")]),
+            node("folder", "3D", [node("geometry", "Level 1", vid=G3)]))
+
+    def test_by_guid_folder_without_values(self):
+        it = deliverable("Resource/%s/x.pdf" % G1, viewable=G1)
+        pairs, untied = rx_naming.tie([it], self.manifest(), None)
+        self.assertEqual(pairs[0][0], it)
+        self.assertEqual(pairs[0][1], {"kind": None, "id": None,
+                                       "name": "A101 - Ground floor", "tokens": {}, "params": {}})
+        self.assertEqual(untied, 0)
+
+    def test_guid_key_variant(self):
+        it = deliverable("Resource/x/y.pdf", viewable=G2)
+        pairs, _ = rx_naming.tie([it], self.manifest(), None)
+        self.assertEqual(pairs[0][1]["name"], "A102 - First floor")
+
+    def test_by_unique_stem_in_same_top_folder(self):
+        it = deliverable("Resource/Sheets/A101 - Ground floor.pdf")
+        pairs, untied = rx_naming.tie([it], self.manifest(), None)
+        self.assertEqual(pairs[0][1]["name"], "A101 - Ground floor")
+        self.assertEqual(untied, 0)
+
+    def test_stem_in_other_top_folder_untied(self):
+        it = deliverable("Resource/3D/A101 - Ground floor.pdf")
+        pairs, untied = rx_naming.tie([it], self.manifest(), None)
+        self.assertIsNone(pairs[0][1])
+        self.assertEqual(untied, 1)
+
+    def test_ambiguous_stem_untied(self):
+        m = manifest_of(node("folder", "Sheets", [
+            node("geometry", "Same", vid=G1), node("geometry", "Same", vid=G2)]))
+        it = deliverable("Resource/Sheets/Same.pdf")
+        pairs, untied = rx_naming.tie([it], m, None)
+        self.assertIsNone(pairs[0][1])
+        self.assertEqual(untied, 1)
+
+    def test_view_folder_stem_is_folder_name(self):
+        it = deliverable("Resource/3D/Level 1", kind="view")
+        pairs, _ = rx_naming.tie([it], self.manifest(), None)
+        self.assertEqual(pairs[0][1]["name"], "Level 1")
+
+    def test_by_viewable_id_equal_to_value_key(self):
+        values = {G1: dict(SHEET), "other": dict(VIEW)}
+        it = deliverable("Resource/%s/x.pdf" % G1, viewable=G1)
+        pairs, untied = rx_naming.tie([it], self.manifest(), values)
+        self.assertIs(pairs[0][1], values[G1])
+        self.assertEqual(untied, 0)
+
+    def test_sheet_by_number_and_name(self):
+        values = {"u-sheet": SHEET, "u-view": VIEW}
+        it = deliverable("Resource/%s/x.pdf" % G1, viewable=G1)
+        pairs, _ = rx_naming.tie([it], self.manifest(), values)
+        self.assertIs(pairs[0][1], SHEET)
+
+    def test_view_by_view_name(self):
+        values = {"u-sheet": SHEET, "u-view": VIEW}
+        it = deliverable("Resource/3D/%s" % G3, kind="view", viewable=G3)
+        pairs, _ = rx_naming.tie([it], self.manifest(), values)
+        self.assertIs(pairs[0][1], VIEW)
+
+    def test_ambiguous_value_match_is_none(self):
+        twin = dict(SHEET, id="101")
+        values = {"u1": SHEET, "u2": twin}
+        it = deliverable("Resource/%s/x.pdf" % G1, viewable=G1)
+        pairs, untied = rx_naming.tie([it], self.manifest(), values)
+        self.assertIsNone(pairs[0][1])
+        self.assertEqual(untied, 1)
+
+    def test_no_value_match_is_none(self):
+        it = deliverable("Resource/%s/x.pdf" % G2, viewable=G2)
+        pairs, untied = rx_naming.tie([it], self.manifest(), {"u": SHEET})
+        self.assertIsNone(pairs[0][1])
+        self.assertEqual(untied, 1)
+
+    def test_no_viewable_no_record_and_order_and_count(self):
+        a = deliverable("a.pdf")
+        b = deliverable("Resource/%s/b.pdf" % G1, viewable=G1)
+        c = deliverable("c.dwg", kind="dwg")
+        pairs, untied = rx_naming.tie([a, b, c], self.manifest(), None)
+        self.assertEqual([p[0] for p in pairs], [a, b, c])
+        self.assertEqual([p[1] is None for p in pairs], [True, False, True])
+        self.assertEqual(untied, 2)
+
+    def test_unknown_guid_untied(self):
+        it = deliverable("Resource/%s/x.pdf" % G4, viewable=G4)
+        pairs, untied = rx_naming.tie([it], self.manifest(), None)
+        self.assertIsNone(pairs[0][1])
+
+
 if __name__ == "__main__":
     unittest.main()

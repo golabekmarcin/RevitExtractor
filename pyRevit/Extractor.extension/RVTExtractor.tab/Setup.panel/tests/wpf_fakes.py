@@ -264,13 +264,18 @@ class FakeView(object):
 class Items(object):
     def __init__(self):
         self.refreshes = 0
+        self.items = []
+
+    def Add(self, item):
+        self.items.append(item)
+        return len(self.items) - 1
 
     def Refresh(self):
         self.refreshes += 1
 
 
 CONTROL_EVENTS = ("Click", "Checked", "Unchecked", "PreviewKeyDown", "SelectionChanged",
-                  "PreviewMouseRightButtonDown", "ContextMenuOpening")
+                  "PreviewMouseRightButtonDown", "ContextMenuOpening", "TextChanged", "LostFocus")
 
 
 class Control(object):
@@ -285,6 +290,12 @@ class Control(object):
         self.ItemsSource = None
         self.SelectedItems = []
         self.Items = Items()
+        self.SelectedItem = None
+        self.SelectedIndex = -1
+        self.SelectionStart = 0
+        self.SelectionLength = 0
+        self.CaretIndex = 0
+        self.focused = False
         self.View = types.SimpleNamespace(Columns=[types.SimpleNamespace(Header=None)
                                                    for unused in range(4)])
         self.routed = []
@@ -293,3 +304,7 @@ class Control(object):
 
     def AddHandler(self, event, handler):
         self.routed.append((event, handler))
+
+    def Focus(self):
+        self.focused = True
+        return True

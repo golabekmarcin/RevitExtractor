@@ -6,8 +6,9 @@ Values reach this module as plain text. Tokens, presets and error texts exist in
 """
 from __future__ import unicode_literals
 
+import os
 import re
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 
 from rx_i18n import tr
 
@@ -256,3 +257,161 @@ class Namer(object):
                 taken.add(key)
                 return candidate
             n += 1
+
+
+# ---- Discovery and tying (spec: Scope, Tying a file to its sheet or view) ----
+
+Deliverable = namedtuple(str("Deliverable"), "src rel kind viewable")
+
+_GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f-]{27,}$", re.IGNORECASE)
+_FILE_KINDS = {".pdf": "pdf", ".dwg": "dwg", ".ifc": "ifc"}
+_GEOMETRY = (".svf", ".f2d")
+
+
+def _guid_in(parts):
+    for part in parts:
+        if _GUID.match(part):
+            return part
+    return None
+
+
+class Discovery(object):
+    """Lists what can be named in an export's output folder. It only lists and checks: it never
+    opens a file and skips symbolic links and junctions."""
+
+    def __init__(self, output_dir, listdir=os.listdir, isdir=os.path.isdir,
+                 islink=os.path.islink):
+        self.output_dir = output_dir
+        self.items = []
+        self.notes = []
+        self._listdir = listdir
+        self._isdir = isdir
+        self._islink = islink
+        # shortcut: junctions are only detected on a Python that has os.path.isjunction
+        self._isjunction = getattr(os.path, "isjunction", None) if islink is os.path.islink else None
+
+    def _skip(self, path):
+        return self._islink(path) or bool(self._isjunction and self._isjunction(path))
+
+    def steps(self):
+        files = []   # (parts, kind)
+        geometry = []  # directory parts holding one *.svf/*.f2d
+        stack = [(self.output_dir, [])]
+        while stack:
+            path, parts = stack.pop()
+            try:
+                names = sorted(self._listdir(path))
+            except OSError:
+                self.notes.append(tr("Folder %s could not be read." % "/".join(parts or ["."]),
+                                     "Nie można odczytać folderu %s." % "/".join(parts or ["."])))
+                names = []
+            for name in names:
+                child = os.path.join(path, name)
+                if self._skip(child):
+                    continue
+                if self._isdir(child):
+                    stack.append((child, parts + [name]))
+                    continue
+                ext = os.path.splitext(name)[1].lower()
+                if ext in _GEOMETRY:
+                    geometry.append(parts)
+                elif ext in _FILE_KINDS:
+                    files.append((parts + [name], _FILE_KINDS[ext]))
+            yield
+        self._finish(files, geometry)
+
+    def _finish(self, files, geometry):
+        counts = {}
+        for parts in geometry:
+            guid_at = [i for i, p in enumerate(parts) if _GUID.match(p)]
+            holder = tuple(parts[:guid_at[0] + 1]) if guid_at else tuple(parts)
+            if holder:  # geometry straight in the output folder has no folder to name
+                counts[holder] = counts.get(holder, 0) + 1
+        views = []
+        for holder, n in counts.items():
+            rel = "/".join(holder)
+            if n > 1:
+                self.notes.append(tr('View folder "%s" is shared by several views and was skipped.'
+                                     % rel,
+                                     'Folder widoku "%s" jest wspólny dla kilku widoków i został '
+                                     'pominięty.' % rel))
+            else:
+                views.append(holder)
+        everything = list(counts)  # skipped folders swallow their files too
+        out = []
+        for holder in views:
+            out.append(Deliverable(os.path.join(self.output_dir, *holder), "/".join(holder),
+                                   "view", _guid_in(holder)))
+        for parts, kind in files:
+            if any(tuple(parts[:len(h)]) == h for h in everything):
+                continue
+            out.append(Deliverable(os.path.join(self.output_dir, *parts), "/".join(parts), kind,
+                                   _guid_in(parts[:-1])))
+        out.sort(key=lambda d: (d.kind, d.rel.lower()))
+        self.items = out
+
+
+def _viewables(manifest):
+    """[(id, name, group)] for every geometry node; group = nearest folder ancestor's name."""
+    found = []
+
+    def visit(node, group):
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "geometry":
+            vid = node.get("viewableID") or node.get("guid")
+            if vid:
+                found.append((vid, node.get("name"), group))
+        for child in node.get("children") or []:
+            visit(child, node.get("name") if node.get("type") == "folder" else group)
+    visit(manifest, None)
+    return found
+
+
+def _top_folder(rel):
+    dirs = rel.split("/")[:-1]
+    if dirs and dirs[0].lower() == "resource":
+        dirs = dirs[1:]
+    return dirs[0] if dirs else None
+
+
+def _record_names(record):
+    tokens = record.get("tokens") or {}
+    if record.get("kind") == "sheet":
+        if tokens.get("SheetNumber") is not None and tokens.get("SheetName") is not None:
+            return "%s - %s" % (tokens["SheetNumber"], tokens["SheetName"])
+    elif record.get("kind") == "view":
+        return tokens.get("ViewName")
+    return None
+
+
+def tie(items, manifest, values):
+    """Pairs each deliverable with its value record. Returns (pairs, untied count). Nothing is
+    guessed beyond the spec's rules; see 'Tying a file to its sheet or view'."""
+    viewables = _viewables(manifest or {})
+    by_id = dict((v[0], v) for v in viewables)
+    pairs = []
+    untied = 0
+    for item in items:
+        viewable = by_id.get(item.viewable) if item.viewable else None
+        if viewable is None:
+            stem = item.rel.split("/")[-1]
+            if item.kind != "view":
+                stem = os.path.splitext(stem)[0]
+            top = _top_folder(item.rel)
+            hits = [v for v in viewables if v[1] == stem and v[2] == top]
+            viewable = hits[0] if len(hits) == 1 else None
+        record = None
+        if viewable is not None:
+            if values is None:
+                record = {"kind": None, "id": None, "name": viewable[1], "tokens": {},
+                          "params": {}}
+            elif viewable[0] in values:
+                record = values[viewable[0]]
+            else:
+                hits = [r for r in values.values() if _record_names(r) == viewable[1]]
+                record = hits[0] if len(hits) == 1 else None
+        if record is None:
+            untied += 1
+        pairs.append((item, record))
+    return pairs, untied

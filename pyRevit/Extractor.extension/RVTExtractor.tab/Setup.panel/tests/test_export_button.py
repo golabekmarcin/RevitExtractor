@@ -99,7 +99,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(got, {"roots": [],
                                "output_parent": os.path.join(self.DOCS, "RevitExtractor"),
                                "max_parallel": 1, "shared_index_path": "",
-                               "subfolders": True})
+                               "subfolders": True, "name_template": "",
+                               "name_split_by_format": False})
 
     def test_round_trip_through_stub_config(self):
         config = Config()
@@ -139,7 +140,8 @@ class SettingsTests(unittest.TestCase):
         saved = logic.settings_to_save(["D:\\A", "D:\\A"], " D:\\O ", "2", " p ")
         self.assertEqual(saved, {"roots": [os.path.normpath("D:\\A")], "output_parent": "D:\\O",
                                  "max_parallel": 2, "shared_index_path": "p",
-                                 "subfolders": True})
+                                 "subfolders": True, "name_template": "",
+                                 "name_split_by_format": False})
 
     def test_unknown_documents_folder_is_an_error_only_when_needed(self):
         logic.load_settings(Config(output_parent="D:\\Out"), "")      # not needed
@@ -1038,6 +1040,105 @@ class ModelWindowHarness(object):
         if show:
             self.window.show_dialog()
         return self.window
+
+    # -- file names (named copies)
+
+    def names_window(self, template=""):
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            window = self.open()
+        window._name_template = template
+        window.name_template_tb.Text = template
+        return window
+
+    def pick(self, combo, item):
+        combo.SelectedItem = item
+        combo.SelectionChanged.fire(combo, None)
+
+    def test_the_file_names_row_is_hidden_until_the_feature_is_ready(self):
+        self.assertEqual(self.open().naming_panel.Visibility, "Collapsed")
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.assertEqual(self.open().naming_panel.Visibility, "Visible")
+
+    def test_presets_and_tokens_are_listed_with_translated_labels(self):
+        window = self.names_window()
+        self.assertEqual(window.name_presets_cb.Items.items[1], "{SheetNumber} - {SheetName}")
+        labels = [item.Content for item in window.name_token_cb.Items.items]
+        self.assertIn("Sheet number", labels)
+        self.assertEqual(labels[-1], "Custom parameter of the model…")
+        self.assertEqual(window.name_token_cb.Items.items[0].Tag, "SheetNumber")
+
+    def test_a_preset_fills_the_field_and_is_remembered(self):
+        window = self.names_window()
+        self.pick(window.name_presets_cb, "{SheetNumber} - {SheetName}")
+        self.assertEqual(window.name_template_tb.Text, "{SheetNumber} - {SheetName}")
+        self.assertEqual(window.name_presets_cb.SelectedIndex, -1, "ready for the next pick")
+        self.assertEqual(self.saved[-1]["name_template"], "{SheetNumber} - {SheetName}")
+
+    def test_a_token_is_inserted_at_the_caret_over_the_selection(self):
+        window = self.names_window("AB-XY")
+        box = window.name_template_tb
+        box.SelectionStart, box.SelectionLength = 3, 2           # "XY" is selected
+        self.pick(window.name_token_cb, window.name_token_cb.Items.items[0])
+        self.assertEqual(box.Text, "AB-{SheetNumber}")
+        self.assertEqual(box.CaretIndex, len("AB-{SheetNumber}"))
+        self.assertTrue(box.focused)
+
+    def test_a_custom_parameter_puts_the_caret_inside_the_braces(self):
+        window = self.names_window("A")
+        window.name_template_tb.SelectionStart = 1
+        self.pick(window.name_token_cb, window.name_token_cb.Items.items[-1])
+        self.assertEqual(window.name_template_tb.Text, "A{param:}")
+        self.assertEqual(window.name_template_tb.CaretIndex, len("A{param:"))
+
+    def test_the_example_follows_the_template_in_both_languages(self):
+        window = self.names_window()
+        window.name_template_tb.Text = "{SheetNumber}_{CurrentRevision}"
+        window.name_template_tb.TextChanged.fire(window.name_template_tb, None)
+        self.assertIn("A101_B.pdf", window.name_preview_text.Text)
+        window.name_template_tb.Text = ""
+        window.name_template_tb.TextChanged.fire(window.name_template_tb, None)
+        self.assertIn("No template", window.name_preview_text.Text)
+        with patch.dict(sys.modules, polish_modules()):
+            example, problem = EXPORT_UI.name_example("{SheetNumber} - {SheetName}")
+        self.assertIn("Przykład", example)
+        self.assertIn("A101 - Parter.pdf", example)
+
+    def test_an_invalid_template_shows_its_error_and_blocks_export(self):
+        window = self.names_window()
+        window.name_template_tb.Text = "{Nope}"
+        window.name_template_tb.TextChanged.fire(window.name_template_tb, None)
+        self.assertIn("Nope", window.name_preview_text.Text, "the example line shows the reason")
+        self.tick()
+        row = [r for r in self.rows() if r.Enabled][0]
+        row.set_quietly(True)
+        window._refresh_state()
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.fire("export_btn")
+        self.assertEqual(self.submitted, [], "nothing was handed over")
+        self.assertIn("Nope", window.error_text.Text)
+        self.assertTrue(row.Checked, "the ticks stay")
+
+    def test_clear_and_split_are_remembered(self):
+        window = self.names_window("{SheetNumber}")
+        window._name_template = "{SheetNumber}"
+        self.fire("name_clear_btn")
+        self.assertEqual((window.name_template_tb.Text, self.saved[-1]["name_template"]), ("", ""))
+        window.name_split_cb.IsChecked = True
+        self.fire("name_split_cb")
+        self.assertIs(self.saved[-1]["name_split_by_format"], True)
+
+    def test_the_template_is_read_from_the_settings(self):
+        settings_template = "{Date} {OriginalName}"
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            window = self.open()
+            self.assertEqual(window.name_template_tb.Text, "")
+        window2 = EXPORT_UI.ModelWindow(CAPS_2022, {"roots": [], "output_parent": "D:\Out", "max_parallel": 1,
+                                                    "shared_index_path": "", "name_template": settings_template,
+                                                    "name_split_by_format": True},
+                                        self.read_info, self.cache, self.read, self.saved.append,
+                                        scan=FakeScan([]), clock=StepClock(0.0), submit=self.submit)
+        self.assertEqual(window2.name_template_tb.Text, settings_template)
+        self.assertTrue(window2.name_split_cb.IsChecked)
 
     def test_onedrive_output_folder_shows_a_warning(self):
         window = self.open()

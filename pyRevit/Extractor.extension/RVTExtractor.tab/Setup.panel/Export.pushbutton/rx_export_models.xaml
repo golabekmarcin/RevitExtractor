@@ -226,6 +226,30 @@
                 </Style>
             </TextBlock.Style>
         </TextBlock>
+        <Border x:Name="naming_panel" Style="{DynamicResource RxCard}" Padding="12,6" Margin="0,8,0,0" Visibility="Collapsed">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{DynamicResource names_label}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                    <TextBox Grid.Column="1" x:Name="name_template_tb" VerticalContentAlignment="Center" Padding="4,3"
+                             ToolTip="{DynamicResource names_template_tip}" AutomationProperties.Name="{DynamicResource names_label}"/>
+                    <ComboBox Grid.Column="2" x:Name="name_presets_cb" Margin="8,0,0,0" MinWidth="120"
+                              Text="{DynamicResource names_presets}" IsEditable="True" IsReadOnly="True" AutomationProperties.Name="{DynamicResource names_presets}"/>
+                    <ComboBox Grid.Column="3" x:Name="name_token_cb" Margin="8,0,0,0" MinWidth="110"
+                              Text="{DynamicResource names_tokens}" IsEditable="True" IsReadOnly="True" AutomationProperties.Name="{DynamicResource names_tokens}"/>
+                    <Button Grid.Column="4" x:Name="name_clear_btn" Content="{DynamicResource names_clear}" Margin="8,0,0,0"/>
+                </Grid>
+                <TextBlock x:Name="name_preview_text" Style="{DynamicResource RxMuted}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                <CheckBox x:Name="name_split_cb" Content="{DynamicResource names_split}" ToolTip="{DynamicResource names_split_tip}" Margin="0,6,0,0"/>
+                <TextBlock Text="{DynamicResource names_hint}" Style="{DynamicResource RxMuted}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
         </StackPanel>
         <TextBlock Grid.Row="7" x:Name="error_text" Style="{DynamicResource RxError}" Margin="0,6,0,0" TextWrapping="Wrap"/>
         <Grid Grid.Row="8" Margin="0,10,0,0">
