@@ -177,7 +177,7 @@ def _job_request(job, revit_dir, output_parent, system=None):
     if isinstance(naming, dict) and system is not None and (
             naming.get("templates") or naming.get("template")):
         entry["naming"] = {"split": bool(naming.get("split")), "system": system(job),
-                           "values": None}
+                           "values": naming.get("values")}   # None: the Extractor's own names
         for key in ("templates", "template"):   # the per-kind templates of a chosen profile
             if naming.get(key):
                 entry["naming"][key] = naming[key]
@@ -274,6 +274,13 @@ def main():
         extra = {"links": True} if links else {}
         return rx_reader.read_model(app, DB, path, caps, workshared, **extra)
 
+    def read_cloud(region, project_guid, model_guid):
+        snapshot = rx_reader.read_cloud(app, DB, region, project_guid, model_guid, caps,
+                                        values=True)
+        if isinstance(snapshot.get("values"), dict):
+            snapshot["catalog"] = rx_reader.collect_catalog(snapshot["values"])
+        return snapshot
+
     def save(values):
         if save_settings(config, values):
             script.save_config()
@@ -291,7 +298,7 @@ def main():
     try:
         window = ModelWindow(caps, settings, read_info, cache, read, save,
                              extractor_build=_extractor_build(revit_dir), scan=rx_catalog.scan,
-                             submit=submit, cloud=cloud)
+                             submit=submit, cloud=cloud, read_cloud=read_cloud)
     except Exception as error:
         script.get_logger().exception("Could not open the export window.")
         _alert(tr("The export window could not be opened.\n\n{0}",

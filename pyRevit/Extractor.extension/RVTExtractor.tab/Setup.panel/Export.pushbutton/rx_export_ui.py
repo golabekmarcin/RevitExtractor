@@ -41,7 +41,7 @@ from rx_export_text import resources
 from rx_i18n import tr
 from rx_naming import NamingError, system_values
 import rx_naming_profiles
-from rx_naming_profiles import read_catalog, read_choice, remember, to_template
+from rx_naming_profiles import merge_catalog, read_catalog, read_choice, remember, to_template
 from rx_status import preferences_path, read_preferences
 from rx_index import SetupError, build_index, database_warning, defaults, to_json
 from rx_runner import RunnerError, clean_path
@@ -333,18 +333,20 @@ class ModelWindow(forms.WPFWindow):
 
     `cloud` (optional) adds the Cloud source: {"folders": rx_cloud.revit_folders(...), "memory":
     rx_cloud.Memory}, plus optional "scan", "scan_cache" and "now" for tests. It is scanned
-    time-sliced from the same timer, on the first switch to Cloud. `read(path, workshared,
-    links=False)` also reads the link list of a cloud model. Export and Choose views… act on the
-    source that is shown.
+    time-sliced from the same timer, on the first switch to Cloud. `read_cloud(region,
+    project_guid, model_guid)` opens a cloud model in place (rx_reader.read_cloud snapshot, plus
+    an optional "catalog" of parameter names); Export and Choose views… open each ticked cloud
+    model once, one at a time. Export and Choose views… act on the source that is shown.
     """
 
     def __init__(self, caps, settings, read_info, cache, read, save_settings, extractor_build="",
-                 scan=None, clock=None, submit=None, cloud=None):
+                 scan=None, clock=None, submit=None, cloud=None, read_cloud=None):
         self._updating = True
         self._caps = caps
         self._read_info = read_info
         self._cache = cache
         self._read = read
+        self._read_cloud = read_cloud
         self._save_settings = save_settings
         self._submit = submit
         self._submitting = False
@@ -371,7 +373,6 @@ class ModelWindow(forms.WPFWindow):
         self._cloud_catalog = None
         self._cloud_files = None        # the cache files, walked at most once per scan
         self._cloud_keep = set()        # keys ticked before a rescan, restored when it ends
-        self._host_only = set()         # cloud keys exported without their links (open failed)
         self._statuses = {"local": "", "cloud": ""}
         # Esc: the search bar clears a filled box first, then Close (IsCancel) closes.
         forms.WPFWindow.__init__(self, MODELS_XAML, handle_esc=False)
@@ -744,13 +745,12 @@ class ModelWindow(forms.WPFWindow):
         return bool(self.shared_scope_rb.IsChecked)
 
     def _forget_unticked(self):
-        """A retained views job and a host-alone choice are dropped once the row is unticked."""
+        """A retained views job is dropped once the row is unticked."""
         ticked_keys = set(row.job_key for row in self._ticked_in(self._rows))
         ticked_keys |= set(row.job_key for row in self._ticked_in(self._cloud_rows))
         for key in list(self._kept_jobs):
             if key not in ticked_keys:
                 del self._kept_jobs[key]
-        self._host_only &= ticked_keys
 
     def _refresh_state(self):
         self._forget_unticked()
@@ -915,6 +915,8 @@ class ModelWindow(forms.WPFWindow):
         for job in jobs:
             copy = dict(job)
             copy["naming"] = dict(naming)
+            if job.get("name_values") is not None:      # read by the one in-place cloud open
+                copy["naming"]["values"] = job["name_values"]
             named.append(copy)
         return named
 
@@ -1095,7 +1097,6 @@ class ModelWindow(forms.WPFWindow):
                 if position not in failed:
                     row.set_quietly(False)
                     self._kept_jobs.pop(row.job_key, None)
-                    self._host_only.discard(row.job_key)
                 elif retain:
                     self._kept_jobs[row.job_key] = jobs[position]
             self.models_lv.Items.Refresh()
@@ -1174,15 +1175,16 @@ class ModelWindow(forms.WPFWindow):
         self._resume(resume)
         self._refresh_state()
 
-    def _read_in_background(self, name, call):
+    def _read_in_background(self, name, call, status=None):
         """Run `call` (a background read of one model) with the scan paused, the window off and
         a wait cursor. Returns (snapshot, failure); failure is the exception, never raised."""
         self._timer.Stop()                  # no file is read while the model is open
         self._show_error("")
-        self._set_status(tr("Reading {0} in the background (worksets closed, nothing is "
-                            "saved). This can take a few minutes…",
-                            "Odczytywanie {0} w tle (zamknięte zestawy robocze, nic nie jest "
-                            "zapisywane). To może potrwać kilka minut…").format(name))
+        self._set_status(status or tr(
+            "Reading {0} in the background (worksets closed, nothing is "
+            "saved). This can take a few minutes…",
+            "Odczytywanie {0} w tle (zamknięte zestawy robocze, nic nie jest "
+            "zapisywane). To może potrwać kilka minut…").format(name))
         self.IsEnabled = False
         Mouse.OverrideCursor = Cursors.Wait
         snapshot, failure = None, None
@@ -1209,7 +1211,7 @@ class ModelWindow(forms.WPFWindow):
             self.fatal_error = _error_text(failure)
             self.Close()
             return True
-        if kind in ("busy", "open_failed"):
+        if kind in ("busy", "open_failed", "not_signed_in"):
             self._show_error(_error_text(failure))
         else:
             self._show_error(tr("The model could not be read: {0}",
@@ -1326,7 +1328,6 @@ class ModelWindow(forms.WPFWindow):
         self._cloud_keep = keep
         for key in [key for key in self._kept_jobs if key.startswith(CLOUD_PREFIX)]:
             del self._kept_jobs[key]
-        self._host_only = set()
         self._stop_cloud_scan()
         self._cloud_rows.Clear()
         self.cloud_projects_lb.ItemsSource = []
@@ -1405,51 +1406,98 @@ class ModelWindow(forms.WPFWindow):
         return text_
 
     def _store_links(self, row, links):
-        """A link read succeeded (Export or Choose views): store it, and an earlier failed read
-        no longer sends this row out without its links."""
-        self._host_only.discard(row.job_key)
+        """An open succeeded: keep the link list in the cloud memory (a failed save only costs
+        the fallback of a later failed open; it never raises)."""
         memory = self._cloud["memory"]
         memory.store_links(link_key(row.cloud), row.cloud.cache_mtime, links)
-        memory.save()           # a failed save only costs the next read; it never raises
+        memory.save()
 
     @staticmethod
     def _links_of(snapshot):
         links = snapshot.get("links") if isinstance(snapshot, dict) else None
         return links if isinstance(links, list) else []
 
-    def _read_links(self, rows, link_lists):
-        """Background-read the link list of each cloud row (one open each) into `link_lists`
-        and the memory. False when it stopped: the window was closed, or an open failed (the
-        error line offers the host alone and the row is marked for it)."""
-        resume = self._scanning()
-        for row in rows:
-            snapshot, failure = self._read_in_background(
-                row.Name, lambda row=row: self._read(row.cache_path, None, links=True))
-            if failure is not None:
-                if self._read_failed_links(row, failure):
-                    return False
-                self._resume(resume)
-                return False
-            links = self._links_of(snapshot)
-            self._store_links(row, links)
-            link_lists[row.key] = links
-        self._resume(resume)
-        return True
+    def _names_wanted(self):
+        return bool(rx_export_logic.NAMED_COPIES_READY and self._naming.get("profile"))
 
-    def _read_failed_links(self, row, failure):
-        """True when the window was closed (Revit could not close the model). Otherwise the host
-        is marked for export without its links and the error line says how to do that."""
-        if getattr(failure, "kind", None) == "close_failed":
-            self.fatal_error = _error_text(failure)
-            self.Close()
-            return True
-        self._host_only.add(row.job_key)
-        self._show_error(tr("The links of {0} could not be read ({1}). Click Export again to "
-                            "export it without its links.",
-                            "Nie udało się odczytać linków modelu {0} ({1}). Kliknij Eksportuj "
-                            "ponownie, aby wyeksportować go bez linków.")
-                         .format(row.Name, _error_text(failure)))
-        return False
+    @staticmethod
+    def _open_reason(failure):
+        if getattr(failure, "kind", None) == "not_signed_in":
+            return tr("Sign in to Autodesk in Revit first.",
+                      "Najpierw zaloguj się do Autodesk w Revicie.")
+        if failure is None:
+            return tr("Revit returned nothing.", "Revit nic nie zwrócił.")
+        return _error_text(failure)
+
+    def _open_cloud_rows(self, rows):
+        """Open each cloud row in place, one at a time, in the background. Returns (snapshots by
+        row key, reasons by row key of the opens that failed), or None when the window was
+        closed: Revit could not close a model, so nothing may be exported. After a "not signed
+        in" the remaining rows are not tried."""
+        resume = self._scanning()
+        snapshots, reasons, signed_out = {}, {}, None
+        for number, row in enumerate(rows, 1):
+            if signed_out:
+                reasons[row.key] = signed_out
+                continue
+            status = tr("Opening {0} ({1} of {2}) with all worksets…",
+                        "Otwieranie {0} ({1} z {2}) ze wszystkimi zestawami roboczymi…") \
+                .format(row.Name, number, len(rows))
+            cloud = row.cloud
+            snapshot, failure = self._read_in_background(
+                row.Name, lambda cloud=cloud: self._read_cloud(
+                    cloud.region, cloud.project_guid, cloud.model_guid),
+                status=status)
+            if failure is None and isinstance(snapshot, dict):
+                snapshots[row.key] = snapshot
+                continue
+            if getattr(failure, "kind", None) == "close_failed":
+                self.fatal_error = _error_text(failure)
+                self.Close()
+                return None
+            reasons[row.key] = self._open_reason(failure)
+            if getattr(failure, "kind", None) == "not_signed_in":
+                signed_out = reasons[row.key]
+        self._resume(resume)
+        return snapshots, reasons
+
+    def _after_opens(self, rows, snapshots):
+        """What every successful open leaves behind: the links in the memory, the parameter names
+        in the property catalog (never logged), and one alert for the whole run when Revit could
+        not hand back everything it took."""
+        warned = False
+        for row in rows:
+            snapshot = snapshots.get(row.key)
+            if snapshot is None:
+                continue
+            self._store_links(row, self._links_of(snapshot))
+            if isinstance(snapshot.get("catalog"), dict):   # script.py: rx_reader.collect_catalog
+                merge_catalog(os.path.join(os.path.dirname(self._prefs_path or ""),
+                                           "property-catalog.json"), snapshot["catalog"])
+            warned = warned or bool(snapshot.get("release_warning"))
+        if warned:
+            forms.alert(tr("Revit could not hand back everything it took while opening a cloud "
+                           "model. Nothing was saved. In Revit, open the model and use "
+                           "Collaborate > Relinquish All Mine.",
+                           "Revit nie oddał wszystkiego, co zajął przy otwieraniu modelu z "
+                           "chmury. Nic nie zostało zapisane. W Revicie otwórz model i użyj "
+                           "Współpraca > Zwolnij wszystkie moje (Collaborate > Relinquish All "
+                           "Mine)."), title=tr("Export", "Eksport"))
+
+    def _finish_cloud_job(self, row, job, snapshot, reason):
+        """Put the open's result on the job: the naming values, or a note that the model was
+        exported from the cache as it is."""
+        if snapshot is not None:
+            if isinstance(snapshot.get("values"), dict):
+                job["name_values"] = snapshot["values"]
+            return
+        note = tr("{0} could not be opened ({1}); it is exported from the cache as it is.",
+                  "Nie udało się otworzyć modelu {0} ({1}); wyeksportowano go z pamięci "
+                  "podręcznej bez zmian.").format(row.Name, reason)
+        if self._names_wanted():
+            note += " " + tr("Its file names follow the Extractor's own names.",
+                             "Nazwy jego plików zgodne z nazwami Extractora.")
+        job["stage"]["notes"].append(note)
 
     def _export_cloud(self, models):
         fresh = [row for row in models if row.job_key not in self._kept_jobs]
@@ -1461,26 +1509,22 @@ class ModelWindow(forms.WPFWindow):
             except SetupError as error:
                 self._show_error(_error_text(error))
                 return
-            link_lists, need = {}, []
-            for row in fresh:
-                if row.job_key in self._host_only:
-                    continue
-                stored = memory.links_for(link_key(row.cloud), row.cloud.cache_mtime)
-                if stored is None:
-                    need.append(row)
-                else:
-                    link_lists[row.key] = stored
             self._show_error("")
-            if need and not self._read_links(need, link_lists):
+            opened = self._open_cloud_rows(fresh)
+            if opened is None:
                 return
+            snapshots, reasons = opened
+            self._after_opens(fresh, snapshots)
+            link_lists = dict((key, self._links_of(snapshot))
+                              for key, snapshot in snapshots.items())
             try:
                 jobs = plan_cloud_jobs([row.cloud for row in fresh], self._caps,
-                                       self._cache_files(), memory, link_lists,
-                                       set(row.key for row in fresh if row.job_key in
-                                           self._host_only), shared)
+                                       self._cache_files(), memory, link_lists, (), shared)
             except (SetupError, StageError) as error:
                 self._show_error(_error_text(error))
                 return
+            for row, job in zip(fresh, jobs):
+                self._finish_cloud_job(row, job, snapshots.get(row.key), reasons.get(row.key))
             planned = dict(zip([row.job_key for row in fresh], jobs))
         jobs = [self._kept_jobs.get(row.job_key) or planned[row.job_key] for row in models]
         notes = []
@@ -1489,17 +1533,23 @@ class ModelWindow(forms.WPFWindow):
         self._queue(jobs, models, notes=notes)
 
     def _views_cloud(self, row):
-        """Choose views… for one cloud row: one background read (links included, stored), the
-        slice 1 picker on a copy of the snapshot that shows the real name, then a cloud job."""
+        """Choose views… for one cloud row: one in-place open (links and naming values included),
+        the slice 1 picker on a copy of the snapshot that shows the real name, then a cloud job
+        that keeps its snapshot, so Export does not open the model again."""
         resume = self._scanning()
-        snapshot, failure = self._read_in_background(
-            row.Name, lambda: self._read(row.cache_path, None, links=True))
-        if failure is not None:
-            if not self._read_failed(failure):
-                self._resume(resume)
+        opened = self._open_cloud_rows([row])
+        if opened is None:
             return
+        snapshots, reasons = opened
+        if row.key not in snapshots:
+            self._show_error(tr("{0} could not be opened: {1}",
+                                "Nie udało się otworzyć modelu {0}: {1}")
+                             .format(row.Name, reasons.get(row.key)))
+            self._resume(resume)
+            return
+        snapshot = snapshots[row.key]
+        self._after_opens([row], snapshots)
         links = self._links_of(snapshot)
-        self._store_links(row, links)
         shown = dict(snapshot)
         shown["title"] = row.Name
         shown["path"] = "%s / %s" % (row.Project, row.Name)   # never the GUID-named cache file
@@ -1521,6 +1571,7 @@ class ModelWindow(forms.WPFWindow):
                 self._show_error(_error_text(error))
                 self._resume(resume)
                 return
+            self._finish_cloud_job(row, job, snapshot, None)
             self._queue([job], [row], retain=True, notes=job["stage"]["notes"])
         self._resume(resume)
         self._refresh_state()

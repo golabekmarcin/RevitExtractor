@@ -12,6 +12,7 @@ Structure (one class group per layer, so later layers can be added without touch
 CPython 3 with stubs: passing here does not prove IronPython, pyRevit or Revit behaviour.
 """
 import ast
+import copy
 import datetime
 import importlib.util
 import io
@@ -1009,6 +1010,9 @@ class ModelWindowHarness(object):
         self.read_links = []
         self.read_answer = None
         self.read_error = None
+        self.cloud_opens = []
+        self.cloud_answer = None
+        self.cloud_error = None
         self.saved = []
         self.cache = object()
         self.read_info = Mock(name="read_info")
@@ -1024,6 +1028,18 @@ class ModelWindowHarness(object):
         if self.read_error is not None:
             raise self.read_error
         return self.read_answer
+
+    def read_cloud(self, region, project_guid, model_guid):
+        self.cloud_opens.append({"args": (region, project_guid, model_guid),
+                                 "status": self.window.status_text.Text,
+                                 "timer_on": TIMERS[-1].IsEnabled, "cursor": MOUSE.OverrideCursor,
+                                 "enabled": self.window.IsEnabled})
+        if self.cloud_error is not None:
+            raise self.cloud_error
+        if self.cloud_answer is not None:
+            return copy.deepcopy(self.cloud_answer)
+        return {"title": "", "path": "", "views_2d": [], "views_3d": [], "ifc_setups": [],
+                "ifc_error": "", "links": []}
 
     def submit(self, jobs, output_parent):
         self.submitted.append({"jobs": jobs, "output_parent": output_parent,
@@ -1045,7 +1061,8 @@ class ModelWindowHarness(object):
         self.window = EXPORT_UI.ModelWindow(caps, settings, self.read_info, self.cache, self.read,
                                             self.saved.append, extractor_build=build,
                                             scan=self.scan, clock=StepClock(step),
-                                            submit=self.submit, cloud=cloud)
+                                            submit=self.submit, cloud=cloud,
+                                            read_cloud=self.read_cloud)
         if show:
             self.window.show_dialog()
         return self.window
@@ -2203,8 +2220,9 @@ class FakeModelWindow(object):
     ops_source = None
 
     def __init__(self, caps, settings, read_info, cache, read, save_settings, extractor_build="",
-                 scan=None, submit=None, cloud=None):
+                 scan=None, submit=None, cloud=None, read_cloud=None):
         self.cloud = cloud
+        self.read_cloud = read_cloud
         self.caps, self.settings, self.read_info = caps, settings, read_info
         self.cache, self.read, self.save_settings = cache, read, save_settings
         self.extractor_build = extractor_build
@@ -2704,6 +2722,27 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(naming["system"]["WindowsUser"], "tester")
         self.assertEqual(len(naming["system"]["Year"]), 4)
         self.assertNotIn("naming", other, "a job without a template is unchanged")
+
+    def test_the_values_of_a_job_naming_go_to_the_session_and_stay_out_of_a_plain_job(self):
+        values = {"uid1": {"kind": "view", "id": "1", "name": "Plan", "tokens": {}, "params": {}}}
+        job = dict(self.job("a.rvt"), naming={"templates": {"view": "{ViewName}"}, "split": False,
+                                              "values": values})
+        request = self.module._job_request(job, "R", "O", system=lambda j: {})
+        self.assertEqual(request["naming"]["values"], values)
+        plain_job = self.module._job_request(self.job("b.rvt"), "R", "O", system=lambda j: {})
+        self.assertNotIn("naming", plain_job)
+
+    def test_read_cloud_forwards_to_the_reader_and_adds_the_catalog_names(self):
+        self.run_with_env(LOCALAPPDATA=self.local_appdata())
+        window = FakeModelWindow.made[0]
+        values = {"u": {"kind": "view", "id": "1", "name": "n", "tokens": {},
+                        "params": {"Zone": "A"}}}
+        with patch.object(rx_reader, "read_cloud",
+                          Mock(return_value={"values": values})) as read_cloud:
+            snapshot = window.read_cloud("US", CP1, CM3)
+        read_cloud.assert_called_once_with(self.app, self.db, "US", CP1, CM3, window.caps,
+                                           values=True)
+        self.assertEqual(snapshot["catalog"], {"views": ["Zone"], "sheets": []})
 
     def test_system_tokens_name_the_model_by_its_real_file_name(self):
         app = types.SimpleNamespace(Username="jan.k")
@@ -3296,14 +3335,23 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         for name in names:
             self.cclick(self.cby(name))
 
-    def test_export_uses_the_stored_link_list_and_hands_over_a_cloud_job(self):
+    def test_export_opens_the_model_in_place_even_with_stored_links_and_hands_over_a_job(self):
+        self.cloud_answer = {"views_2d": [], "views_3d": [],
+                             "links": [self.link("Beta-MEP", CP1, CM4),
+                                       self.link("Missing-Link", CP1, CM9)]}
         self.open_cloud()
         alpha = self.cby("Alpha-Architecture.rvt")
-        self.memory.store_links(logic.link_key(alpha.cloud), alpha.cloud.cache_mtime,
-                                [self.link("Beta-MEP", CP1, CM4)])
+        self.memory.store_links(logic.link_key(alpha.cloud), alpha.cloud.cache_mtime, [])
         self.tick_cloud("Alpha-Architecture.rvt")
         self.fire("export_btn")
-        self.assertEqual(self.reads, [], "stored links: nothing is opened")
+        self.assertEqual(self.reads, [], "the cache file is not read the old way")
+        self.assertEqual(len(self.cloud_opens), 1, "the stored links are no shortcut any more")
+        opened = self.cloud_opens[0]
+        self.assertEqual(opened["args"], (alpha.cloud.region, CP1, CM3))
+        self.assertFalse(opened["timer_on"])
+        self.assertEqual((opened["cursor"], opened["enabled"]), ("Wait", False))
+        self.assertIsNone(MOUSE.OverrideCursor)
+        self.assertTrue(self.window.IsEnabled)
         call = self.submitted[0]
         job = call["jobs"][0]
         self.assertEqual(job["model_path"], alpha.cloud.cache_path)
@@ -3311,97 +3359,173 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(job["model_key"], alpha.key)
         self.assertEqual([item["name"] for item in job["stage"]["items"]],
                          ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
+        self.assertEqual(len(job["stage"]["notes"]), 1)
+        self.assertIn("Missing-Link.rvt", self.window.error_text.Text, "notes are surfaced")
         self.assertEqual(job["index"], build_index(CAPS_2022))
         self.assertTrue(plain(job))
         self.assertEqual(call["output_parent"], os.path.join("D:\\", "Out"))
         self.assertFalse(self.window.closed)
         self.assertEqual(self.cticked(), [], "queued: the tick is cleared")
         self.assertIn("queued", self.window.status_text.Text)
-
-    def test_export_without_stored_links_reads_the_host_once_in_the_background(self):
-        self.read_answer = {"title": "x", "path": "x", "views_2d": [], "views_3d": [],
-                            "links": [self.link("Beta-MEP", CP1, CM4),
-                                      self.link("Missing-Link", CP1, CM9)]}
-        self.open_cloud()
-        alpha = self.cby("Alpha-Architecture.rvt")
-        self.tick_cloud("Alpha-Architecture.rvt")
-        self.fire("export_btn")
-        path, workshared, timer_on, cursor, enabled = self.reads[0]
-        self.assertEqual(path, alpha.cloud.cache_path)
-        self.assertIsNone(workshared)
-        self.assertEqual(self.read_links, [True])
-        self.assertFalse(timer_on)
-        self.assertEqual((cursor, enabled), ("Wait", False))
-        self.assertIsNone(MOUSE.OverrideCursor)
-        self.assertTrue(self.window.IsEnabled)
-        job = self.submitted[0]["jobs"][0]
-        self.assertEqual([item["name"] for item in job["stage"]["items"]],
-                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
-        self.assertEqual(len(job["stage"]["notes"]), 1)
-        self.assertIn("Missing-Link.rvt", self.window.error_text.Text, "notes are surfaced")
         stored = self.memory.links_for(logic.link_key(alpha.cloud), alpha.cloud.cache_mtime)
         self.assertEqual([link["name"] for link in stored], ["Beta-MEP", "Missing-Link"])
-        saved = json.loads(Path(self.memory.file_path).read_text(encoding="utf-8"))
-        self.assertIn(logic.link_key(alpha.cloud), saved["links"])
-        # The second export of the same model reads nothing again.
+        # Every Export opens again.
         self.tick_cloud("Alpha-Architecture.rvt")
         self.fire("export_btn")
-        self.assertEqual(len(self.reads), 1)
-        self.assertEqual(len(self.submitted), 2)
+        self.assertEqual(len(self.cloud_opens), 2)
 
-    def test_two_hosts_without_links_are_read_one_after_the_other(self):
-        self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
+    def test_two_models_are_opened_one_after_the_other_with_their_status_text(self):
         self.open_cloud()
         self.tick_cloud("Alpha-Architecture.rvt", "Beta-MEP.rvt")
         self.fire("export_btn")
-        self.assertEqual(len(self.reads), 2)
+        self.assertEqual([o["args"][2] for o in self.cloud_opens], [CM3, CM4])
+        self.assertEqual([o["status"] for o in self.cloud_opens], [
+            "Opening Alpha-Architecture.rvt (1 of 2) with all worksets\u2026",
+            "Opening Beta-MEP.rvt (2 of 2) with all worksets\u2026"])
         self.assertEqual([job["model_name"] for job in self.submitted[0]["jobs"]],
                          ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
         self.assertIsNone(MOUSE.OverrideCursor)
+        for opened in self.cloud_opens:
+            self.assertIsNone(GUID_ANYWHERE.search(opened["status"]))
 
-    def test_a_failed_background_open_offers_the_host_alone_and_never_crashes(self):
-        self.read_error = rx_reader.ReadError("open_failed", "Revit could not open the model.")
-        self.open_cloud()
-        self.tick_cloud("Alpha-Architecture.rvt")
-        self.fire("export_btn")
-        self.assertEqual(self.submitted, [], "nothing is queued yet")
-        message = self.window.error_text.Text
-        self.assertIn("Alpha-Architecture.rvt", message)
-        self.assertIn("Revit could not open the model.", message)
-        self.assertIn("without its links", message)
-        self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt"], "the tick is kept")
-        self.assertFalse(self.window.closed)
-        self.assertTrue(self.window.IsEnabled)
-        self.assertIsNone(MOUSE.OverrideCursor)
-        # Export again: the host alone, with a note, and no second attempt to open it.
-        self.fire("export_btn")
-        self.assertEqual(len(self.reads), 1)
-        job = self.submitted[0]["jobs"][0]
-        self.assertEqual(len(job["stage"]["items"]), 1)
-        self.assertEqual(job["stage"]["items"][0]["name"], "Alpha-Architecture.rvt")
-        self.assertEqual(len(job["stage"]["notes"]), 1)
-        self.assertEqual(self.cticked(), [])
-
-    def test_a_failed_open_message_follows_the_language(self):
-        self.read_error = RuntimeError("boom")
+    def test_the_opening_status_is_polish_in_polish(self):
         with patch.dict(sys.modules, polish_modules()):
             self.open_cloud()
             self.tick_cloud("Alpha-Architecture.rvt")
             self.fire("export_btn")
-            self.assertIn("bez linków", self.window.error_text.Text)
+        self.assertEqual(self.cloud_opens[0]["status"], "Otwieranie Alpha-Architecture.rvt (1 z 1) "
+                         "ze wszystkimi zestawami roboczymi\u2026")
 
-    def test_unticking_forgets_the_host_alone_choice(self):
-        self.read_error = RuntimeError("boom")
+    def values_answer(self):
+        return {"views_2d": [], "views_3d": [], "links": [],
+                "values": {"uid1": {"kind": "view", "id": "1", "name": "Plan", "tokens": {},
+                                    "params": {"Zone": "A"}}},
+                "catalog": {"views": ["Zone"], "sheets": []}}
+
+    def test_the_values_go_into_the_job_naming_only_with_a_profile(self):
+        self.cloud_answer = self.values_answer()
+        window = self.names_cloud_window()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.fire("export_btn")
+        job = self.submitted[-1]["jobs"][0]
+        self.assertEqual(job["naming"]["values"], self.cloud_answer["values"])
+        self.assertEqual(len(self.cloud_opens), 1)
+        # No profile: the values stay out of the job.
+        self.pick(window.name_profile_cb, self.entry(window, "none"))
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.fire("export_btn")
+        self.assertNotIn("naming", self.submitted[-1]["jobs"][0])
+
+    def names_cloud_window(self):
+        """A fresh-install window (file naming on, Default profile) with the cloud list shown."""
+        prefs = os.path.join(self.tmp, "RevitExtractor", "preferences.json")
+        if os.path.exists(prefs):
+            os.remove(prefs)
+        self.memory.set_included([CP1_KEY])
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            window = self.open(rows=[], roots=(), cloud=self.cloud())
+        self.switch("cloud")
+        self.pump()
+        return window
+
+    def test_the_parameter_names_are_merged_into_the_property_catalog(self):
+        import rx_naming_profiles
+        path = os.path.join(self.tmp, "RevitExtractor", "property-catalog.json")
+        rx_naming_profiles.merge_catalog(path, {"views": ["Old"], "sheets": ["S"]})
+        self.cloud_answer = self.values_answer()
         self.open_cloud()
         self.tick_cloud("Alpha-Architecture.rvt")
         self.fire("export_btn")
-        self.assertEqual(self.window._host_only, {self.cby("Alpha-Architecture.rvt").key})
-        self.cclick(self.cby("Alpha-Architecture.rvt"))      # unticked
-        self.window._refresh_state()
-        self.assertEqual(self.window._host_only, set())
+        self.assertEqual(rx_naming_profiles.read_catalog(path),
+                         {"views": ["Old", "Zone"], "sheets": ["S"]})
 
-    def test_close_failed_during_the_links_read_closes_the_window(self):
-        self.read_error = rx_reader.ReadError("close_failed", "Revit did not close the model.")
+    def test_a_failed_open_exports_from_the_cache_with_a_note_and_no_values(self):
+        self.cloud_error = rx_reader.ReadError("open_failed", "Revit could not open the model.")
+        self.cloud_answer = self.values_answer()
+        self.names_cloud_window()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.fire("export_btn")
+        self.assertEqual(len(self.submitted), 1, "still exported")
+        job = self.submitted[0]["jobs"][0]
+        self.assertEqual(job["model_path"], self.cby("Alpha-Architecture.rvt").cloud.cache_path)
+        self.assertIsNone(job["naming"].get("values"))
+        notes = job["stage"]["notes"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("Revit could not open the model.", notes[0])
+        self.assertIn("own names", notes[0])
+        self.assertIn("Revit could not open the model.", self.window.error_text.Text)
+        self.assertIsNone(GUID_ANYWHERE.search(notes[0]))
+        self.assertEqual(self.cticked(), [])
+        self.assertIsNone(MOUSE.OverrideCursor)
+        self.assertTrue(self.window.IsEnabled)
+
+    def test_a_failed_open_without_a_profile_says_only_that_it_was_not_opened(self):
+        self.cloud_error = RuntimeError("boom")
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        note = self.submitted[0]["jobs"][0]["stage"]["notes"][0]
+        self.assertIn("boom", note)
+        self.assertNotIn("own names", note)
+
+    def test_not_signed_in_shows_the_sign_in_text_and_stops_trying_the_other_models(self):
+        self.cloud_error = rx_reader.ReadError("not_signed_in", "ignored long text")
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt", "Beta-MEP.rvt")
+        self.fire("export_btn")
+        self.assertEqual(len(self.cloud_opens), 1, "the second model is not tried")
+        self.assertEqual(len(self.submitted[0]["jobs"]), 2, "both are still exported")
+        for job in self.submitted[0]["jobs"]:
+            self.assertIn("Sign in to Autodesk in Revit first.", job["stage"]["notes"][0])
+        self.assertIn("Sign in to Autodesk in Revit first.", self.window.error_text.Text)
+
+    def test_not_signed_in_text_follows_the_language(self):
+        self.cloud_error = rx_reader.ReadError("not_signed_in", "x")
+        with patch.dict(sys.modules, polish_modules()):
+            self.open_cloud()
+            self.tick_cloud("Alpha-Architecture.rvt")
+            self.fire("export_btn")
+            self.assertIn("Najpierw zaloguj się do Autodesk w Revicie.",
+                          self.window.error_text.Text)
+
+    def test_a_local_read_failure_of_the_not_signed_in_kind_is_shown_as_it_is(self):
+        self.open()
+        self.window._read_failed(rx_reader.ReadError("not_signed_in", "Sign in please."))
+        self.assertEqual(self.window.error_text.Text, "Sign in please.")
+
+    def test_one_release_alert_per_run(self):
+        self.cloud_answer = {"views_2d": [], "views_3d": [], "links": [],
+                             "release_warning": "Relinquish by hand, secret-detail"}
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt", "Beta-MEP.rvt")
+        self.fire("export_btn")
+        self.assertEqual(forms_alerts(), 1)
+        message = FORMS.alert.call_args[0][0]
+        self.assertIn("Relinquish All Mine", message)
+        self.assertIn("Nothing was saved", message)
+        self.assertNotIn("secret-detail", message)
+        self.assertIsNone(GUID_ANYWHERE.search(message))
+        self.assertEqual(len(self.submitted[0]["jobs"]), 2, "the export goes on")
+
+    def test_no_alert_without_a_release_warning(self):
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(forms_alerts(), 0)
+
+    def test_the_release_alert_is_polish_in_polish(self):
+        self.cloud_answer = {"views_2d": [], "views_3d": [], "links": [], "release_warning": "x"}
+        with patch.dict(sys.modules, polish_modules()):
+            self.open_cloud()
+            self.tick_cloud("Alpha-Architecture.rvt")
+            self.fire("export_btn")
+        self.assertIn("Nic nie zostało zapisane", FORMS.alert.call_args[0][0])
+
+    def test_close_failed_during_the_open_closes_the_window(self):
+        self.cloud_error = rx_reader.ReadError("close_failed", "Revit did not close the model.")
         self.open_cloud()
         self.tick_cloud("Alpha-Architecture.rvt")
         self.fire("export_btn")
@@ -3417,7 +3541,7 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.window._refresh_state()
         self.fire("export_btn")
         self.fire("views_btn")
-        self.assertEqual(self.reads, [])
+        self.assertEqual(self.cloud_opens, [])
         self.assertEqual(self.submitted, [])
 
     def test_export_queues_only_the_shown_source(self):
@@ -3427,8 +3551,6 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.click(self.by_name("a.rvt"))
         self.switch("cloud")
         self.pump()
-        alpha = self.cby("Alpha-Architecture.rvt")
-        self.memory.store_links(logic.link_key(alpha.cloud), alpha.cloud.cache_mtime, [])
         self.tick_cloud("Alpha-Architecture.rvt")
         self.fire("export_btn")
         self.assertEqual([job["model_name"] for job in self.submitted[0]["jobs"]],
@@ -3443,7 +3565,6 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         path = os.path.join(self.tmp, "shared.json")
         shared = launcher_default_index()
         Path(path).write_text(json.dumps(shared), encoding="utf-8")
-        self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
         self.open_cloud(shared=path)
         self.window.shared_scope_rb.IsChecked = True
         self.tick_cloud("Alpha-Architecture.rvt")
@@ -3473,18 +3594,20 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
                 pass
         return ViewStub
 
-    def test_choose_views_reads_with_links_stores_them_and_never_shows_a_guid(self):
-        self.read_answer = {"title": CM3 + ".rvt", "path": os.path.join(CACHE_ROOT, CM3 + ".rvt"),
-                            "views_2d": [], "views_3d": [], "ifc_setups": [], "ifc_error": "",
-                            "links": [self.link("Beta-MEP", CP1, CM4)]}
+    def test_choose_views_opens_once_stores_the_links_and_never_shows_a_guid(self):
+        self.cloud_answer = {"title": "", "path": "", "views_2d": [], "views_3d": [],
+                             "ifc_setups": [], "ifc_error": "",
+                             "links": [self.link("Beta-MEP", CP1, CM4)],
+                             "values": {"uid1": {"kind": "view", "id": "1", "name": "Plan",
+                                                 "tokens": {}, "params": {}}}}
         made = []
         self.open_cloud()
         alpha = self.cby("Alpha-Architecture.rvt")
         self.tick_cloud("Alpha-Architecture.rvt")
         with patch.object(EXPORT_UI, "ViewWindow", self.views_window(made)):
             self.fire("views_btn")
-        self.assertEqual(self.read_links, [True])
-        self.assertEqual(self.reads[0][0], alpha.cloud.cache_path)
+        self.assertEqual(len(self.cloud_opens), 1)
+        self.assertEqual(self.cloud_opens[0]["args"][1:], (CP1, CM3))
         snapshot, note = made[0]
         self.assertEqual(snapshot["title"], "Alpha-Architecture.rvt")
         self.assertIn("Alpha-Architecture.rvt", snapshot["path"])
@@ -3500,10 +3623,8 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
                          ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
         self.assertFalse(self.window.closed)
         self.assertEqual(self.cticked(), [])
-        self.assertEqual(self.read_answer["title"], CM3 + ".rvt", "the read result is not edited")
 
     def test_back_from_the_view_picker_queues_nothing(self):
-        self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
         made = []
         self.open_cloud()
         self.tick_cloud("Alpha-Architecture.rvt")
@@ -3512,41 +3633,18 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(self.submitted, [])
         self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt"])
 
-    def test_a_failed_views_read_of_a_cloud_row_is_shown(self):
-        self.read_error = rx_reader.ReadError("open_failed", "Revit could not open the model.")
+    def test_a_failed_views_open_of_a_cloud_row_is_shown(self):
+        self.cloud_error = rx_reader.ReadError("open_failed", "Revit could not open the model.")
         self.open_cloud()
         self.tick_cloud("Alpha-Architecture.rvt")
         with patch.object(EXPORT_UI, "ViewWindow", Mock(side_effect=AssertionError("opened"))):
             self.fire("views_btn")
-        self.assertEqual(self.window.error_text.Text, "Revit could not open the model.")
+        self.assertIn("Revit could not open the model.", self.window.error_text.Text)
         self.assertEqual(self.submitted, [])
         self.assertIsNone(MOUSE.OverrideCursor)
 
-    def test_a_later_successful_links_read_clears_the_host_alone_choice(self):
-        """Export fails to read the links (host alone offered), then Choose views reads them
-        and the user goes back without queuing: the next Export stages the links too."""
-        self.read_error = RuntimeError("boom")
-        self.open_cloud()
-        alpha = self.cby("Alpha-Architecture.rvt")
-        self.tick_cloud("Alpha-Architecture.rvt")
-        self.fire("export_btn")
-        self.assertEqual(self.window._host_only, {alpha.key})
-        self.read_error = None
-        self.read_answer = {"views_2d": [], "views_3d": [], "links": [
-            self.link("Beta-MEP", CP1, CM4)]}
-        with patch.object(EXPORT_UI, "ViewWindow", self.views_window([], job=False)):
-            self.fire("views_btn")
-        self.assertEqual(self.submitted, [], "back from the picker: nothing queued")
-        self.assertEqual(self.window._host_only, set(), "the links were read after all")
-        self.fire("export_btn")
-        self.assertEqual(len(self.reads), 2, "the stored links need no third read")
-        job = self.submitted[0]["jobs"][0]
-        self.assertEqual([item["name"] for item in job["stage"]["items"]],
-                         ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
-        self.assertEqual(job["stage"]["notes"], [], "no 'links not read' note")
-
-    def test_a_failed_views_hand_over_keeps_the_cloud_job_for_the_next_export(self):
-        self.read_answer = {"views_2d": [], "views_3d": [], "links": []}
+    def test_a_choose_views_job_keeps_its_snapshot_and_is_not_opened_again(self):
+        self.cloud_answer = self.values_answer()
         self.submit_error = RuntimeError("session unreachable")
         made = []
         self.open_cloud()
@@ -3558,10 +3656,11 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt"])
         self.submit_error = None
         self.fire("export_btn")
-        self.assertEqual(len(self.reads), 1, "the kept job needs no new read")
+        self.assertEqual(len(self.cloud_opens), 1, "the kept job needs no new open")
         retry = self.submitted[-1]["jobs"][0]
         self.assertEqual(retry["index"], {"views": 1})
         self.assertEqual(retry["model_name"], "Alpha-Architecture.rvt")
+        self.assertEqual(retry["name_values"], self.cloud_answer["values"])
         self.assertEqual(self.cticked(), [])
 
     def test_the_cloud_texts_exist_in_both_languages(self):

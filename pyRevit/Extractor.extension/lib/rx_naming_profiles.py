@@ -161,6 +161,34 @@ def read_catalog(path, read=None):
     return empty
 
 
+CATALOG_MAX = 2000
+
+
+def merge_catalog(path, found):
+    """Union the parameter names in `found` ({"views": [...], "sheets": [...]}) into the
+    property catalog file at `path` (sorted, at most CATALOG_MAX each; written to .tmp, then the
+    old file removed and renamed). False, never an exception, when it could not be written."""
+    try:
+        old = read_catalog(path)
+        out = OrderedDict([("schema", CATALOG_SCHEMA), ("version", 1)])
+        for tab in ("views", "sheets"):
+            names = set(old[tab]) | set(n.strip() for n in (found or {}).get(tab) or []
+                                        if _text(n) and n.strip())
+            out[tab] = sorted(names)[:CATALOG_MAX]
+        folder = os.path.dirname(path)
+        if folder and not os.path.isdir(folder):
+            os.makedirs(folder)
+        temp = path + ".tmp"
+        with io.open(temp, "w", encoding="utf-8") as handle:
+            handle.write(dumps_ascii(out, indent=2))
+        if os.path.exists(path):
+            os.remove(path)
+        os.rename(temp, path)
+        return True
+    except Exception:
+        return False
+
+
 def available(tab, catalog, query, lang):
     """[(part, label, cls)] the user can pick on `tab` ("views" or "sheets"): Built-in, then
     Custom, then System, each by label; only labels holding `query` (case-insensitive). `lang`

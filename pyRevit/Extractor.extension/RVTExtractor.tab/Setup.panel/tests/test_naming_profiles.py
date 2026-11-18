@@ -147,6 +147,26 @@ class Catalog(Case):
             handle.write(json.dumps({"schema": "other", "views": ["A"]}))
         self.assertEqual(P.read_catalog(self.path("c.json")), empty)
 
+    def test_merge_unions_sorts_caps_and_keeps_the_schema(self):
+        path = self.path("property-catalog.json")
+        self.assertTrue(P.merge_catalog(path, {"views": ["B"], "sheets": ["S"]}))
+        self.assertTrue(P.merge_catalog(path, {"views": ["A", "B", " "], "sheets": []}))
+        self.assertEqual(P.read_catalog(path), {"views": ["A", "B"], "sheets": ["S"]})
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual((data["schema"], data["version"]), ("rx-property-catalog", 1))
+        names = ["P%04d" % n for n in range(2500)]
+        self.assertTrue(P.merge_catalog(path, {"views": names, "sheets": []}))
+        self.assertEqual(len(P.read_catalog(path)["views"]), 2000)
+
+    def test_merge_is_atomic_and_never_raises(self):
+        path = self.path("property-catalog.json")
+        P.merge_catalog(path, {"views": ["A"], "sheets": []})
+        self.assertFalse(os.path.exists(path + ".tmp"), "the temp file is renamed away")
+        os.mkdir(self.path("blocked.json"))     # a folder where the file should be
+        self.assertFalse(P.merge_catalog(self.path("blocked.json"), {"views": ["A"], "sheets": []}))
+        self.assertEqual(P.read_catalog(path), {"views": ["A"], "sheets": []})
+
 
 class Choice(Case):
     def test_nothing_chosen_means_none(self):
