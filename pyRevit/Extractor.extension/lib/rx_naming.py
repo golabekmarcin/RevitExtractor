@@ -25,7 +25,8 @@ _MAX_FILE_PATH = 259
 _MAX_DIR_PATH = 247
 
 # name: (English label, Polish label, scope). scope: model = from the model or export,
-# system = captured at submit, file = from the file being named.
+# system = captured at submit, file = from the file being named. Two groups, in the order the
+# naming window lists them: Built-in (sheet and view values), then System.
 TOKENS = OrderedDict([
     ("SheetNumber", ("Sheet number", "Numer arkusza", "model")),
     ("SheetName", ("Sheet name", "Nazwa arkusza", "model")),
@@ -40,6 +41,7 @@ TOKENS = OrderedDict([
     ("ApprovedBy", ("Approved by", "Zatwierdził", "model")),
     ("SheetSize", ("Sheet size", "Format arkusza", "model")),
     ("ViewName", ("View name", "Nazwa widoku", "model")),
+    ("ViewFamily", ("View family", "Rodzina widoku", "model")),
     ("TitleOnSheet", ("Title on sheet", "Tytuł na arkuszu", "model")),
     ("Scale", ("Scale", "Skala", "model")),
     ("DetailLevel", ("Detail level", "Poziom szczegółowości", "model")),
@@ -49,6 +51,19 @@ TOKENS = OrderedDict([
     ("ViewSheetNumber", ("Number of the sheet the view is on",
                          "Numer arkusza, na którym jest widok", "model")),
     ("ElementId", ("Element id", "Id elementu", "model")),
+    ("Date", ("Date (2026-11-18)", "Data (2026-11-18)", "system")),
+    ("DateShort", ("Date, short (Windows format)", "Data krótka (format Windows)", "system")),
+    ("DateLong", ("Date, long (Windows format)", "Data długa (format Windows)", "system")),
+    ("Time", ("Time", "Czas", "system")),
+    ("ModelName", ("Model name", "Nazwa modelu", "system")),
+    ("WindowsUser", ("Windows user", "Użytkownik Windows", "system")),
+    ("RevitUser", ("Revit user", "Użytkownik Revita", "system")),
+    ("OriginalName", ("Original name", "Oryginalna nazwa", "file")),
+])
+BUILT_IN_COUNT = 21   # the first 21 TOKENS are Built-in, the rest System
+
+# Still parsed (an old saved template may hold them) but never listed for picking.
+LEGACY_TOKENS = OrderedDict([
     ("Year", ("Year (4 digits)", "Rok (4 cyfry)", "system")),
     ("Year2", ("Year (2 digits)", "Rok (2 cyfry)", "system")),
     ("Month", ("Month", "Miesiąc", "system")),
@@ -56,24 +71,11 @@ TOKENS = OrderedDict([
     ("Hour", ("Hour", "Godzina", "system")),
     ("Minute", ("Minute", "Minuta", "system")),
     ("Second", ("Second", "Sekunda", "system")),
-    ("Date", ("Date (2026-11-18)", "Data (2026-11-18)", "system")),
-    ("DateShort", ("Date, short (Windows format)", "Data krótka (format Windows)", "system")),
-    ("DateLong", ("Date, long (Windows format)", "Data długa (format Windows)", "system")),
-    ("ModelName", ("Model name", "Nazwa modelu", "system")),
-    ("WindowsUser", ("Windows user", "Użytkownik Windows", "system")),
-    ("RevitUser", ("Revit user", "Użytkownik Revita", "system")),
-    ("OriginalName", ("Original name", "Oryginalna nazwa", "file")),
 ])
 
-PRESETS = [
-    "{SheetNumber}",
-    "{SheetNumber} - {SheetName}",
-    "{SheetNumber}_{CurrentRevision}",
-    "{ModelName} - {SheetNumber} - {SheetName}",
-    "{Date} {OriginalName}",
-]
+_SCOPES = dict((name, entry[2]) for name, entry in list(TOKENS.items()) + list(LEGACY_TOKENS.items()))
 
-_LOWER_TOKENS = dict((name.lower(), name) for name in TOKENS)
+_LOWER_TOKENS = dict((name.lower(), name) for name in _SCOPES)
 _SPACES = re.compile(r"\s+", re.UNICODE)
 _BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED = set(["CON", "PRN", "AUX", "NUL"] + ["COM%d" % n for n in range(1, 10)] +
@@ -158,29 +160,35 @@ def clean_name(raw):
     return value
 
 
-def format_name(parsed, values, original):
-    """The stem for one file. `values` maps token names and "param:<name>" to text. Falls back to
-    the original name when the template is off, every token is empty or the result is empty."""
+class Counter(object):
+    """Numbers blank parts 001, 002, ... (one per model and kind, shared by all parts)."""
+
+    def __init__(self):
+        self._n = 0
+
+    def take(self):
+        self._n += 1
+        return "%03d" % self._n   # widens past 999 by itself
+
+
+def format_name(parsed, values, original, counter=None):
+    """The stem for one file. `values` maps token names and "param:<name>" to text. A blank token
+    or parameter takes the next number from `counter`. Falls back to the original name when the
+    template is off or the result is empty after cleaning."""
     fallback = clean_name(original)
     if not parsed:
         return fallback
+    counter = counter or Counter()
     out = []
-    filled = False
-    has_tokens = False
     for kind, item in parsed:
         if kind == "text":
             out.append(item)
             continue
-        has_tokens = True
         if kind == "token" and item == "OriginalName":
             value = original
         else:
             value = values.get(item if kind == "token" else "param:" + item, "")
-        value = value if _is_text(value) else ""
-        filled = filled or bool(value)
-        out.append(value)
-    if has_tokens and not filled:
-        return fallback
+        out.append(value if _is_text(value) and value else counter.take())
     return clean_name("".join(out)) or fallback
 
 
@@ -190,7 +198,7 @@ def system_values(when, windows_user, revit_user, model_name, date_short="", dat
         "Year": "%04d" % when.year, "Year2": "%02d" % (when.year % 100),
         "Month": "%02d" % when.month, "Day": "%02d" % when.day,
         "Hour": "%02d" % when.hour, "Minute": "%02d" % when.minute,
-        "Second": "%02d" % when.second,
+        "Second": "%02d" % when.second, "Time": "%02d-%02d" % (when.hour, when.minute),
         "Date": "%04d-%02d-%02d" % (when.year, when.month, when.day),
         "DateShort": date_short, "DateLong": date_long,
         "ModelName": model_name, "WindowsUser": windows_user, "RevitUser": revit_user,
@@ -198,11 +206,19 @@ def system_values(when, windows_user, revit_user, model_name, date_short="", dat
 
 
 def check_naming(naming):
-    """Validate {"template", "system", "values"}; returns the parsed template or raises NamingError."""
+    """Validate {"template" or "templates": {"sheet", "view"}, "system", "values"}. Returns
+    {"sheet": parsed, "view": parsed} or raises NamingError. "template" serves both kinds."""
     if not isinstance(naming, dict):
         raise NamingError(tr("The naming request must be a dictionary.",
                              "Żądanie nazewnictwa musi być słownikiem."))
-    parsed = parse_template(naming.get("template"))
+    templates = naming.get("templates")
+    if templates is None:
+        templates = {"sheet": naming.get("template"), "view": naming.get("template")}
+    elif not isinstance(templates, dict):
+        raise NamingError(tr("The templates must be a dictionary.",
+                             "Szablony muszą być słownikiem."))
+    parsed = {"sheet": parse_template(templates.get("sheet")),
+              "view": parse_template(templates.get("view"))}
     system = naming.get("system")
     if not isinstance(system, dict) or not all(
             _is_text(k) and _is_text(v) for k, v in system.items()):
@@ -217,9 +233,10 @@ def check_naming(naming):
 
 
 def needs_values(parsed):
-    """True when a parsed template uses a sheet or view value (a model token or {param:})."""
-    return any(kind == "param" or (kind == "token" and TOKENS[item][2] == "model")
-               for kind, item in parsed)
+    """True when either parsed template (the dict check_naming returns) uses a sheet or view
+    value (a model token or {param:})."""
+    return any(kind == "param" or (kind == "token" and _SCOPES[item] == "model")
+               for template in parsed.values() for kind, item in template)
 
 
 def file_budget(named_root, ext):
@@ -478,7 +495,7 @@ _COPY_CHUNK = 2 ** 20
 _MB = 2 ** 20
 _MTIME_TOLERANCE = 0.001
 _SPLIT_FOLDERS = {"pdf": "PDF", "dwg": "DWG", "ifc": "IFC", "view": "3D"}
-_TIME_TOKENS = ("Year", "Year2", "Month", "Day", "Hour", "Minute", "Second", "Date")
+_TIME_TOKENS = ("Year", "Year2", "Month", "Day", "Hour", "Minute", "Second", "Date", "Time")
 
 
 def _short_error(error):
@@ -627,7 +644,7 @@ class NamedRun(object):
             except Exception:
                 pass
             if values is None:
-                parsed = []   # no values: every file keeps its original name, as the note says
+                parsed = {"sheet": [], "view": []}   # no values: every file keeps its original name, as the note says
                 self._value_notes.append(tr(
                     "Sheet and view values could not be read, so every file keeps its original "
                     "name.",
@@ -697,12 +714,23 @@ class NamedRun(object):
                     system.setdefault(key, value)
         return system
 
+    def _template(self, parsed, record):
+        """The parsed template for a tied record; [] (original name) for an untied file. A tied
+        record of unknown kind (no values read) takes the template only when both kinds share it."""
+        if record is None:
+            return []
+        kind = record.get("kind") if isinstance(record, dict) else None
+        if kind in parsed:
+            return parsed[kind]
+        return parsed["sheet"] if parsed["sheet"] == parsed["view"] else []
+
     def _plan(self, parsed, pairs, plan):
         """Fills self.items and `plan` [(entry, target path, [(parts, src, size, mtime)])] before
         anything is written. Yields once per folder walked inside a view folder."""
         namer = Namer()
         system = self._system()
         split = self.naming.get("split") is True
+        counters = {}   # one per kind, for the whole model
         for item, record in pairs:
             yield       # one step per deliverable: thousands of sheets must not block the window
             sub = _SPLIT_FOLDERS[item.kind] if split else ""
@@ -730,13 +758,15 @@ class NamedRun(object):
                 self._fail(entry, _short_error(error))
                 continue
             tokens = dict(system)
+            template = self._template(parsed, record)
+            counter = counters.setdefault(record.get("kind") if record else None, Counter())
             record = record if isinstance(record, dict) else {}
             if isinstance(record.get("tokens"), dict):
                 tokens.update(record["tokens"])
             if isinstance(record.get("params"), dict):
                 tokens.update(("param:" + k, v) for k, v in record["params"].items()
                               if _is_text(k))
-            name = namer.unique(sub, format_name(parsed, tokens, original), ext, budget)
+            name = namer.unique(sub, format_name(template, tokens, original, counter), ext, budget)
             if name is None:
                 self._fail(entry, "path too long")
                 continue
@@ -842,7 +872,8 @@ class NamedRun(object):
         try:
             text = dumps_ascii(OrderedDict([
                 ("schema", RECORD_SCHEMA), ("version", RECORD_VERSION),
-                ("template", self.naming.get("template")), ("state", self.state),
+                ("template", self.naming.get("template")),
+                ("templates", self.naming.get("templates")), ("state", self.state),
                 ("counts", self.counts), ("notes", self.notes), ("items", self.items)]),
                 indent=1)
             with io.open(temp, "w", encoding="utf-8") as handle:

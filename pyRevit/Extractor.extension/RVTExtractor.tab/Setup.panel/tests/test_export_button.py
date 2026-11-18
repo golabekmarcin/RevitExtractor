@@ -100,8 +100,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(got, {"roots": [],
                                "output_parent": os.path.join(self.DOCS, "RevitExtractor"),
                                "max_parallel": 1, "shared_index_path": "",
-                               "subfolders": True, "name_template": "",
-                               "name_split_by_format": False})
+                               "subfolders": True})
 
     def test_round_trip_through_stub_config(self):
         config = Config()
@@ -141,8 +140,7 @@ class SettingsTests(unittest.TestCase):
         saved = logic.settings_to_save(["D:\\A", "D:\\A"], " D:\\O ", "2", " p ")
         self.assertEqual(saved, {"roots": [os.path.normpath("D:\\A")], "output_parent": "D:\\O",
                                  "max_parallel": 2, "shared_index_path": "p",
-                                 "subfolders": True, "name_template": "",
-                                 "name_split_by_format": False})
+                                 "subfolders": True})
 
     def test_unknown_documents_folder_is_an_error_only_when_needed(self):
         logic.load_settings(Config(output_parent="D:\\Out"), "")      # not needed
@@ -485,7 +483,8 @@ class IronPythonGuards(unittest.TestCase):
         import test_status
         files = py_files(BUTTON)
         self.assertEqual({p.name for p in files},
-                         {"rx_export_logic.py", "rx_export_text.py", "rx_export_ui.py", "script.py"})
+                         {"rx_export_logic.py", "rx_export_naming_ui.py", "rx_export_text.py",
+                          "rx_export_ui.py", "script.py"})
         for path in files:
             source = path.read_text(encoding="utf-8")
             self.assertEqual(test_status.ironpython_problems(source), [], path.name)
@@ -650,6 +649,7 @@ from wpf_fakes import FakeView, polish as polish_modules, stub_module  # noqa: E
 XNAME = legacy.XNAME
 MODELS_XAML = BUTTON / "rx_export_models.xaml"
 VIEWS_XAML = BUTTON / "rx_export_views.xaml"
+NAMING_XAML = BUTTON / "rx_export_naming.xaml"
 LANGUAGE_NEUTRAL = {"✓", "ElementId"}
 
 
@@ -672,7 +672,7 @@ class TextTableTests(unittest.TestCase):
 
     def test_keys_of_both_xaml_files_and_the_table_match_both_ways(self):
         used = set()
-        for path in (MODELS_XAML, VIEWS_XAML):
+        for path in (MODELS_XAML, VIEWS_XAML, NAMING_XAML):
             keys = set(key for key in re.findall(r"\{DynamicResource (\w+)\}", xaml_text(path))
                        if not key.startswith("Rx"))
             self.assertTrue(keys, path.name)
@@ -997,6 +997,14 @@ class ModelWindowHarness(object):
         reset_fakes()
         self.tmp = tempfile.mkdtemp(prefix="rxexp-ui-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        env = patch.dict(os.environ, {"APPDATA": self.tmp})   # the window writes its preferences here
+        env.start()
+        self.addCleanup(env.stop)
+        # Most tests are about other things: file naming is off for them (Default is on in a
+        # fresh install; the file-names tests delete this file first).
+        os.makedirs(os.path.join(self.tmp, "RevitExtractor"))
+        io.open(os.path.join(self.tmp, "RevitExtractor", "preferences.json"), "w",
+                encoding="utf-8").write('{"naming": {"selected": "none"}}')
         self.reads = []
         self.read_links = []
         self.read_answer = None
@@ -1042,124 +1050,77 @@ class ModelWindowHarness(object):
             self.window.show_dialog()
         return self.window
 
-    # -- file names (named copies)
+    # -- file names (named copies): the profile dropdown
 
-    def names_window(self, template=""):
+    def names_window(self):
+        os.remove(os.path.join(self.tmp, "RevitExtractor", "preferences.json"))   # a fresh install
         with patch.object(logic, "NAMED_COPIES_READY", True):
-            window = self.open()
-        window._name_template = template
-        window.name_template_tb.Text = template
-        return window
+            return self.open()
 
     def pick(self, combo, item):
         combo.SelectedItem = item
         combo.SelectionChanged.fire(combo, None)
+
+    def entry(self, window, tag):
+        return [i for i in window.name_profile_cb.Items.items if i.Tag == tag][-1]
+
+    def ready_job(self, window):
+        self.tick()
+        row = [r for r in self.rows() if r.Enabled][0]
+        row.set_quietly(True)
+        window._refresh_state()
+        with patch.object(logic, "NAMED_COPIES_READY", True):
+            self.fire("export_btn")
+        return self.submitted[-1]["jobs"][0]
 
     def test_the_file_names_row_follows_the_readiness_switch(self):
         self.assertEqual(self.open().naming_panel.Visibility, "Visible")
         with patch.object(logic, "NAMED_COPIES_READY", False):
             self.assertEqual(self.open().naming_panel.Visibility, "Collapsed")
 
-    def test_presets_and_tokens_are_listed_with_translated_labels(self):
+    def test_the_dropdown_lists_none_default_and_load_and_starts_on_default(self):
         window = self.names_window()
-        self.assertEqual(window.name_presets_cb.Items.items[1], "{SheetNumber} - {SheetName}")
-        labels = [item.Content for item in window.name_token_cb.Items.items]
-        self.assertIn("Sheet number", labels)
-        self.assertEqual(labels[-1], "Custom parameter of the model…")
-        self.assertEqual(window.name_token_cb.Items.items[0].Tag, "SheetNumber")
+        tags = [i.Tag for i in window.name_profile_cb.Items.items]
+        self.assertEqual(tags, ["none", "default", "load"])
+        self.assertEqual(window.name_profile_cb.SelectedItem.Tag, "default")
+        self.assertTrue(window.name_edit_btn.IsEnabled)
 
-    def test_a_preset_fills_the_field_and_is_remembered(self):
+    def test_the_default_profile_goes_with_the_jobs_as_view_and_sheet_templates(self):
+        sent = self.ready_job(self.names_window())
+        self.assertEqual(sent["naming"], {
+            "templates": {"view": "{ViewFamily} - {ViewName}", "sheet": "{SheetNumber} - {SheetName}"},
+            "split": False})
+
+    def test_none_sends_a_plain_job_disables_edit_and_is_remembered(self):
         window = self.names_window()
-        self.pick(window.name_presets_cb, "{SheetNumber} - {SheetName}")
-        self.assertEqual(window.name_template_tb.Text, "{SheetNumber} - {SheetName}")
-        self.assertEqual(window.name_presets_cb.SelectedIndex, -1, "ready for the next pick")
-        self.assertEqual(self.saved[-1]["name_template"], "{SheetNumber} - {SheetName}")
+        self.pick(window.name_profile_cb, self.entry(window, "none"))
+        self.assertFalse(window.name_edit_btn.IsEnabled)
+        self.assertNotIn("naming", self.ready_job(window))
+        import rx_status
+        self.assertEqual(rx_status.read_preferences(window._prefs_path)["naming"]["selected"], "none")
+        self.pick(window.name_profile_cb, self.entry(window, "default"))
+        self.assertEqual(window.name_profile_cb.SelectedItem.Tag, "default")
 
-    def test_a_token_is_inserted_at_the_caret_over_the_selection(self):
-        window = self.names_window("AB-XY")
-        box = window.name_template_tb
-        box.SelectionStart, box.SelectionLength = 3, 2           # "XY" is selected
-        self.pick(window.name_token_cb, window.name_token_cb.Items.items[0])
-        self.assertEqual(box.Text, "AB-{SheetNumber}")
-        self.assertEqual(box.CaretIndex, len("AB-{SheetNumber}"))
-        self.assertTrue(box.focused)
-
-    def test_a_custom_parameter_puts_the_caret_inside_the_braces(self):
-        window = self.names_window("A")
-        window.name_template_tb.SelectionStart = 1
-        self.pick(window.name_token_cb, window.name_token_cb.Items.items[-1])
-        self.assertEqual(window.name_template_tb.Text, "A{param:}")
-        self.assertEqual(window.name_template_tb.CaretIndex, len("A{param:"))
-
-    def test_the_example_follows_the_template_in_both_languages(self):
-        window = self.names_window()
-        window.name_template_tb.Text = "{SheetNumber}_{CurrentRevision}"
-        window.name_template_tb.TextChanged.fire(window.name_template_tb, None)
-        self.assertIn("A101_B.pdf", window.name_preview_text.Text)
-        window.name_template_tb.Text = ""
-        window.name_template_tb.TextChanged.fire(window.name_template_tb, None)
-        self.assertIn("No template", window.name_preview_text.Text)
-        with patch.dict(sys.modules, polish_modules()):
-            example, problem = EXPORT_UI.name_example("{SheetNumber} - {SheetName}")
-        self.assertIn("Przykład", example)
-        self.assertIn("A101 - Parter.pdf", example)
-
-    def test_an_invalid_template_shows_its_error_and_blocks_export(self):
-        window = self.names_window()
-        window.name_template_tb.Text = "{Nope}"
-        window.name_template_tb.TextChanged.fire(window.name_template_tb, None)
-        self.assertIn("Nope", window.name_preview_text.Text, "the example line shows the reason")
-        self.tick()
-        row = [r for r in self.rows() if r.Enabled][0]
-        row.set_quietly(True)
-        window._refresh_state()
-        with patch.object(logic, "NAMED_COPIES_READY", True):
-            self.fire("export_btn")
-        self.assertEqual(self.submitted, [], "nothing was handed over")
-        self.assertIn("Nope", window.error_text.Text)
-        self.assertTrue(row.Checked, "the ticks stay")
-
-    def test_clear_and_split_are_remembered(self):
-        window = self.names_window("{SheetNumber}")
-        window._name_template = "{SheetNumber}"
-        self.fire("name_clear_btn")
-        self.assertEqual((window.name_template_tb.Text, self.saved[-1]["name_template"]), ("", ""))
-        window.name_split_cb.IsChecked = True
-        self.fire("name_split_cb")
-        self.assertIs(self.saved[-1]["name_split_by_format"], True)
-
-    def test_the_template_goes_with_the_jobs_and_a_plain_job_stays_plain(self):
-        window = self.names_window("{SheetNumber} - {SheetName}")
-        window._name_split = True
-        self.tick()
-        row = [r for r in self.rows() if r.Enabled][0]
-        row.set_quietly(True)
-        window._refresh_state()
-        with patch.object(logic, "NAMED_COPIES_READY", True):
-            self.fire("export_btn")
-        sent = self.submitted[-1]["jobs"][0]
-        self.assertEqual(sent["naming"], {"template": "{SheetNumber} - {SheetName}", "split": True})
-        window._name_template = "  "
-        row.set_quietly(True)
-        window._refresh_state()
-        with patch.object(logic, "NAMED_COPIES_READY", True):
-            self.fire("export_btn")
-        self.assertNotIn("naming", self.submitted[-1]["jobs"][0], "an empty template sends nothing")
-        with patch.object(logic, "NAMED_COPIES_READY", False):
-            self.assertEqual(window._with_naming([{"model_path": "x"}]), [{"model_path": "x"}])
-
-    def test_the_template_is_read_from_the_settings(self):
-        settings_template = "{Date} {OriginalName}"
+    def test_a_missing_remembered_file_falls_back_to_default_with_a_note(self):
+        import rx_status
+        prefs = rx_status.preferences_path(self.tmp)
+        gone = os.path.join(self.tmp, "gone.rx-naming.json")
+        io.open(prefs, "w", encoding="utf-8").write(json.dumps(
+            {"naming": {"selected": gone, "profiles": [{"name": "Office", "path": gone}]}}))
         with patch.object(logic, "NAMED_COPIES_READY", True):
             window = self.open()
-            self.assertEqual(window.name_template_tb.Text, "")
-        window2 = EXPORT_UI.ModelWindow(CAPS_2022, {"roots": [], "output_parent": "D:\Out", "max_parallel": 1,
-                                                    "shared_index_path": "", "name_template": settings_template,
-                                                    "name_split_by_format": True},
-                                        self.read_info, self.cache, self.read, self.saved.append,
-                                        scan=FakeScan([]), clock=StepClock(0.0), submit=self.submit)
-        self.assertEqual(window2.name_template_tb.Text, settings_template)
-        self.assertTrue(window2.name_split_cb.IsChecked)
+        self.assertEqual(window.name_profile_cb.SelectedItem.Tag, "default")
+        self.assertEqual(window.name_note_text.Visibility, "Visible")
+        self.assertIn("Office", window.name_note_text.Text)
+
+    def test_the_example_text_uses_the_normal_text_brush_not_a_code_set_one(self):
+        xaml = xaml_text(NAMING_XAML)
+        self.assertIn('x:Name="preview_text" Foreground="{DynamicResource RxText}"', xaml)
+
+    def test_nothing_is_attached_while_the_feature_is_off(self):
+        window = self.names_window()
+        with patch.object(logic, "NAMED_COPIES_READY", False):
+            self.assertEqual(window._with_naming([{"model_path": "x"}]), [{"model_path": "x"}])
 
     def test_onedrive_output_folder_shows_a_warning(self):
         window = self.open()

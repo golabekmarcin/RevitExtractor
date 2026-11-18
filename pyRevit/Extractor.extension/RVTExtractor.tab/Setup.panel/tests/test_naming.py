@@ -16,7 +16,7 @@ if str(LIB) not in sys.path:
 
 import rx_cloud  # noqa: E402
 import rx_naming  # noqa: E402
-from rx_naming import (NamingError, Namer, TOKENS, PRESETS, check_naming, clean_name,  # noqa: E402
+from rx_naming import (NamingError, Namer, TOKENS, LEGACY_TOKENS, Counter, check_naming, clean_name,  # noqa: E402
                        file_budget, fit_name, folder_budget, format_name, parse_template,
                        system_values)
 
@@ -37,13 +37,13 @@ def safe(stem, ext=".x"):
     return rx_cloud.safe_file_name(stem + ext)
 
 
+LEGACY_NAMES = ["Year", "Year2", "Month", "Day", "Hour", "Minute", "Second"]
 TOKEN_NAMES = [
     "SheetNumber", "SheetName", "CurrentRevision", "CurrentRevisionDate",
     "CurrentRevisionDescription", "SheetIssueDate", "DrawnBy", "CheckedBy", "DesignedBy",
-    "ApprovedBy", "SheetSize", "ViewName", "TitleOnSheet", "Scale", "DetailLevel", "Discipline",
-    "Phase", "ViewTemplate", "ViewSheetNumber", "ElementId", "Year", "Year2", "Month", "Day",
-    "Hour", "Minute", "Second", "Date", "DateShort", "DateLong", "ModelName", "WindowsUser",
-    "RevitUser", "OriginalName"]
+    "ApprovedBy", "SheetSize", "ViewName", "ViewFamily", "TitleOnSheet", "Scale", "DetailLevel",
+    "Discipline", "Phase", "ViewTemplate", "ViewSheetNumber", "ElementId", "Date", "DateShort",
+    "DateLong", "Time", "ModelName", "WindowsUser", "RevitUser", "OriginalName"]
 
 
 class TokenTable(unittest.TestCase):
@@ -58,10 +58,16 @@ class TokenTable(unittest.TestCase):
         self.assertEqual(TOKENS["Date"][2], "system")
         self.assertEqual(TOKENS["SheetNumber"][2], "model")
 
-    def test_presets_parse(self):
-        self.assertEqual(len(PRESETS), 5)
-        for preset in PRESETS:
-            self.assertTrue(parse_template(preset))
+    def test_legacy_tokens_parse_but_are_not_listed(self):
+        self.assertEqual(list(LEGACY_TOKENS), LEGACY_NAMES)
+        self.assertFalse(set(LEGACY_TOKENS) & set(TOKENS))
+        self.assertEqual(parse_template("{Year}-{minute}"), [("token", "Year"), ("text", "-"),
+                                                             ("token", "Minute")])
+
+    def test_groups_and_new_labels(self):
+        self.assertEqual(rx_naming.BUILT_IN_COUNT, TOKEN_NAMES.index("Date"))
+        self.assertEqual(TOKENS["ViewFamily"][:2], ("View family", "Rodzina widoku"))
+        self.assertEqual(TOKENS["Time"][:2], ("Time", "Czas"))
 
 
 class Parsing(unittest.TestCase):
@@ -113,12 +119,18 @@ class Formatting(unittest.TestCase):
 
     def test_missing_token_is_empty(self):
         parsed = parse_template("{SheetNumber}_{CurrentRevision}")
-        self.assertEqual(format_name(parsed, {"SheetNumber": "A1"}, "orig"), "A1_")
+        self.assertEqual(format_name(parsed, {"SheetNumber": "A1"}, "orig"), "A1_001")
 
-    def test_all_tokens_empty_keeps_original(self):
+    def test_blank_parts_share_one_counter(self):
         parsed = parse_template("{SheetNumber} {param:Foo}")
-        self.assertEqual(format_name(parsed, {}, "Orig Name"), "Orig Name")
-        self.assertEqual(format_name(parsed, {"SheetNumber": ""}, "Orig Name"), "Orig Name")
+        counter = Counter()
+        self.assertEqual(format_name(parsed, {}, "Orig Name", counter), "001 002")
+        self.assertEqual(format_name(parsed, {"SheetNumber": ""}, "Orig Name", counter), "003 004")
+
+    def test_counter_widens_past_999(self):
+        counter = Counter()
+        taken = [counter.take() for _ in range(1000)]
+        self.assertEqual((taken[0], taken[1], taken[998], taken[999]), ("001", "002", "999", "1000"))
 
     def test_empty_parse_keeps_original(self):
         self.assertEqual(format_name([], {"SheetNumber": "A"}, "Orig"), "Orig")
@@ -152,13 +164,15 @@ class SystemValues(unittest.TestCase):
         v = system_values(when, "jan", "Jan K", "Model A", "04.03.2026", "środa, 4 marca 2026")
         self.assertEqual(v, {
             "Year": "2026", "Year2": "26", "Month": "03", "Day": "04", "Hour": "05",
-            "Minute": "06", "Second": "07", "Date": "2026-03-04", "DateShort": "04.03.2026",
+            "Minute": "06", "Second": "07", "Time": "05-06", "Date": "2026-03-04",
+            "DateShort": "04.03.2026",
             "DateLong": "środa, 4 marca 2026", "ModelName": "Model A", "WindowsUser": "jan",
             "RevitUser": "Jan K"})
 
     def test_covers_every_system_token(self):
         v = system_values(datetime.datetime(2026, 11, 18, 23, 59, 58), "u", "r", "m")
-        self.assertEqual(set(v), {n for n, t in TOKENS.items() if t[2] == "system"})
+        self.assertEqual(set(v), {n for n, t in TOKENS.items() if t[2] == "system"} |
+                         set(LEGACY_NAMES))
         self.assertEqual(v["DateShort"], "")
         self.assertEqual((v["Month"], v["Hour"], v["Second"]), ("11", "23", "58"))
 
@@ -174,10 +188,21 @@ class CheckNaming(unittest.TestCase):
         return d
 
     def test_ok_returns_parse(self):
-        self.assertEqual(check_naming(self.good()), [("token", "Date")])
-        self.assertEqual(check_naming(self.good(values={"u": {"kind": "sheet"}})),
-                         [("token", "Date")])
-        self.assertEqual(check_naming(self.good(template="")), [])
+        both = {"sheet": [("token", "Date")], "view": [("token", "Date")]}
+        self.assertEqual(check_naming(self.good()), both)
+        self.assertEqual(check_naming(self.good(values={"u": {"kind": "sheet"}})), both)
+        self.assertEqual(check_naming(self.good(template="")), {"sheet": [], "view": []})
+
+    def test_templates_per_kind_win_over_template(self):
+        got = check_naming(self.good(templates={"sheet": "{Date}", "view": "{Time}"},
+                                     template="{Nope}"))
+        self.assertEqual(got, {"sheet": [("token", "Date")], "view": [("token", "Time")]})
+        self.assertTrue(rx_naming.needs_values(check_naming(
+            self.good(templates={"sheet": "{Date}", "view": "{ViewName}"}))))
+        self.assertFalse(rx_naming.needs_values(check_naming(self.good())))
+        for bad in ("x", {"sheet": "{Nope}", "view": ""}, {"sheet": "", "view": 3}):
+            with self.assertRaises(NamingError, msg=repr(bad)):
+                check_naming(self.good(templates=bad))
 
     def test_rejects(self):
         bad = [None, [], "x", self.good(template="{Nope}"), self.good(template=3),
@@ -688,7 +713,7 @@ IFC_REL = "Model.ifc"
 VIEW_REL = "Resource/3D/%s" % G3
 VIEW_FILES = ["0/mesh.pf", "0/model.svf", "0/sub/t.bin"]
 ORIGINALS = {"template": "{SheetNumber}", "system": {}, "values": None}
-NAMED_VALUES = {"template": "{SheetNumber}{ViewName}", "system": {},
+NAMED_VALUES = {"templates": {"sheet": "{SheetNumber}", "view": "{ViewName}"}, "system": {},
                 "values": {G1: SHEET, G3: VIEW}}
 
 
@@ -940,11 +965,11 @@ class WriterTests(WriterCase):
         self.assertTrue(os.path.isfile(self.dst("3D/%s/0/sub/t.bin" % G3)))
 
     def test_clash_numbering(self):
-        touch(self.out, "Resource/%s/Other.pdf" % G2, b"pdf-2")
+        touch(self.out, "Resource/%s/Other.pdf" % G1, b"pdf-2")
         run = self.run_named({"template": "Sheet", "system": {}, "values": None})
         self.assertEqual(run.state, "done")
         self.assertEqual([i["name"] for i in run.items],
-                         ["Sheet.ifc", "Sheet.pdf", "Sheet (2).pdf", "Sheet"])
+                         ["Model.ifc", "Sheet.pdf", "Sheet (2).pdf", "Sheet"])  # the ifc is untied
 
     def test_path_too_long_fails_that_item(self):
         length = len(self.named)
@@ -968,7 +993,7 @@ class WriterTests(WriterCase):
         self.assertEqual(sorted(os.listdir(self.paths.root)), before, "no named, no named.json")
 
     def test_record_ascii_relative_and_written_at_start_and_end(self):
-        touch(self.out, "Rzut piętra.pdf", b"pl")
+        touch(self.out, "Resource/%s/Rzut piętra.pdf" % G1, b"pl")
         run = rx_naming.NamedRun(self.paths, dict(ORIGINALS, template="{OriginalName} ł"),
                                  link=copy_link)
         first = None
@@ -978,8 +1003,8 @@ class WriterTests(WriterCase):
         self.assertEqual(json.loads(first)["state"], "running")
         text = self.read_record()
         record = json.loads(text)
-        self.assertEqual(list(record), ["schema", "version", "template", "state", "counts",
-                                        "notes", "items"])
+        self.assertEqual(list(record), ["schema", "version", "template", "templates", "state",
+                                        "counts", "notes", "items"])
         self.assertEqual((record["schema"], record["version"], record["state"]),
                          ("rx-named-copies", 1, "done"))
         self.assertIn("Rzut pi\\u0119tra.pdf", text)
@@ -1069,7 +1094,21 @@ class WriterTests(WriterCase):
         when = datetime.datetime(2026, 1, 2, 3, 4, 5)
         run = self.run_named({"template": "{Date} {OriginalName}", "system": {},
                               "values": None}, now=when)
-        self.assertIn("2026-01-02 Model.ifc", [i["name"] for i in run.items])
+        self.assertIn("2026-01-02 A101 - Ground floor.pdf", [i["name"] for i in run.items])
+
+    def test_blank_values_take_numbers_and_each_kind_restarts(self):
+        touch(self.out, "Resource/%s/Second.pdf" % G1, b"pdf-2")
+        blank = dict(SHEET, tokens={})
+        naming = {"templates": {"sheet": "{SheetNumber}-{SheetName}", "view": "{ViewName}{Scale}"},
+                  "system": {}, "values": {G1: blank, G3: VIEW}}
+        run = self.run_named(naming)
+        names = [i["name"] for i in run.items]
+        self.assertEqual(names, ["Model.ifc", "001-002.pdf", "003-004.pdf", "Level 1001"])
+        self.assertEqual(self.read_json()["templates"], naming["templates"])
+
+    def read_json(self):
+        with io.open(self.record, "rb") as fh:
+            return json.loads(fh.read().decode("utf-8"))
 
     def test_polish_messages(self):
         run = self.run_named(NAMED_VALUES)

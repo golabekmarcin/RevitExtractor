@@ -270,6 +270,9 @@ class Items(object):
         self.items.append(item)
         return len(self.items) - 1
 
+    def Clear(self):
+        self.items = []
+
     def Refresh(self):
         self.refreshes += 1
 

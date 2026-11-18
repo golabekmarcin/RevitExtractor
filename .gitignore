@@ -13,3 +13,5 @@ journal-lines*.txt
 RX-private/
 # Cloud name memory holds client project and file names - never commit
 cloud-catalog*.json
+*.rx-naming.json
+property-catalog*.json

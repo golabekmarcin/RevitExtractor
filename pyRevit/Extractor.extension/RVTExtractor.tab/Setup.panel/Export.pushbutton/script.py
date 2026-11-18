@@ -174,9 +174,13 @@ def _job_request(job, revit_dir, output_parent, system=None):
         if job.get(name) is not None:
             entry[name] = job[name]
     naming = job.get("naming")
-    if isinstance(naming, dict) and naming.get("template") and system is not None:
-        entry["naming"] = {"template": naming["template"], "split": bool(naming.get("split")),
-                           "system": system(job), "values": None}
+    if isinstance(naming, dict) and system is not None and (
+            naming.get("templates") or naming.get("template")):
+        entry["naming"] = {"split": bool(naming.get("split")), "system": system(job),
+                           "values": None}
+        for key in ("templates", "template"):   # the per-kind templates of a chosen profile
+            if naming.get(key):
+                entry["naming"][key] = naming[key]
     return entry
 
 

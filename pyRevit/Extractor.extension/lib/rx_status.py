@@ -32,7 +32,7 @@ except NameError:
     _INTEGER_TYPES = (int,)
 
 SESSION_KEY = "RevitExtractor.StatusSession"
-PROTOCOL = 2  # 2: submit jobs may carry "naming" (named copies); find_session reuses only an equal one
+PROTOCOL = 3  # 3: naming may carry "templates" (per kind); 2: jobs may carry "naming"; find_session reuses only an equal one
 WEBSITE_URL = "https://kopecp.github.io/RevitExtractor/"  # D9, the launcher's URL
 NODE_MIN_MAJOR = 24
 

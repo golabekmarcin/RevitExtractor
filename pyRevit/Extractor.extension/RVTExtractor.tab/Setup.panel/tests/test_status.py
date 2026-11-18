@@ -2242,9 +2242,9 @@ class NamingProtocol(unittest.TestCase):
         self.queue = new_queue()
         self.core = SessionCore(self.queue, lambda: NOW, Listener())
 
-    def test_protocol_is_2(self):
-        self.assertEqual(PROTOCOL, 2)
-        self.assertEqual(call(self.core, {"op": "ping"})["protocol"], 2)
+    def test_protocol_is_3(self):
+        self.assertEqual(PROTOCOL, 3)
+        self.assertEqual(call(self.core, {"op": "ping"})["protocol"], 3)
 
     def test_a_handler_with_protocol_1_is_not_reused(self):
         domain = FakeDomain({SESSION_KEY: answering(json.dumps(

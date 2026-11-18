@@ -39,7 +39,10 @@ from rx_export_logic import (inside_onedrive, link_key, load_shared_index, plan_
                              plan_jobs, settings_to_save, has_nested_roots, tick_targets, toggled_state)
 from rx_export_text import resources
 from rx_i18n import tr
-from rx_naming import PRESETS, TOKENS, NamingError, format_name, parse_template, system_values
+from rx_naming import NamingError, system_values
+import rx_naming_profiles
+from rx_naming_profiles import read_catalog, read_choice, remember, to_template
+from rx_status import preferences_path, read_preferences
 from rx_index import SetupError, build_index, database_warning, defaults, to_json
 from rx_runner import RunnerError, clean_path
 from rx_search_bar import SearchBar
@@ -166,23 +169,10 @@ def _sample_values():
         "TitleOnSheet": tr("Floor plan", "Rzut"), "Scale": "100",
         "DetailLevel": tr("Medium", "Średni"), "Discipline": tr("Architecture", "Architektura"),
         "Phase": tr("New construction", "Nowa konstrukcja"), "ViewTemplate": "",
-        "ViewSheetNumber": "A101", "ElementId": "312"})
+        "ViewSheetNumber": "A101", "ElementId": "312",
+        "ViewFamily": tr("Floor Plan", "Rzut kondygnacji"),
+        "OriginalName": tr("A101 - Ground floor", "A101 - Parter")})
     return values
-
-
-def name_example(template):
-    """(text under the template field, error text or ""): the template applied to a made-up
-    sheet. An invalid template gives its error instead of an example."""
-    try:
-        parsed = parse_template(template)
-    except NamingError as error:
-        return "", _error_text(error)
-    if not parsed:
-        return tr("No template: names stay as the Extractor wrote them.",
-                  "Brak wzoru: nazwy zostają takie, jak zapisał Extractor."), ""
-    original = tr("A101 - Ground floor", "A101 - Parter")
-    return tr("Example: {0}  →  {1}", "Przykład: {0}  →  {1}").format(
-        original + ".pdf", format_name(parsed, _sample_values(), original) + ".pdf"), ""
 
 
 def _foreground_handle():
@@ -365,8 +355,8 @@ class ModelWindow(forms.WPFWindow):
         self._max_parallel = settings.get("max_parallel", 1)
         self._shared_path = settings.get("shared_index_path") or ""
         self._subfolders = settings.get("subfolders") is not False
-        self._name_template = settings.get("name_template") or ""
-        self._name_split = settings.get("name_split_by_format") is True
+        self._prefs_path = preferences_path(os.environ.get("APPDATA"))
+        self._naming = self._read_naming()
         self.output_parent = settings.get("output_parent") or ""
         self.fatal_error = None
         self._generator = None
@@ -799,38 +789,111 @@ class ModelWindow(forms.WPFWindow):
 
     def _settings_values(self, roots):
         return settings_to_save(roots, self.output_parent, self._max_parallel,
-                                self._shared_path, self._subfolders, self._name_template,
-                                self._name_split)
+                                self._shared_path, self._subfolders)
 
     # -- file names (named copies)
 
+    def _read_naming(self):
+        prefs = read_preferences(self._prefs_path)
+        choice = read_choice(prefs)
+        if not isinstance(prefs.get(rx_naming_profiles.NAMING_KEY), dict):
+            # Nothing chosen yet: Default is on out of the box.
+            choice["selected"], choice["profile"] = "default", rx_naming_profiles.default_profile()
+        return choice
+
     def _setup_naming(self):
         self.naming_panel.Visibility = _shown(rx_export_logic.NAMED_COPIES_READY)
-        self.name_template_tb.Text = self._name_template
-        self.name_split_cb.IsChecked = self._name_split
-        for preset in PRESETS:
-            self.name_presets_cb.Items.Add(preset)
-        for name, (english, polish, _scope) in TOKENS.items():
-            item = ComboBoxItem()
-            item.Content = tr(english, polish)
-            item.Tag = name
-            self.name_token_cb.Items.Add(item)
-        custom = ComboBoxItem()
-        custom.Content = tr("Custom parameter of the model…", "Parametr własny z modelu…")
-        custom.Tag = "param"
-        self.name_token_cb.Items.Add(custom)
-        self.name_template_tb.TextChanged += self._on_name_text
-        self.name_template_tb.LostFocus += self._on_name_lost
-        self.name_presets_cb.SelectionChanged += self._on_name_preset
-        self.name_token_cb.SelectionChanged += self._on_name_token
-        self.name_clear_btn.Click += self._on_name_clear
-        self.name_split_cb.Click += self._on_name_split
-        self._show_name_example()
+        self._updating_profiles = False
+        self._fill_profiles()
+        self.name_profile_cb.SelectionChanged += self._on_profile
+        self.name_edit_btn.Click += self._on_edit_profile
 
-    def _show_name_example(self):
-        example, problem = name_example(self._name_template)
-        self.name_preview_text.Text = problem or example
-        self.name_preview_text.Foreground = self._brush("RxErrorText" if problem else "RxMutedText")
+    def _fill_profiles(self):
+        """The dropdown: None, Default, the remembered profiles, Load from file. Rebuilt on every
+        change, with the current choice selected and no event raised for that."""
+        self._updating_profiles = True
+        combo = self.name_profile_cb
+        combo.Items.Clear()
+        entries = [("none", tr("None (no named copies)", "Brak (bez kopii z nazwami)")),
+                   ("default", tr("Default", "Domyślny"))]
+        entries += [(p["path"], p["name"]) for p in self._naming["profiles"]]
+        entries.append(("load", tr("Load from file…", "Wczytaj z pliku…")))
+        for tag, label in entries:
+            item = ComboBoxItem()
+            item.Content = label
+            item.Tag = tag
+            combo.Items.Add(item)
+            if tag == self._naming["selected"]:
+                combo.SelectedItem = item
+        self.name_edit_btn.IsEnabled = self._naming["selected"] != "none"
+        note = self._naming.get("note") or ""
+        self.name_note_text.Text = note
+        self.name_note_text.Visibility = _shown(bool(note))
+        self._updating_profiles = False
+
+    def _remember_naming(self):
+        remember(self._prefs_path, self._naming["selected"], self._naming["profiles"])
+
+    @_guarded
+    def _on_profile(self, sender, args):
+        if self._updating_profiles:
+            return
+        chosen = self.name_profile_cb.SelectedItem
+        if chosen is None:
+            return
+        tag = "%s" % (chosen.Tag,)
+        self._naming["note"] = ""
+        if tag == "load":
+            path = forms.pick_file(
+                file_ext="json",
+                files_filter=tr("Naming profile (*.rx-naming.json)|*.rx-naming.json|JSON (*.json)|*.json",
+                                "Profil nazewnictwa (*.rx-naming.json)|*.rx-naming.json|JSON (*.json)|*.json"),
+                title=tr("Load a naming profile", "Wczytaj profil nazewnictwa"))
+            if path:
+                try:
+                    profile = rx_naming_profiles.load_profile(path)
+                except NamingError as error:
+                    self._show_error(_error_text(error))
+                else:
+                    self._use_profile(profile, path)
+            self._fill_profiles()
+            return
+        if tag == "none":
+            self._naming.update(selected="none", profile=None)
+        elif tag == "default":
+            self._naming.update(selected="default", profile=rx_naming_profiles.default_profile())
+        else:
+            try:
+                self._naming.update(selected=tag, profile=rx_naming_profiles.load_profile(tag))
+            except NamingError as error:
+                self._show_error(_error_text(error))
+                self._naming.update(selected="default", profile=rx_naming_profiles.default_profile())
+        self._fill_profiles()
+        self._remember_naming()
+
+    def _use_profile(self, profile, path):
+        """Select a saved profile and keep it in the dropdown (one entry per path)."""
+        profiles = [p for p in self._naming["profiles"] if p["path"] != path]
+        profiles.append({"name": profile["name"] or os.path.basename(path), "path": path})
+        self._naming.update(selected=path, profile=profile, profiles=profiles)
+        self._remember_naming()
+
+    @_guarded
+    def _on_edit_profile(self, sender, args):
+        from rx_export_naming_ui import NamingWindow
+        selected = self._naming["selected"]
+        path = selected if selected not in ("none", "default") else None
+        catalog = read_catalog(os.path.join(os.path.dirname(self._prefs_path or ""),
+                                            "property-catalog.json"))
+        dialog = NamingWindow(self._naming["profile"], path, catalog, _sample_values())
+        try:
+            dialog.Owner = self
+        except Exception:
+            pass
+        dialog.ShowDialog()
+        if dialog.result:
+            self._use_profile(dialog.result["profile"], dialog.result["path"])
+            self._fill_profiles()
 
     def _brush(self, key):
         try:
@@ -838,96 +901,22 @@ class ModelWindow(forms.WPFWindow):
         except Exception:
             return None
 
-    @_guarded
-    def _on_name_text(self, sender, args):
-        self._name_template = self.name_template_tb.Text or ""
-        self._show_name_example()
-
-    @_guarded
-    def _on_name_lost(self, sender, args):
-        self._persist()
-
-    def _reset_combo(self, combo, caption_key):
-        """Back to no selection, with its caption showing again (a read-only editable combo
-        shows its Text, which a pick replaces)."""
-        combo.SelectedIndex = -1
-        try:
-            combo.Text = self.Resources[caption_key]
-        except Exception:
-            pass
-
-    def _insert_in_template(self, text, caret_back=0):
-        box = self.name_template_tb
-        current = box.Text or ""
-        start = max(0, min(len(current), int(box.SelectionStart)))
-        length = max(0, int(box.SelectionLength))
-        self._set_template(current[:start] + text + current[start + length:])
-        box.CaretIndex = start + len(text) - caret_back
-        box.Focus()
-
-    def _set_template(self, text):
-        """Put a template into the field. Real WPF raises TextChanged for it; setting the value
-        here too keeps the state right whether or not the event runs first."""
-        self._name_template = text
-        self.name_template_tb.Text = text
-        self._show_name_example()
-
-    @_guarded
-    def _on_name_preset(self, sender, args):
-        chosen = self.name_presets_cb.SelectedItem
-        if chosen is None:
-            return
-        self._set_template("%s" % (chosen,))
-        self._reset_combo(self.name_presets_cb, "names_presets")
-        self._persist()
-
-    @_guarded
-    def _on_name_token(self, sender, args):
-        chosen = self.name_token_cb.SelectedItem
-        if chosen is None:
-            return
-        tag = "%s" % (chosen.Tag,)
-        self._reset_combo(self.name_token_cb, "names_tokens")
-        if tag == "param":
-            self._insert_in_template("{param:}", caret_back=1)     # the caret lands inside
-        else:
-            self._insert_in_template("{%s}" % tag)
-
-    @_guarded
-    def _on_name_clear(self, sender, args):
-        self._set_template("")
-        self._persist()
-
-    @_guarded
-    def _on_name_split(self, sender, args):
-        self._name_split = bool(self.name_split_cb.IsChecked)
-        self._persist()
-
     def _with_naming(self, jobs):
-        """Copies of the jobs that carry the file-name template when one is set (and the
-        feature is on). The jobs the window keeps for a retry stay as they were, so a later
-        retry uses the template of that moment."""
-        template = self._name_template.strip()
-        if not rx_export_logic.NAMED_COPIES_READY or not template:
+        """Copies of the jobs that carry the chosen profile's templates (none chosen or the
+        feature off: the jobs as they are). The jobs the window keeps for a retry stay as they
+        were, so a later retry uses the profile of that moment."""
+        profile = self._naming.get("profile")
+        if not rx_export_logic.NAMED_COPIES_READY or not profile:
             return jobs
+        naming = {"templates": {"view": to_template(profile["views"], profile["separator"]),
+                                "sheet": to_template(profile["sheets"], profile["separator"])},
+                  "split": profile["split_by_format"] is True}
         named = []
         for job in jobs:
             copy = dict(job)
-            copy["naming"] = {"template": template, "split": bool(self._name_split)}
+            copy["naming"] = dict(naming)
             named.append(copy)
         return named
-
-    def _name_template_ok(self):
-        """False (with the reason on the error line) when the template is not valid. Off until
-        the feature is ready."""
-        if not rx_export_logic.NAMED_COPIES_READY or not self._name_template.strip():
-            return True
-        try:
-            parse_template(self._name_template)
-        except NamingError as error:
-            self._show_error(_error_text(error))
-            return False
-        return True
 
     def _persist(self, values=None):
         if values is None:
@@ -1033,8 +1022,6 @@ class ModelWindow(forms.WPFWindow):
             return                      # a second click while the hand-over runs
         models = self._ticked()
         if not models:
-            return
-        if not self._name_template_ok():
             return
         if self._source == "cloud":
             self._export_cloud(models)

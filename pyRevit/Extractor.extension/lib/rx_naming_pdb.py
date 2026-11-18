@@ -53,6 +53,8 @@ ALIASES = OrderedDict([
     ("DesignedBy", ["Designed By"]),
     ("ApprovedBy", ["Approved By"]),
     ("ViewName", ["View Name"]),
+    # "Family" is a guess (the property of a view's type); check it against a real export
+    ("ViewFamily", ["Family"]),
     ("TitleOnSheet", ["Title on Sheet"]),
     ("Scale", ["Scale Value    1:"]),   # the number (100); "View Scale" is the text " 1 : 100"
     ("DetailLevel", ["Detail Level"]),
@@ -65,8 +67,8 @@ ALIASES = OrderedDict([
 _SHEET_TOKENS = ("SheetNumber", "SheetName", "CurrentRevision", "CurrentRevisionDate",
                  "CurrentRevisionDescription", "SheetIssueDate", "DrawnBy", "CheckedBy",
                  "DesignedBy", "ApprovedBy")
-_VIEW_TOKENS = ("ViewName", "TitleOnSheet", "Scale", "DetailLevel", "Discipline", "Phase",
-                "ViewTemplate", "ViewSheetNumber")
+_VIEW_TOKENS = ("ViewName", "ViewFamily", "TitleOnSheet", "Scale", "DetailLevel", "Discipline",
+                "Phase", "ViewTemplate", "ViewSheetNumber")
 _KIND_TOKENS = {"sheet": _SHEET_TOKENS, "view": _VIEW_TOKENS,
                 None: _SHEET_TOKENS + _VIEW_TOKENS[:-1]}
 # BuiltInCategory OST_Sheets / OST_Views: language-neutral, unlike the category name
