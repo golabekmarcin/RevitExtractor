@@ -15,7 +15,7 @@ The Extractor names its own files (sheet PDFs come out as `<Sheet Number> - <She
 | IFC | every `*.ifc` under `output\` (one per model) | `named\<name>.ifc` |
 | 3D view (SVF), 2D F2D | the view folder: the outermost folder named by the viewable GUID that holds the `*.svf`/`*.f2d`; with no GUID folder, the folder of the `*.svf`/`*.f2d` | `named\<name>\` holds the whole subtree as links, with file names inside unchanged |
 
-- `named\` is **flat**: no subfolders per kind, except the 3D view folders themselves.
+- `named\` is **flat** by default. Owner decision 2026-11-18: splitting per format is **optional** (setting `name_split_by_format`, off by default): then `named\PDF\`, `named\DWG\`, `named\IFC\`, `namedD\` (the 3D view folders, and the 2D F2D folders) hold the entries; the clash numbering is per folder.
 - Excluded: `bubble.json`, `Resource\objects_*`, `model.sdb`, `AECModelData.json`, thumbnails outside a view folder, logs.
 - A view folder that holds more than one `*.svf`/`*.f2d` (shared by several views) is skipped with a note.
 - Not in scope:
@@ -45,10 +45,11 @@ The Extractor names its own files (sheet PDFs come out as `<Sheet Number> - <She
 | `ViewSheetNumber` | `ParameterTypeId.ViewerSheetNumber`: the sheet a view is placed on |
 | `ElementId` | the sheet's or view's ElementId (`rx_capabilities.element_id_value`) |
 | `{param:X}` | an instance parameter of the sheet or view whose definition name is `X` and that is not built in |
-| `Year`, `Year2`, `Month`, `Day`, `Hour`, `Minute`, `Second` | the job's start time (the same time as the run folder name), zero-padded to 2 digits (`Year` has 4) |
-| `Date`, `DateShort`, `DateLong` | `2026-11-18`, `20261118`, `18 November 2026` / `18 listopada 2026` (month names in pyRevit's language) |
+| `Year`, `Year2`, `Month`, `Day`, `Hour`, `Minute`, `Second` | the moment the export was submitted, zero-padded to 2 digits (`Year` has 4) |
+| `Date` | `2026-11-18` (ISO, sortable) |
+| `DateShort`, `DateLong` | the **Windows regional settings** (owner decision 2026-11-18): .NET `DateTime.ToString("d")` / `ToString("D")` in the current culture, computed by `script.py` at submit time and passed in; then cleaned like any name (`/` and `:` become `_`) |
 | `ModelName` | the model's file name without `.rvt` (for Cloud, the real name, never a GUID) |
-| `WindowsUser`, `RevitUser` | `USERNAME` and `Application.Username`, captured when the job is submitted |
+| `WindowsUser`, `RevitUser` | `USERNAME` and `Application.Username`, captured when the job is submitted (every system token is captured at that one moment) |
 | `OriginalName` | the Extractor's own stem, or the folder name for a 3D view folder |
 
 Presets, shown in the editable list: `{SheetNumber}`, `{SheetNumber} - {SheetName}`, `{SheetNumber}_{CurrentRevision}`, `{ModelName} - {SheetNumber} - {SheetName}`, `{Date} {OriginalName}`.
@@ -250,9 +251,9 @@ Checked with `revit-api` on 2026-11-18 in revisions 2022 (CHM `b8ee0868071c9e79â
 
 ## Open questions for the owner (recommended answer first)
 
-1. Extend the probe before the owner runs it (does `viewableID` equal the property-database id; where do PDF, DWG and SVF files sit; does each SVF folder hold one view)? Recommended: yes (Task 0 of the plan).
-2. Default-scope exports need sheet values from somewhere. If the property database (source A) is ruled out, open each model in the background at Export to read parameters (B2)? Recommended: yes, but only when the template uses a sheet or view token.
-3. Hard links share content with `output\`: editing a named PDF in place changes the original. Warning only, or a `named_hardlinks: false` preference that copies? Recommended: warning only for now.
-4. `named\` flat, or a subfolder per kind? Recommended: flat.
-5. Name only `ok` exports, or also a `failed` one that left files? Recommended: `ok` only.
-6. Date formats `{Date}` 2026-11-18, `{DateShort}` 20261118, `{DateLong}` "18 November 2026" / "18 listopada 2026", from the export's start time? Recommended: yes.
+1. Extend the probe before the owner runs it. **Answered yes; done (4434a98).**
+2. Default-scope exports need sheet values from somewhere. If the property database (source A) is ruled out, open each model in the background at Export to read parameters (B2)? **Answered ok (only when the template uses a sheet or view token).**
+3. **Open (owner, 2026-11-18):** the owner fears the size of duplicated exports (2000 DWG sheets, several GB) and suggests renaming the originals in `output\` and patching `bubble.json` so the Analyzer shows the new names. Hard links take no extra disk space (a second name for the same data), so `named\` costs listing entries, not gigabytes, unless a link falls back to a copy. In-place renaming is a different design: it changes the export the Analyzer reads and needs to know every place `bubble.json` and the viewer refer to a file name (probe), cannot be undone, and an interruption leaves a half-renamed export. Recommended: keep `named\` as the default and build in-place renaming only as an explicit option after the probe, if it is still wanted. Waiting for the owner.
+4. `named\` flat, or a subfolder per kind? **Answered: optional split per format (default flat).**
+5. Name only `ok` exports, or also a `failed` one that left files? **Answered: `ok` only.**
+6. Date formats? **Answered: as the Windows formatting (regional) settings; `{Date}` stays ISO.**
