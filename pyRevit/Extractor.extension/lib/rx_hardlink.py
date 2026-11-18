@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""NTFS hard links for staging cloud models without copying them (experimental, opt-in).
+"""NTFS hard links for staging cloud models without copying them (on by default; H8 passed 2026-11-18).
 
 No Revit, .NET or clr import. Compatible with pyRevit IronPython 2.7, which has no os.link:
 there the link is made with kernel32.CreateHardLinkW through ctypes (no admin rights needed).
@@ -15,8 +15,9 @@ PREFERENCE_KEY = "cloud_hardlinks"
 
 
 def hardlinks_enabled(preferences):
-    """True only when the preferences dict says cloud_hardlinks is exactly true."""
-    return isinstance(preferences, dict) and preferences.get(PREFERENCE_KEY) is True
+    """True unless the preferences dict says cloud_hardlinks is exactly false. A missing or
+    unreadable preferences file means on: a link that cannot be made falls back to a copy."""
+    return not (isinstance(preferences, dict) and preferences.get(PREFERENCE_KEY) is False)
 
 
 def make_hard_link(source, link_path, os_link=getattr(os, "link", None), kernel32=None):

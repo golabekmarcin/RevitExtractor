@@ -77,6 +77,9 @@ _CMD_ARGUMENTS = (
 
 _SUMMARY_RE = re.compile(r"Success Jobs:\s*(\d+), Failed Jobs:\s*(\d+)", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"^[0-9a-f]{8}\Z")
+_RUN_NAME_RE = re.compile(r"^export-\d{8}-\d{6}-[0-9a-f]{8}\Z")
+ORPHAN_MAX_AGE_SECONDS = 24 * 3600   # an older run folder is not "still going"
+ORPHAN_MATCH_SECONDS = 120           # console.log is created when its Extractor starts
 _ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])")
 _NOISE = ("mesh number larger than 64k", "dsm_internalerrormessage")
 _PROGRESS_TAIL_BYTES = 65536
@@ -162,6 +165,62 @@ def plan_run(output_parent, now, token):
                     journals=os.path.join(root, "journals"),
                     console=os.path.join(root, "console.log"),
                     stderr=os.path.join(root, "stderr.log"))
+
+
+def run_paths_for(root):
+    """The RunPaths of an existing run folder (the names plan_run gives). Touches nothing."""
+    return RunPaths(root=root, index=os.path.join(root, "index.json"),
+                    output=os.path.join(root, "output"), logs=os.path.join(root, "logs"),
+                    journals=os.path.join(root, "journals"),
+                    console=os.path.join(root, "console.log"),
+                    stderr=os.path.join(root, "stderr.log"))
+
+
+def is_run_folder_name(name):
+    return bool(isinstance(name, _TEXT_TYPES) and _RUN_NAME_RE.match(name))
+
+
+def file_created(path):
+    """When the file was created, epoch seconds (the .NET creation time under IronPython;
+    os.stat elsewhere)."""
+    try:
+        return DotNetStarter.file_created(path)
+    except ImportError:     # no .NET here (the unit tests)
+        return os.stat(path).st_ctime
+
+
+def find_orphan_run(output_parent, now, process_starts, listdir=os.listdir, stat=os.stat,
+                    isfile=os.path.isfile, created=file_created):
+    """RunPaths of the run folder under `output_parent` that belongs to an Extractor still
+    running: a run folder name, console.log written within the last day (`now` is epoch
+    seconds), no output\\bubble.json yet, and console.log created within a couple of minutes of
+    the start of one of the running RevitExtractor.exe (`process_starts`, epoch seconds; the
+    runner starts the Extractor right when cmd.exe opens console.log). The newest such folder
+    wins. None when there is none, no process start is known, or anything cannot be read.
+    Read-only."""
+    if not process_starts:
+        return None
+    try:
+        names = [name for name in listdir(clean_path(output_parent)) if is_run_folder_name(name)]
+    except Exception:
+        return None
+    best = None
+    for name in names:
+        paths = run_paths_for(os.path.join(clean_path(output_parent), name))
+        try:
+            written = stat(paths.console).st_mtime
+            if isfile(os.path.join(paths.output, "bubble.json")):
+                continue
+            began = created(paths.console)
+            if not any(abs(began - start) <= ORPHAN_MATCH_SECONDS for start in process_starts):
+                continue
+        except Exception:
+            continue
+        if now - written > ORPHAN_MAX_AGE_SECONDS:
+            continue
+        if best is None or written > best[0]:
+            best = (written, paths)
+    return best[1] if best else None
 
 
 def prepare_run(paths, index):
@@ -445,6 +504,7 @@ class Job(object):
         self.stage_modes = {}       # item name -> "linked" | "copied", as each item finishes
         self.cleanup = None         # None | "pending" | "done" | "incomplete"
         self.cleanup_error = None   # type name and error code of the last failed delete
+        self.foreign = False        # a run an earlier Revit session started: shown, never controlled
 
     def as_dict(self):
         return {
@@ -461,7 +521,7 @@ class Job(object):
             "staged_model": self.staged_model, "stage_done": self.stage_done,
             "stage_total": self.stage_total, "stage_ready": self.stage_ready,
             "stage_modes": dict(self.stage_modes),
-            "cleanup": self.cleanup, "cleanup_error": self.cleanup_error,
+            "cleanup": self.cleanup, "cleanup_error": self.cleanup_error, "foreign": self.foreign,
         }
 
 
@@ -567,6 +627,28 @@ class Queue(object):
     def jobs(self):
         return list(self._jobs)
 
+    def adopt_run(self, paths, running=None):
+        """Show a run folder an earlier Revit session started that still goes on. It is only
+        watched: never started again, never cancelled from here, and it ends when no Extractor
+        runs any more (`running()`, default hold(): is any RevitExtractor.exe running). Its
+        result comes from the run folder like any other job. Returns the job id; adopting the
+        same folder twice returns the first id.
+        """
+        for known in self._jobs:
+            if known.foreign and known.paths is not None and known.paths.root == paths.root:
+                return known.id
+        running = running or self._hold or (lambda: True)
+        job = Job(paths.root, None, None, None)
+        self._counter += 1
+        job.id = "job-%d" % self._counter
+        job.foreign = True
+        job.state = RUNNING
+        job.paths = paths
+        job.queued_at = job.started_at = self._clock()
+        self._jobs.append(job)
+        self._handles[job.id] = _ForeignHandle(running)
+        return job.id
+
     def clear_finished(self):
         """Forget every finished job (OK, FAILED, CANCELLED); queued and running jobs keep their
         order and ids, and ids are never reused. Touches nothing on disk (a pending deletion of
@@ -665,7 +747,9 @@ class Queue(object):
             pass
 
     def _running_count(self):
-        return len([job for job in self._jobs if job.state == RUNNING])
+        """Jobs of this queue that run (a foreign run is not ours: hold() keeps the queue waiting
+        for it, like for any other Extractor)."""
+        return len([job for job in self._jobs if job.state == RUNNING and not job.foreign])
 
     def _slots_used(self):
         """Running and staging jobs: a staging job will run next, so it takes a slot."""
@@ -956,6 +1040,15 @@ class Queue(object):
         result = check_result(job.exit_code, _read_text(job.paths.console),
                               os.path.isfile(os.path.join(output, "bubble.json")),
                               os.path.isdir(os.path.join(output, "Resource")))
+        if job.foreign and result.state == OK and result.success_jobs is None:
+            # the real exit code of a process this session did not start is unknown: only a
+            # "Success Jobs" line in console.log counts as proof
+            result = Result(FAILED, None, None, tr(
+                "The result of this export could not be confirmed: it ended in an earlier Revit "
+                "session and console.log has no 'Success Jobs' line. Check the run folder.",
+                "Nie można potwierdzić wyniku tego eksportu: zakończył się we wcześniejszej "
+                "sesji Revita, a console.log nie ma wiersza 'Success Jobs'. Sprawdź folder "
+                "eksportu."))
         if job.cancel_requested:
             job.state = CANCELLED
             job.result = Result(CANCELLED, result.success_jobs, result.failed_jobs,
@@ -991,7 +1084,7 @@ class Queue(object):
         """Queued: never starts. Staging: the copy stops and its copies are deleted; no process
         is started. Running: kill the tree once. Returns True if it acted."""
         job = self._find(job_id)
-        if job is None:
+        if job is None or job.foreign:     # a foreign run is never ended from here
             return False
         if job.state == QUEUED:
             job.state = CANCELLED
@@ -1070,6 +1163,27 @@ def _with_message(result, extra):
 
 # --- .NET -----------------------------------------------------------------------------------
 
+class _ForeignHandle(object):
+    """Stands for the process of a foreign run: gone when no Extractor runs any more."""
+
+    pid = None
+
+    def __init__(self, running):
+        self._running = running
+
+    def has_exited(self):
+        try:
+            return not self._running()
+        except Exception:
+            return False
+
+    def exit_code(self):
+        return 0 if self.has_exited() else None
+
+    def close(self):
+        pass
+
+
 class _DotNetHandle(object):
     def __init__(self, process):
         self._process = process
@@ -1129,6 +1243,28 @@ class DotNetStarter(object):
     def extractor_running(self):
         """True while any RevitExtractor.exe runs on this computer. Only lists; never ends one."""
         return self._any_running(("RevitExtractor",))
+
+    @staticmethod
+    def file_created(path):
+        """Creation time of a file, epoch seconds (ImportError when there is no .NET)."""
+        from System.IO import File
+        return (File.GetCreationTimeUtc(path).Ticks - 621355968000000000) / 10000000.0
+
+    def extractor_start_times(self):
+        """Start time (epoch seconds) of every RevitExtractor.exe that runs. Only lists."""
+        from System.Diagnostics import Process
+        starts = []
+        for process in Process.GetProcessesByName("RevitExtractor"):
+            try:
+                starts.append((process.StartTime.ToUniversalTime().Ticks - 621355968000000000)
+                              / 10000000.0)
+            except Exception:
+                pass
+            try:
+                process.Dispose()
+            except Exception:
+                pass
+        return starts
 
     def extractor_tree_running(self):
         """True while any RevitExtractor.exe or RevitExtractor_Client.exe runs on this computer.

@@ -22,7 +22,7 @@ from rx_hardlink import hardlinks_enabled, make_hard_link
 from rx_i18n import tr
 from rx_json import dumps_ascii
 from rx_runner import (CANCELLED, FAILED, OK, QUEUED, RUNNING, STAGING, Job, LaunchSpec,
-                       RunnerError, clean_path)
+                       RunnerError, clean_path, is_run_folder_name, run_paths_for)
 
 try:
     _TEXT_TYPES = (basestring,)  # IronPython 2.7
@@ -211,8 +211,9 @@ def hide_notice(path, read=_read_text, write=_write_text):
 
 def cloud_copier(path, read=_read_text):
     """The Queue's `copier` for cloud jobs. Each job reads the preference again, so changing
-    `cloud_hardlinks` in the preferences file needs no Revit restart. With it exactly true, a
-    cache file is hard-linked into <run>\\model instead of copied (a copy is the fallback)."""
+    `cloud_hardlinks` in the preferences file needs no Revit restart. A cache file is hard-linked
+    into <run>\\model instead of copied unless the preference is exactly false (a copy is the
+    fallback when a link cannot be made)."""
     def linking():
         return hardlinks_enabled(read_preferences(path, read))
 
@@ -401,6 +402,9 @@ def job_view(job, info, now, position, held=False):
     elif state == RUNNING:
         state_text = tr("Running", "Trwa")
         progress = _running_text(info)
+        if getattr(job, "foreign", False):
+            progress = tr("From an earlier Revit session; it cannot be cancelled here. ",
+                          "Z wcześniejszej sesji Revita; nie można go tu anulować. ") + progress
     elif state == OK:
         state_text = tr("Done", "Gotowe")
         progress = message
@@ -423,8 +427,8 @@ def job_view(job, info, now, position, held=False):
         "id": job.id, "state": state, "model": model,
         "model_path": model_path, "state_text": state_text, "progress": progress,
         "started": _clock_text(job.started_at), "time": elapsed,
-        "can_cancel": state in (QUEUED, STAGING) or (state == RUNNING
-                                                     and not job.cancel_requested),
+        "can_cancel": not getattr(job, "foreign", False) and (
+            state in (QUEUED, STAGING) or (state == RUNNING and not job.cancel_requested)),
         "can_open_folder": folder is not None,
         "can_open_analyzer": state == OK and output is not None,
         "folder": folder, "output": output,
@@ -672,8 +676,25 @@ class SessionCore(object):
             if self._listener is not None:
                 self._listener.on_show()
             return {"ok": True}
+        if op == "adopt":
+            return self._adopt(request.get("run_root"))
         raise _RequestError(tr("Unknown operation: {0}", "Nieznana operacja: {0}")
                             .format(json.dumps(op)))
+
+    def _adopt(self, run_root):
+        """Watch a run an earlier Revit session started (see Queue.adopt_run). Only a folder
+        with a run folder name is taken: {"ok", "adopted": job id}."""
+        root = _plain_absolute(run_root) if _is_text(run_root) else None
+        if root is None or not is_run_folder_name(os.path.basename(root)):
+            raise _RequestError(tr("That is not an export run folder.",
+                                   "To nie jest folder eksportu."))
+        job_id = self._queue.adopt_run(run_paths_for(root))
+        if self._listener is not None:
+            try:
+                self._listener.on_submit([job_id])
+            except Exception:
+                pass
+        return {"ok": True, "adopted": job_id}
 
     def _submit(self, jobs):
         if not isinstance(jobs, list) or not jobs:

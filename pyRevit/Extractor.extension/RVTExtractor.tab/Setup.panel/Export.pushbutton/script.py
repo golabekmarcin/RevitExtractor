@@ -13,6 +13,7 @@ from __future__ import unicode_literals
 import json
 import os
 import re
+import time
 
 from System import AppDomain, Environment
 from pyrevit import DB, HOST_APP, forms, script
@@ -29,7 +30,7 @@ from rx_export_logic import CONFIG_SECTION, load_settings, save_settings
 from rx_export_ui import ModelWindow
 from rx_i18n import tr
 from rx_json import dumps_ascii
-from rx_runner import DotNetStarter, extractor_exe
+from rx_runner import DotNetStarter, extractor_exe, find_orphan_run
 from rx_status import find_session
 from rx_status_ui import open_session
 
@@ -81,6 +82,27 @@ def _orphan_extractor_running(domain):
         if find_session(domain) is not None:
             return False
         return bool(DotNetStarter().extractor_running())
+    except Exception:
+        return False
+
+
+def _adopt_orphan(settings):
+    """Put the export an earlier Revit session left running into this session's status window
+    (watched only). True when it was found and shown; any failure is false."""
+    try:
+        try:
+            starts = DotNetStarter().extractor_start_times()
+        except Exception:
+            starts = []    # unknown: nothing is adopted
+        run = find_orphan_run(settings["output_parent"], time.time(), starts)
+        if run is None:
+            return False
+        handler = open_session(settings["max_parallel"])
+        answer = json.loads(handler(dumps_ascii({"op": "adopt", "run_root": run.root})))
+        if not isinstance(answer, dict) or answer.get("ok") is not True:
+            return False
+        _show_session()
+        return True
     except Exception:
         return False
 
@@ -183,12 +205,7 @@ def main():
                .format(_error_text(error)))
         return
 
-    if _orphan_extractor_running(AppDomain.CurrentDomain):
-        _alert(tr("An export from an earlier Revit session is still running on this computer. "
-                  "It is not listed in the status window. Exports you queue now will start when "
-                  "it has finished.",
-                  "Eksport z wcześniejszej sesji Revita nadal działa na tym komputerze. Nie ma "
-                  "go w oknie statusu. Eksporty dodane teraz ruszą po jego zakończeniu."))
+    orphan = _orphan_extractor_running(AppDomain.CurrentDomain)
 
     config = script.get_config(CONFIG_SECTION)
     appdata = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
@@ -202,6 +219,13 @@ def main():
     except Exception as error:
         _alert(_error_text(error))
         return
+    if orphan and not _adopt_orphan(settings):
+        # not found in the output folder: say so, the status window cannot show it
+        _alert(tr("An export from an earlier Revit session is still running on this computer. "
+                  "It is not listed in the status window. Exports you queue now will start when "
+                  "it has finished.",
+                  "Eksport z wcześniejszej sesji Revita nadal działa na tym komputerze. Nie ma "
+                  "go w oknie statusu. Eksporty dodane teraz ruszą po jego zakończeniu."))
     cache = rx_catalog.Cache(os.path.join(appdata, CACHE_FOLDER, CACHE_FILE)).load()
 
     def read_info(path):

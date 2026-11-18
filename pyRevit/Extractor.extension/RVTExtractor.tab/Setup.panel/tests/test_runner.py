@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -790,8 +791,9 @@ class Guards(unittest.TestCase):
                 self.assertNotIn(name.split(".")[0], BANNED_TOP, name)
 
     def test_system_diagnostics_only_inside_dotnetstarter(self):
-        # .NET only in DotNetStarter (System.Diagnostics) and MachineRunLock (the run mutex).
-        allowed = {"DotNetStarter": {"System.Diagnostics"},
+        # .NET only in DotNetStarter (System.Diagnostics; System.IO for a file's creation time)
+        # and MachineRunLock (the run mutex).
+        allowed = {"DotNetStarter": {"System.Diagnostics", "System.IO"},
                    "MachineRunLock": {"System", "System.Threading"}}
         owners = {}
         for node in self.tree.body:
@@ -958,6 +960,114 @@ class DotNetStarterTest(TempDirTest):
 
 
 # --- status-window amendments (specs/SPEC-status-window.md, criterion 12) ------------------
+
+class OrphanRunTest(QueueTest):
+    """A run an earlier Revit session left going: found in the output folder, then only watched."""
+
+    def run_folder(self, name, console=True, done=False, age=0):
+        root = os.path.join(self.out, name)
+        os.makedirs(os.path.join(root, "output"))
+        if done:
+            open(os.path.join(root, "output", "bubble.json"), "w").close()
+        if console:
+            path = os.path.join(root, "console.log")
+            open(path, "w").close()
+            when = time.time() - age
+            os.utime(path, (when, when))
+        return root
+
+    @staticmethod
+    def began(path):
+        return os.stat(path).st_mtime       # the tests set mtime; it stands for the creation time
+
+    def find(self, starts, parent=None):
+        return rx_runner.find_orphan_run(parent or self.out, time.time(), starts, created=self.began)
+
+    def test_the_newest_unfinished_run_is_found(self):
+        self.run_folder("export-20261118-100000-aaaaaaaa", age=3000)
+        newest = self.run_folder("export-20261118-110000-bbbbbbbb", age=10)
+        self.run_folder("export-20261118-120000-cccccccc", done=True, age=1)       # finished
+        self.run_folder("export-20261117-090000-dddddddd", age=3 * 86400)           # a day old
+        self.run_folder("not-a-run", age=1)
+        self.run_folder("export-20261118-130000-eeeeeeee", console=False)           # never started
+        found = self.find([time.time() - 10, time.time() - 3000])
+        self.assertEqual(found.root, newest)
+        self.assertEqual(found.console, os.path.join(newest, "console.log"))
+
+    def test_nothing_found_is_none_and_never_raises(self):
+        starts = [time.time()]
+        self.assertIsNone(self.find(starts, os.path.join(self.tmp, "missing")))
+        self.assertIsNone(self.find(starts, ""))
+        self.assertIsNone(self.find(starts, None))
+        os.makedirs(self.out)
+        self.assertIsNone(self.find(starts))
+
+    def test_a_run_is_matched_to_the_running_extractor_not_just_to_a_recent_log(self):
+        self.run_folder("export-20261118-110000-bbbbbbbb", age=600)   # a failed run of today
+        self.assertIsNone(self.find([time.time() - 5]), "the process started long after that log")
+        self.assertIsNone(self.find([]), "no process start known: nothing is adopted")
+        self.assertIsNone(self.find(None))
+        self.assertIsNotNone(self.find([time.time() - 600 + 30]), "started within two minutes of it")
+
+    def test_an_adopted_run_is_shown_watched_never_controlled(self):
+        root = self.run_folder("export-20261118-110000-bbbbbbbb", age=5)
+        paths = rx_runner.run_paths_for(root)
+        running = Hold(True)
+        queue = self.queue()
+        job_id = queue.adopt_run(paths, running=running)
+        job = self.job(queue, job_id)
+        self.assertEqual((job.state, job.foreign), ("running", True))
+        self.assertEqual(queue.adopt_run(paths, running=running), job_id, "the same folder once")
+        self.assertTrue(queue.busy())
+        self.assertFalse(queue.cancel(job_id), "never ended from here")
+        self.assertEqual(self.starter.killed, [])
+        queue.poll()
+        self.assertEqual(self.job(queue, job_id).state, "running")
+
+    def test_the_queue_waits_for_an_adopted_run_and_it_ends_when_no_extractor_runs(self):
+        root = self.run_folder("export-20261118-110000-bbbbbbbb", age=5)
+        running = Hold(True)
+        queue = Queue(self.starter, FakeClock(), system_root=SYSTEM_ROOT,
+                      token=lambda: next(self.tokens), hold=running)
+        adopted = queue.adopt_run(rx_runner.run_paths_for(root), running=running)
+        queued = self.add(queue, "a")
+        queue.poll()
+        self.assertEqual(self.job(queue, queued).state, "queued", "one Extractor at a time")
+        self.assertEqual(self.starter.started, [])    # its slot is taken, not only held
+        running.value = False
+        open(os.path.join(root, "output", "bubble.json"), "w").close()
+        os.makedirs(os.path.join(root, "output", "Resource"))
+        with open(os.path.join(root, "console.log"), "w") as handle:
+            handle.write(SUMMARY_OK)
+        queue.poll()
+        self.assertEqual(self.job(queue, adopted).state, "ok")
+        queue.poll()
+        self.assertEqual(self.job(queue, queued).state, "running", "the queue goes on after it")
+
+    def test_an_adopted_run_without_a_success_line_is_not_reported_as_done(self):
+        root = self.run_folder("export-20261118-110000-bbbbbbbb", age=5)
+        open(os.path.join(root, "output", "bubble.json"), "w").close()
+        os.makedirs(os.path.join(root, "output", "Resource"))
+        running = Hold(True)
+        queue = self.queue()
+        job_id = queue.adopt_run(rx_runner.run_paths_for(root), running=running)
+        running.value = False
+        queue.poll()
+        job = self.job(queue, job_id)
+        self.assertEqual(job.state, "failed", "its real exit code is unknown")
+        self.assertIn("could not be confirmed", job.result.message)
+
+    def test_an_adopted_run_that_ends_without_output_is_a_failure(self):
+        root = self.run_folder("export-20261118-110000-bbbbbbbb", age=5)
+        running = Hold(True)
+        queue = self.queue()
+        job_id = queue.adopt_run(rx_runner.run_paths_for(root), running=running)
+        running.value = False
+        queue.poll()
+        job = self.job(queue, job_id)
+        self.assertEqual(job.state, "failed")
+        self.assertIn("incomplete", job.result.message)
+
 
 class Hold(object):
     """hold() stand-in: answers from `value`, counts calls, can raise."""

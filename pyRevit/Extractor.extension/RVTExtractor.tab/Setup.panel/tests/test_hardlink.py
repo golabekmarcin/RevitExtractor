@@ -22,10 +22,11 @@ from test_cloud_stage import CHUNK, StageCase, facts  # noqa: E402
 
 
 class MakeHardLink(unittest.TestCase):
-    def test_enabled_only_for_exactly_true(self):
-        self.assertTrue(rx_hardlink.hardlinks_enabled({"cloud_hardlinks": True}))
-        for bad in ({}, {"cloud_hardlinks": 1}, {"cloud_hardlinks": "true"}, None, [], "x"):
-            self.assertFalse(rx_hardlink.hardlinks_enabled(bad))
+    def test_enabled_unless_exactly_false(self):
+        self.assertFalse(rx_hardlink.hardlinks_enabled({"cloud_hardlinks": False}))
+        for on in ({}, {"cloud_hardlinks": True}, {"cloud_hardlinks": 0}, {"cloud_hardlinks": "false"},
+                   None, [], "x"):
+            self.assertTrue(rx_hardlink.hardlinks_enabled(on), on)
 
     def test_uses_os_link_when_present(self):
         calls = []
@@ -158,26 +159,36 @@ class CloudCopier(WritablePlan, StageCase):
         list(copier(plan, self.dest, CHUNK))
         self.assertEqual(os.stat(plan.items[0].src).st_nlink, 2)
 
-    def test_preference_missing_or_false_copies(self):
-        for number, data in enumerate(({}, {"cloud_hardlinks": False}, {"cloud_hardlinks": "yes"})):
-            plan = self.two_item_plan()
+    def test_preference_false_copies(self):
+        plan = self.writable_plan()
+        copier = rx_status.cloud_copier(self.prefs({"cloud_hardlinks": False}))
+        list(copier(plan, self.dest, CHUNK))
+        self.assertEqual(os.stat(plan.items[0].src).st_nlink, 1)
+        self.assertFalse(copier.linking())
+
+    def test_missing_or_other_preference_links_by_default(self):
+        for number, data in enumerate(({}, {"cloud_hardlinks": "no"}, {"other": 1})):
+            plan = self.writable_plan()
             copier = rx_status.cloud_copier(self.prefs(data))
             dest = os.path.join(self.tmp, "run-%d" % number, "model")
             list(copier(plan, dest, CHUNK))
-            self.assertEqual(os.stat(plan.items[0].src).st_nlink, 1)
+            self.assertEqual(os.stat(plan.items[0].src).st_nlink, 2, data)
+            self.assertTrue(copier.linking())
+            for item in plan.items:     # reset the file for the next round
+                os.remove(os.path.join(dest, item.name))
 
-    def test_missing_file_copies(self):
-        plan = self.two_item_plan()
+    def test_missing_preferences_file_links(self):
+        plan = self.writable_plan()
         list(rx_status.cloud_copier(os.path.join(self.tmp, "nope.json"))(plan, self.dest, CHUNK))
-        self.assertEqual(os.stat(plan.items[0].src).st_nlink, 1)
+        self.assertEqual(os.stat(plan.items[0].src).st_nlink, 2)
 
     def test_preference_is_read_for_every_job(self):
-        path = self.prefs({})
+        path = self.prefs({"cloud_hardlinks": False})
         copier = rx_status.cloud_copier(path)
         plan = self.writable_plan()
         list(copier(plan, os.path.join(self.tmp, "run-a", "model"), CHUNK))
         self.assertEqual(os.stat(plan.items[0].src).st_nlink, 1)
-        self.prefs({"cloud_hardlinks": True})
+        self.prefs({})
         list(copier(plan, os.path.join(self.tmp, "run-b", "model"), CHUNK))
         self.assertEqual(os.stat(plan.items[0].src).st_nlink, 2)
 

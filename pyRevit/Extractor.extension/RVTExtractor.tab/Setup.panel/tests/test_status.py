@@ -460,6 +460,20 @@ class SessionCoreTest(unittest.TestCase):
         self.assertEqual(self.listener.shown, 1)
         self.assertIs(call(SessionCore(new_queue(), lambda: NOW), {"op": "show"})["ok"], True)
 
+    def test_adopt_watches_an_earlier_session_run_and_only_a_run_folder(self):
+        root = os.path.join(OUT, "export-20261118-110000-bbbbbbbb")
+        answer = call(self.core, {"op": "adopt", "run_root": root})
+        self.assertEqual((answer["ok"], answer["adopted"]), (True, "job-1"))
+        job = self.queue.jobs()[0]
+        self.assertTrue(job.foreign)
+        self.assertEqual(self.listener.submitted, [["job-1"]], "the window is told")
+        self.assertFalse(job_view(job, None, NOW, None)["can_cancel"])
+        self.assertIn("earlier Revit session", job_view(job, None, NOW, None)["progress"])
+        for bad in (os.path.join(OUT, "not-a-run"), "relative", "", None, 5):
+            answer = call(self.core, {"op": "adopt", "run_root": bad})
+            self.assertIs(answer["ok"], False, bad)
+        self.assertEqual(len(self.queue.jobs()), 1)
+
     def test_listener_failure_is_reported_not_raised(self):
         core = SessionCore(self.queue, lambda: NOW, Listener(fail=True))
         answer = call(core, {"op": "submit", "jobs": [job_data()]})

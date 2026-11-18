@@ -2336,6 +2336,28 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("earlier Revit session", self.alerts[0][0])
         self.assertEqual(len(FakeModelWindow.made), 1, "the window still opens")
 
+    def test_an_earlier_session_run_is_put_into_the_status_window(self):
+        run = types.SimpleNamespace(root=os.path.join(self.profile, "RevitExtractor",
+                                                      "export-20261118-110000-bbbbbbbb"))
+        self.domain = FakeDomain(self.handler)
+        with patch.object(self.module, "_orphan_extractor_running", Mock(return_value=True)),                 patch.object(self.module, "find_orphan_run", Mock(return_value=run)):
+            self.run_main()
+        self.assertEqual(self.alerts, [], "the status window shows it: no alert")
+        self.assertEqual(self.handler.ops(), ["adopt", "show"])
+        adopt = [r for r in self.handler.requests if r["op"] == "adopt"][0]
+        self.assertEqual(adopt["run_root"], run.root)
+        self.assertEqual(len(FakeModelWindow.made), 1, "the window still opens")
+
+    def test_a_run_that_cannot_be_found_or_adopted_still_gets_the_alert(self):
+        run = types.SimpleNamespace(root=os.path.join(self.profile, "x", "export-20261118-110000-bbbbbbbb"))
+        for found, answer in ((None, None), (run, {"ok": False, "error": "no"})):
+            self.alerts[:] = []
+            self.handler.answer = answer or self.handler.answer
+            with patch.object(self.module, "_orphan_extractor_running", Mock(return_value=True)),                     patch.object(self.module, "find_orphan_run", Mock(return_value=found)):
+                self.run_main()
+            self.assertEqual(len(self.alerts), 1, found)
+            self.assertIn("earlier Revit session", self.alerts[0][0])
+
     def test_orphan_check_needs_no_session_and_a_running_extractor(self):
         running = Mock(return_value=True)
         starter = types.SimpleNamespace(extractor_running=running)
