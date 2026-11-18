@@ -17,6 +17,8 @@ import json
 import os
 import re
 
+from rx_cloud_stage import copy_steps
+from rx_hardlink import hardlinks_enabled, make_hard_link
 from rx_i18n import tr
 from rx_json import dumps_ascii
 from rx_runner import (CANCELLED, FAILED, OK, QUEUED, RUNNING, STAGING, Job, LaunchSpec,
@@ -204,6 +206,16 @@ def hide_notice(path, read=_read_text, write=_write_text):
         return True
     except Exception:
         return False
+
+
+def cloud_copier(path, read=_read_text):
+    """The Queue's `copier` for cloud jobs. Each job reads the preference again, so changing
+    `cloud_hardlinks` in the preferences file needs no Revit restart. With it exactly true, a
+    cache file is hard-linked into <run>\\model instead of copied (a copy is the fallback)."""
+    def copier(plan, folder, chunk):
+        link = make_hard_link if hardlinks_enabled(read_preferences(path, read)) else None
+        return copy_steps(plan, folder, chunk=chunk, link=link)
+    return copier
 
 
 def _error_text(error):

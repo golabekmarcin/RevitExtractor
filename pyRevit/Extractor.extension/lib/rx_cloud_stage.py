@@ -149,11 +149,15 @@ def _matches(st, item):
     return st.st_size == item.size and abs(st.st_mtime - item.mtime) <= _MTIME_TOLERANCE
 
 
-def copy_steps(plan, dest_dir, chunk=CHUNK, open=io.open, stat=os.stat, create=_NewFile):
+def copy_steps(plan, dest_dir, chunk=CHUNK, open=io.open, stat=os.stat, create=_NewFile,
+               link=None):
     """Generator of (done_bytes, total_bytes, item): one step per chunk written, and one when an
     item is complete and checked. The plan's items are copied in order (host first) into the
     flat folder `dest_dir` (created when missing). StageError when the plan is invalid, a name
     is unsafe or clashes with a source, a destination exists, or a source changed.
+
+    `link(source, target)`, when given (rx_hardlink.make_hard_link), is tried first for each
+    item: a hard link is no copy and takes no time. When it raises, that item is copied.
     """
     items = _items(plan)
     chunk = max(1, int(chunk))
@@ -175,33 +179,44 @@ def copy_steps(plan, dest_dir, chunk=CHUNK, open=io.open, stat=os.stat, create=_
         if not os.path.isdir(dest_dir):
             os.makedirs(dest_dir)
         source = writer = None
-        created = finished = False
+        created = finished = linked = False
         try:
-            source = open(item.src, "rb")
-            try:
-                writer = create(target)
-            except EnvironmentError:    # OSError or IOError, depending on the runtime
-                if os.path.exists(target):
-                    raise _exists_error(item.name)
-                raise
-            created = True
-            copied = 0
-            while True:
-                data = source.read(chunk)
-                if not data:
-                    break
-                copied += len(data)
-                if copied > item.size:
+            if link is not None and not os.path.lexists(target):
+                try:
+                    link(item.src, target)
+                    linked = created = True
+                except Exception:   # not linkable here (other drive, no support): copy instead
+                    linked = False
+            if linked:
+                # the same file under a second name: its size and time are the source's own
+                if not _matches(stat(target), item) or not _matches(stat(item.src), item):
                     raise _changed()
-                writer.write(data)
-                if copied < item.size:
-                    yield done + copied, total, item
-            writer.close()
-            source.close()
-            if copied != item.size or stat(target).st_size != item.size:
-                raise _changed()
-            if not _matches(stat(item.src), item):
-                raise _changed()
+            else:
+                source = open(item.src, "rb")
+                try:
+                    writer = create(target)
+                except EnvironmentError:    # OSError or IOError, depending on the runtime
+                    if os.path.exists(target):
+                        raise _exists_error(item.name)
+                    raise
+                created = True
+                copied = 0
+                while True:
+                    data = source.read(chunk)
+                    if not data:
+                        break
+                    copied += len(data)
+                    if copied > item.size:
+                        raise _changed()
+                    writer.write(data)
+                    if copied < item.size:
+                        yield done + copied, total, item
+                writer.close()
+                source.close()
+                if copied != item.size or stat(target).st_size != item.size:
+                    raise _changed()
+                if not _matches(stat(item.src), item):
+                    raise _changed()
             finished = True
         finally:
             for handle in (writer, source):

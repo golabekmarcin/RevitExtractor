@@ -22,7 +22,7 @@ import rx_dotnet
 from rx_i18n import tr
 from rx_runner import (CANCELLED, FAILED, OK, QUEUED, RUNNING, STAGING, DotNetStarter,
                        MachineRunLock, Queue, effective_parallel)
-from rx_status import (WEBSITE_URL, SessionCore, analyzer_plan, explorer_arguments,
+from rx_status import (WEBSITE_URL, SessionCore, analyzer_plan, cloud_copier, explorer_arguments,
                        find_session, hide_notice, job_view, model_target, notice_hidden,
                        notice_resources, preferences_path, progress_info, publish_session,
                        queue_hint, resources, summary)
@@ -640,7 +640,8 @@ def open_session(max_parallel=1):
     clock = datetime.datetime.now
     queue = Queue(starter, clock, max_parallel=effective_parallel(max_parallel),
                   hold=starter.extractor_running, free_space=free_bytes,
-                  tree_running=starter.extractor_tree_running, lock=MachineRunLock())
+                  tree_running=starter.extractor_tree_running, lock=MachineRunLock(),
+                  copier=cloud_copier(_preferences_path()))
     timer = DispatcherTimer()
     timer.Interval = TimeSpan.FromSeconds(TICK_SECONDS)
     session = Session(queue, timer, clock, StatusWindow, starter)
