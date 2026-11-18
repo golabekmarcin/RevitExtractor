@@ -7,8 +7,10 @@ export const slash = value => value.split(path.sep).join('/');
 export const fileUrl = (id, relative) => `/files/${id}/${slash(relative).split('/').map(encodeURIComponent).join('/')}`;
 
 export async function inside(root, relative) {
-  const target = await fs.realpath(path.resolve(root, relative));
-  const rel = path.relative(root, target);
+  // Resolve both sides: a root reached through a junction or symlink must still match its targets.
+  const realRoot = await fs.realpath(root);
+  const target = await fs.realpath(path.resolve(realRoot, relative));
+  const rel = path.relative(realRoot, target);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error('Ścieżka poza wybranym folderem.');
   return target;
 }

@@ -75,11 +75,27 @@ def needed_bytes(plan):
     return 2 * sum(item.size for item in _items(plan))
 
 
-def check_space(plan, free_bytes):
+def _linkable(item, dest):
+    """True when a hard link to this source is possible: it is writable (read-only files are
+    always copied) and lies on the same drive as `dest`."""
+    try:
+        if _read_only(os.stat(item.src)):
+            return False
+    except OSError:
+        return False
+    return (not dest) or (os.path.splitdrive(os.path.abspath(item.src))[0].lower()
+                          == os.path.splitdrive(os.path.abspath(dest))[0].lower())
+
+
+def check_space(plan, free_bytes, links=False, dest=None):
     """Needed bytes, or StageError when they do not fit into `free_bytes`. None means the free
     space is unknown (the query failed): the copy goes ahead and fails on its own if the disk
-    fills up."""
+    fills up. With `links` (hard links are on) a file that can be linked needs no copy; read-only
+    files and files on another drive than `dest` are still copied, so they count in full."""
+    items = _items(plan)
     needed = needed_bytes(plan)
+    if links:
+        needed -= sum(item.size for item in items if _linkable(item, dest))
     if free_bytes is None:
         return needed
     free = _number(free_bytes)
@@ -149,8 +165,12 @@ def _matches(st, item):
     return st.st_size == item.size and abs(st.st_mtime - item.mtime) <= _MTIME_TOLERANCE
 
 
+def _read_only(st):
+    return not (st.st_mode & 0o200)     # Windows reports the read-only attribute this way
+
+
 def copy_steps(plan, dest_dir, chunk=CHUNK, open=io.open, stat=os.stat, create=_NewFile,
-               link=None):
+               link=None, report=None):
     """Generator of (done_bytes, total_bytes, item): one step per chunk written, and one when an
     item is complete and checked. The plan's items are copied in order (host first) into the
     flat folder `dest_dir` (created when missing). StageError when the plan is invalid, a name
@@ -181,7 +201,8 @@ def copy_steps(plan, dest_dir, chunk=CHUNK, open=io.open, stat=os.stat, create=_
         source = writer = None
         created = finished = linked = False
         try:
-            if link is not None and not os.path.lexists(target):
+            if (link is not None and not os.path.lexists(target)
+                    and not _read_only(stat(item.src))):
                 try:
                     link(item.src, target)
                     linked = created = True
@@ -218,6 +239,8 @@ def copy_steps(plan, dest_dir, chunk=CHUNK, open=io.open, stat=os.stat, create=_
                 if not _matches(stat(item.src), item):
                     raise _changed()
             finished = True
+            if report is not None:
+                report(item, "linked" if linked else "copied")
         finally:
             for handle in (writer, source):
                 if handle is not None:
@@ -232,3 +255,6 @@ def copy_steps(plan, dest_dir, chunk=CHUNK, open=io.open, stat=os.stat, create=_
                     pass
         done += item.size
         yield done, total, item
+
+
+copy_steps.accepts_report = True    # the Queue passes `report` only to copiers that say so

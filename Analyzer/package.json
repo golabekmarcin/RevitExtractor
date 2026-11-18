@@ -12,7 +12,7 @@
     "test": "node --test tests/*.test.mjs",
     "check": "node scripts/check.mjs",
     "build:pages": "node scripts/build-pages.mjs",
-    "test:pages": "node --test tests/pages.test.mjs tests/source-models.test.mjs tests/launcher.test.mjs"
+    "test:pages": "node --test tests/inside.test.mjs tests/pages.test.mjs tests/source-models.test.mjs tests/launcher.test.mjs"
   },
   "dependencies": {
     "pdfjs-dist": "6.4.299",

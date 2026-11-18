@@ -33,7 +33,7 @@ test('launcher defaults, custom index and cancellation never need a live Revit p
     const bad = path.join(root, 'bad.json'); await fs.writeFile(bad, '{broken');
     const schema = path.join(root, 'schema.json'); await fs.writeFile(schema, '{}');
 
-    async function run(name, args = '', answers = ['', 'T'], installationArgs = `-RevitDirectory ${quote(revit)}`, expectedRevit = revit, entrypoint = launcher) {
+    async function run(name, args = '', answers = ['', 'T'], installationArgs = `-RevitDirectory ${quote(revit)}`, expectedRevit = revit, entrypoint = launcher, language = 'pl') {
       const output = path.join(root, name);
       const wrapper = path.join(root, `${name}.ps1`);
       // Fake installation/version/process: the test must never execute Autodesk binaries.
@@ -87,7 +87,7 @@ function Start-Process {
   [IO.File]::WriteAllText($RedirectStandardError, '')
   return [pscustomobject]@{ExitCode=0}
 }
-& ${quote(entrypoint)} -ModelPath ${quote(model)} ${installationArgs} -OutputParent ${quote(output)} -NoPause ${args}
+& ${quote(entrypoint)} -ModelPath ${quote(model)} ${installationArgs} -OutputParent ${quote(output)} -NoPause ${language ? `-Language ${language}` : ''} ${args}
 exit $LASTEXITCODE
 `, 'utf8');
       const result = spawnSync(shell, ['-NoProfile', '-File', wrapper], { encoding: 'utf8', timeout: 30000 });
@@ -113,6 +113,12 @@ exit $LASTEXITCODE
     const [customName] = await fs.readdir(customRun.output);
     assert.deepEqual(await fs.readFile(path.join(customRun.output, customName, 'index.json')), customBytes);
     assert.deepEqual(await fs.readFile(custom), customBytes, 'Source index must not change');
+
+    // English is the default language; Polish only on request.
+    const english = await run('validate-english', '-ValidateOnly', [], undefined, revit, launcher, '');
+    assert.equal(english.status, 0, english.stdout + english.stderr);
+    assert.match(english.stdout, /Validation OK/);
+    assert.doesNotMatch(english.stdout, /Walidacja OK/);
 
     for (const [name, args, answers, expected] of [
       ['validate-default', '-ValidateOnly', [], 0],

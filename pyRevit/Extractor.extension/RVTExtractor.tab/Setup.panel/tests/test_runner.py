@@ -1647,6 +1647,56 @@ class QueueStagingTest(TempDirTest):
         queue.poll()
         self.assertEqual(self.job(queue, a).state, "ok")
 
+    def test_changed_cache_file_adds_a_warning_but_not_a_failure(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        info = os.stat(self.link)
+        os.utime(self.link, ns=(info.st_atime_ns, info.st_mtime_ns + 60 * 10 ** 9))   # as if Revit wrote
+        self.exit(job)
+        queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual(job.state, "ok")
+        self.assertIn("cache file(s) changed during the export: Alpha-Architecture.rvt",
+                      job.result.message)
+        self.assertNotIn("hard links", job.result.message)
+        os.utime(self.link, ns=(info.st_atime_ns, info.st_mtime_ns))    # tearDown checks the cache
+
+    def test_unchanged_cache_files_add_no_warning(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.exit(job)
+        queue.poll()
+        self.assertNotIn("changed during the export", self.job(queue, a).result.message)
+
+    def test_stage_record_tells_how_each_file_was_staged(self):
+        queue = self.queue()
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        with open(os.path.join(self.model_dir(job), "stage.json"), "rb") as handle:
+            record = json.loads(handle.read().decode("ascii"))
+        self.assertEqual([item["mode"] for item in record["items"]], ["copied", "copied"])
+        self.assertEqual(job.stage_modes, {"Zażółć-Konstrukcja.rvt": "copied",
+                                           "Alpha-Architecture.rvt": "copied"})
+
+    def test_disk_check_counts_only_what_hard_links_cannot_save(self):
+        total = os.path.getsize(self.host) + os.path.getsize(self.link)
+        self.free = total + 1
+        for writable, state in ((False, "failed"), (True, "staging")):
+            for path in (self.host, self.link):
+                os.chmod(path, 0o666 if writable else 0o444)
+            def copier(plan, folder, chunk, report=None):
+                return rx_runner.copy_steps(plan, folder, chunk=chunk, report=report)
+            copier.accepts_report = True
+            copier.linking = lambda: True
+            queue = self.queue(copier=copier)
+            a = queue.add(self.staged_job())
+            queue.poll()
+            self.assertEqual(self.job(queue, a).state, state, writable)
+        for path in (self.host, self.link):
+            os.chmod(path, 0o444)
+
     def test_progress_grows_and_each_poll_stays_within_its_budget(self):
         queue = self.queue()
         a = queue.add(self.staged_job())

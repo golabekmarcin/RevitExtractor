@@ -337,6 +337,17 @@ class MemoryTests(TempCase):
         source = Path(rx_cloud.__file__).read_text(encoding="utf-8")
         self.assertIn('".tmp"', source)
 
+    def test_cut_off_save_keeps_the_old_names_in_a_bak_file(self):
+        memory = Memory(self.path())
+        memory.merge([Sighting(P1, "A", M3, "A.rvt", "path")], 1.0)
+        self.assertTrue(memory.save())
+        # simulate a crash between the two renames: the file is gone, .bak holds the old one
+        os.rename(self.path(), self.path() + ".bak")
+        again = Memory(self.path()).load()
+        self.assertEqual(again.names, memory.names)
+        self.assertTrue(again.save())    # the next save puts a real file back and drops the .bak
+        self.assertEqual(os.listdir(os.path.dirname(self.path())), ["cloud-catalog.json"])
+
     def test_failed_save_is_reported_not_raised(self):
         blocker = self.touch("file")
         memory = Memory(os.path.join(blocker, "sub", "m.json"))
@@ -582,7 +593,7 @@ class CatalogStates(CatalogCase):
         source = Path(rx_cloud.__file__).read_text(encoding="utf-8")
         for call in ('"w"', '"a"', '"wb"', "os.remove(", "shutil"):
             if call == "os.remove(":
-                self.assertEqual(source.count(call), 2)  # Memory.save only (file + its temp)
+                self.assertEqual(source.count(call), 3)  # Memory.save only (the .bak twice + its temp)
             else:
                 self.assertNotIn(call, source.replace('io.open(temp_path, "w"', ""))
 

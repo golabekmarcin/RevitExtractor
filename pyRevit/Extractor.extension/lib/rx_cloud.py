@@ -341,23 +341,31 @@ class Memory(object):
         self.included, self.projects, self.names, self.links = set(), {}, {}, {}
 
     def load(self):
+        """Read the memory file; when it is missing (a save was cut off between its two renames)
+        read the .bak the save leaves for that moment."""
         self._clear()
         self.dirty = False
+        if not os.path.exists(self.file_path):
+            self._read(self.file_path + ".bak")
+        else:
+            self._read(self.file_path)
+        return self
+
+    def _read(self, path):
         try:
-            with io.open(self.file_path, "r", encoding="utf-8") as handle:
+            with io.open(path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             if not (isinstance(data, dict) and data.get("version") == MEMORY_VERSION):
-                return self
+                return
             included = data.get("included")
             projects, names, links = data.get("projects"), data.get("names"), data.get("links")
             if not (isinstance(included, list) and isinstance(projects, dict)
                     and isinstance(names, dict) and isinstance(links, dict)):
-                return self
+                return
             self.included = set(item for item in included if isinstance(item, type("")))
             self.projects, self.names, self.links = projects, names, links
         except Exception:
             self._clear()
-        return self
 
     def merge(self, sightings, journal_mtime):
         """Remember names. A name from a journal older than the stored one is ignored, so the
@@ -417,7 +425,7 @@ class Memory(object):
         """Write through a temporary file in the same folder. True on success.
 
         A failure is kept in last_error (the exception type name, no paths) and never raised.
-        IronPython 2.7 cannot overwrite through rename, so the old file is removed first.
+        IronPython 2.7 cannot overwrite through rename, so the old file is moved to .bak first.
         """
         temp_path = self.file_path + ".tmp"
         try:
@@ -429,9 +437,15 @@ class Memory(object):
                                 "links": self.links}, sort_keys=True)
             with io.open(temp_path, "w", encoding="utf-8") as handle:
                 handle.write(text)
+            backup = self.file_path + ".bak"
             if os.path.exists(self.file_path):
-                os.remove(self.file_path)
+                # keep the old file until the new one is in place (a crash in between leaves .bak)
+                if os.path.exists(backup):
+                    os.remove(backup)
+                os.rename(self.file_path, backup)
             os.rename(temp_path, self.file_path)
+            if os.path.exists(backup):
+                os.remove(backup)
             self.last_error = None
             self.dirty = False
             return True

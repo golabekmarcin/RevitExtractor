@@ -4,6 +4,7 @@
 import ast
 import json
 import os
+import stat
 import sys
 import unittest
 from pathlib import Path
@@ -65,9 +66,19 @@ class MakeHardLink(unittest.TestCase):
             self.assertNotIn(banned, source)
 
 
-class LinkRoute(StageCase):
-    def test_link_is_used_instead_of_a_copy(self):
+
+class WritablePlan(object):
+    def writable_plan(self):
+        """Sources without the read-only attribute: only those are ever linked."""
         plan = self.two_item_plan()
+        for item in plan.items:
+            os.chmod(item.src, stat.S_IREAD | stat.S_IWRITE)
+        return plan
+
+
+class LinkRoute(WritablePlan, StageCase):
+    def test_link_is_used_instead_of_a_copy(self):
+        plan = self.writable_plan()
         before = [facts(i.src) for i in plan.items]
         steps = list(copy_steps(plan, self.dest, chunk=CHUNK, link=os.link))
         self.assertEqual([s[2].name for s in steps], ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
@@ -79,7 +90,7 @@ class LinkRoute(StageCase):
         self.assertEqual(before, [facts(i.src) for i in plan.items])
 
     def test_failing_link_falls_back_to_a_copy_per_item(self):
-        plan = self.two_item_plan()
+        plan = self.writable_plan()
 
         def link(source, target):
             if target.endswith("Beta-MEP.rvt"):
@@ -113,13 +124,28 @@ class LinkRoute(StageCase):
         self.assertTrue(os.path.exists(plan.items[0].src))
         self.assertEqual(self.dest_files(), [])
 
+    def test_read_only_source_is_copied_not_linked(self):
+        plan = self.two_item_plan()    # read-only like the real cache
+        modes = {}
+        list(copy_steps(plan, self.dest, chunk=CHUNK, link=os.link,
+                        report=lambda item, mode: modes.update({item.name: mode})))
+        self.assertEqual(modes, {"Alpha-Architecture.rvt": "copied", "Beta-MEP.rvt": "copied"})
+        self.assertEqual(os.stat(plan.items[0].src).st_nlink, 1)
+
+    def test_report_says_linked(self):
+        plan = self.writable_plan()
+        modes = {}
+        list(copy_steps(plan, self.dest, chunk=CHUNK, link=os.link,
+                        report=lambda item, mode: modes.update({item.name: mode})))
+        self.assertEqual(set(modes.values()), {"linked"})
+
     def test_without_link_argument_nothing_is_linked(self):
         plan = self.two_item_plan()
         list(copy_steps(plan, self.dest, chunk=CHUNK))
         self.assertEqual(os.stat(plan.items[0].src).st_nlink, 1)
 
 
-class CloudCopier(StageCase):
+class CloudCopier(WritablePlan, StageCase):
     def prefs(self, data):
         path = os.path.join(self.tmp, "preferences.json")
         with open(path, "w", encoding="utf-8") as handle:
@@ -127,7 +153,7 @@ class CloudCopier(StageCase):
         return path
 
     def test_preference_true_links(self):
-        plan = self.two_item_plan()
+        plan = self.writable_plan()
         copier = rx_status.cloud_copier(self.prefs({"cloud_hardlinks": True}))
         list(copier(plan, self.dest, CHUNK))
         self.assertEqual(os.stat(plan.items[0].src).st_nlink, 2)
@@ -148,7 +174,7 @@ class CloudCopier(StageCase):
     def test_preference_is_read_for_every_job(self):
         path = self.prefs({})
         copier = rx_status.cloud_copier(path)
-        plan = self.two_item_plan()
+        plan = self.writable_plan()
         list(copier(plan, os.path.join(self.tmp, "run-a", "model"), CHUNK))
         self.assertEqual(os.stat(plan.items[0].src).st_nlink, 1)
         self.prefs({"cloud_hardlinks": True})

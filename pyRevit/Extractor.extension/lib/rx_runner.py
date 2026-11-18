@@ -397,7 +397,8 @@ def _write_stage_record(folder, job):
     """model\\stage.json: names (as given), sizes and cache dates; no source path."""
     record = {"version": 1, "model_name": job.model_name, "notes": job.stage["notes"],
               "items": [{"name": item["name"], "size": item["size"],
-                         "cache_date": _cache_date(item["mtime"])}
+                         "cache_date": _cache_date(item["mtime"]),
+                         "mode": job.stage_modes.get(item["name"])}   # linked | copied | None
                         for item in job.stage["items"]]}
     data = dumps_ascii(record, indent=2, sort_keys=True).encode("ascii")
     with open(os.path.join(folder, STAGE_RECORD), "wb") as handle:
@@ -437,6 +438,7 @@ class Job(object):
         self.stage_done = 0         # bytes copied so far
         self.stage_total = 0
         self.stage_ready = False    # every item copied and checked; waiting for the launch
+        self.stage_modes = {}       # item name -> "linked" | "copied", as each item finishes
         self.cleanup = None         # None | "pending" | "done" | "incomplete"
 
     def as_dict(self):
@@ -453,6 +455,7 @@ class Job(object):
             "stage": self.stage, "model_name": self.model_name, "model_key": self.model_key,
             "staged_model": self.staged_model, "stage_done": self.stage_done,
             "stage_total": self.stage_total, "stage_ready": self.stage_ready,
+            "stage_modes": dict(self.stage_modes),
             "cleanup": self.cleanup,
         }
 
@@ -729,12 +732,19 @@ class Queue(object):
                     "Folder wyjściowy jest w pamięci podręcznej Revita (CollaborationCache) lub "
                     "w folderze pliku z tej pamięci; nic nie jest tam nigdy zapisywane. Wybierz "
                     "inny folder wyjściowy."))
-            check_space(job.stage, self._free_bytes(job.output_parent))
+            linking = getattr(self._copier, "linking", None)
+            check_space(job.stage, self._free_bytes(job.output_parent),
+                        links=bool(linking and linking()), dest=job.output_parent)
             prepare_run(paths, job.index)
             job.paths = paths
             os.mkdir(folder)
             _write_stage_record(folder, job)
-            copies = self._copier(job.stage, folder, chunk=self._stage_chunk)
+            extra = {}
+            if getattr(self._copier, "accepts_report", False):
+                def report(item, mode, modes=job.stage_modes):
+                    modes[item.name] = mode
+                extra["report"] = report
+            copies = self._copier(job.stage, folder, chunk=self._stage_chunk, **extra)
         except Exception as error:  # one job fails, the queue goes on
             self._fail(job, tr("The export could not start: {0}",
                                "Nie udało się uruchomić eksportu: {0}").format(_error_text(error)))
@@ -763,6 +773,7 @@ class Queue(object):
                     done, _total, item = next(copies)
                 except StopIteration:
                     job.stage_ready = True
+                    self._record_modes(job)
                     break
                 except Exception as error:  # StageError or any IO error: this job only
                     self._stage_failed(job, error)
@@ -774,6 +785,30 @@ class Queue(object):
                     break
             if out_of_time:
                 break
+        return changed
+
+    def _record_modes(self, job):
+        """Rewrite stage.json with how each file was staged (linked or copied)."""
+        if not job.stage_modes:
+            return
+        try:
+            _write_stage_record(os.path.join(job.paths.root, STAGE_FOLDER), job)
+        except Exception:   # the record is informative; the export does not depend on it
+            pass
+
+    def _sources_changed(self, job):
+        """Names of cache files whose size or time differ from the plan. Read-only (stat). A
+        hard link is the cache file itself, so a change here may be a write by Revit."""
+        changed = []
+        for item in job.stage["items"]:
+            try:
+                st = os.stat(item["src"])
+                same = (st.st_size == item["size"]
+                        and abs(st.st_mtime - item["mtime"]) <= 0.001)
+            except OSError:
+                same = False
+            if not same:
+                changed.append(item["name"])
         return changed
 
     def _close_copies(self, job):
@@ -915,6 +950,17 @@ class Queue(object):
         if job.stage is not None:
             if job.stage["notes"] and job.state != CANCELLED:
                 job.result = _with_message(job.result, " ".join(job.stage["notes"]))
+            changed = self._sources_changed(job)
+            if changed:
+                linked = [n for n in changed if job.stage_modes.get(n) == "linked"]
+                job.result = _with_message(job.result, tr(
+                    "Warning: cache file(s) changed during the export: {0}.",
+                    "Uwaga: pliki w pamięci podręcznej zmieniły się podczas eksportu: {0}."
+                ).format(", ".join(changed)) + (tr(
+                    " {0} of them were hard links, so Revit or the Extractor may have written to "
+                    "them. Turn off cloud_hardlinks.",
+                    " {0} z nich to dowiązania twarde, więc Revit lub Extractor mógł do nich "
+                    "zapisać. Wyłącz cloud_hardlinks.").format(len(linked)) if linked else ""))
             job.cleanup = "pending"
             self._cleanups.append(job)
             self._cleanup_since[job.id] = job.ended_at

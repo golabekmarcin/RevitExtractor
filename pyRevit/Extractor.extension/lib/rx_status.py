@@ -212,9 +212,14 @@ def cloud_copier(path, read=_read_text):
     """The Queue's `copier` for cloud jobs. Each job reads the preference again, so changing
     `cloud_hardlinks` in the preferences file needs no Revit restart. With it exactly true, a
     cache file is hard-linked into <run>\\model instead of copied (a copy is the fallback)."""
-    def copier(plan, folder, chunk):
-        link = make_hard_link if hardlinks_enabled(read_preferences(path, read)) else None
-        return copy_steps(plan, folder, chunk=chunk, link=link)
+    def linking():
+        return hardlinks_enabled(read_preferences(path, read))
+
+    def copier(plan, folder, chunk, report=None):
+        link = make_hard_link if linking() else None
+        return copy_steps(plan, folder, chunk=chunk, link=link, report=report)
+    copier.accepts_report = True
+    copier.linking = linking    # the Queue sizes its disk check by it
     return copier
 
 
