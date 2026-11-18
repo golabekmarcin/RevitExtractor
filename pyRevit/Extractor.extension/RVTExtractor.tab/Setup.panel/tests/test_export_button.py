@@ -1056,6 +1056,45 @@ class ModelWindowHarness(object):
         self.assertTrue(empty.folders_exp.IsExpanded)
         self.assertIn("none yet", empty.folders_summary_text.Text)
 
+    def test_the_front_is_taken_back_only_from_revit(self):
+        reclaim = EXPORT_UI.reclaim_front
+        window = types.SimpleNamespace(IsActive=False, activated=0)
+        window.Activate = lambda: setattr(window, "activated", window.activated + 1)
+        self.assertTrue(reclaim(window, 111, foreground=lambda: 111))
+        self.assertEqual(window.activated, 1)
+        self.assertFalse(reclaim(window, 111, foreground=lambda: 222), "another program: left alone")
+        self.assertFalse(reclaim(window, 111, foreground=lambda: None), "unknown: left alone")
+        self.assertFalse(reclaim(window, 0, foreground=lambda: 0), "no Revit handle: nothing to do")
+        window.IsActive = True
+        self.assertFalse(reclaim(window, 111, foreground=lambda: 111), "already in front")
+        self.assertEqual(window.activated, 1)
+        broken = types.SimpleNamespace(IsActive=False)
+        self.assertFalse(reclaim(broken, 111, foreground=lambda: 111), "never raises")
+
+    def test_handles_compare_the_same_signed_or_not(self):
+        self.assertEqual(EXPORT_UI._masked(-2147418111), 0x80010001)
+        self.assertEqual(EXPORT_UI._masked(0x80010001), 0x80010001)
+        self.assertIsNone(EXPORT_UI._masked(None))
+        self.assertIsNone(EXPORT_UI._masked("x"))
+        window = types.SimpleNamespace(IsActive=False, activated=0)
+        window.Activate = lambda: setattr(window, "activated", 1)
+        self.assertTrue(EXPORT_UI.reclaim_front(window, 0x80010001, foreground=lambda: -2147418111))
+        self.assertEqual(window.activated, 1)
+
+    def test_keep_in_front_listens_for_deactivation(self):
+        class Pointer(object):
+            def __init__(self, value):
+                self.value = value
+            def ToInt64(self):
+                return self.value
+        window = types.SimpleNamespace()
+        window.Deactivated = Event()
+        self.assertTrue(EXPORT_UI.keep_in_front(window, Pointer(77)))
+        self.assertEqual(len(window.Deactivated.handlers), 1)
+        self.assertFalse(EXPORT_UI.keep_in_front(types.SimpleNamespace(), Pointer(77)),
+                         "a window without the event is left as it is")
+        self.assertFalse(EXPORT_UI.keep_in_front(window, None), "no handle, no listener")
+
     def test_child_windows_are_owned_by_the_model_window(self):
         window = self.open()
         child = types.SimpleNamespace()

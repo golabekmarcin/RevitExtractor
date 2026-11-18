@@ -139,6 +139,70 @@ def write_index_atomic(path, content):
 
 # =============================================================================== model window
 
+def _masked(value):
+    """A window handle as one comparable number: window handles use 32 significant bits on 32-
+    and 64-bit Windows, and ctypes may return them signed. None stays None."""
+    if value is None:
+        return None
+    try:
+        return int(value) & 0xFFFFFFFF
+    except Exception:
+        return None
+
+
+def _foreground_handle():
+    """The window that has the keyboard focus system-wide, as a number; None when unknown."""
+    try:
+        import ctypes
+        function = ctypes.windll.user32.GetForegroundWindow
+        function.restype = ctypes.c_void_p      # pointer-sized, not a signed 32-bit int
+        return _masked(function())
+    except Exception:
+        return None
+
+
+def _handle_number(handle):
+    try:
+        return _masked(handle.ToInt64())    # an IntPtr
+    except Exception:
+        return _masked(handle)
+
+
+def reclaim_front(window, revit_handle, foreground=_foreground_handle):
+    """Bring `window` back to the front when it is not active and Revit's main window has the
+    front. The windows here are modal over Revit, so Revit's window is never meant to be in
+    front of them; any other program in front is left alone (the user went there). True when
+    the window was reclaimed."""
+    try:
+        if window.IsActive or not revit_handle:
+            return False
+        if _masked(foreground()) != _masked(revit_handle):
+            return False
+        window.Activate()
+        return True
+    except Exception:
+        return False
+
+
+def keep_in_front(window, revit_handle):
+    """After this window is deactivated, reclaim the front once things have settled (Revit
+    takes the front while a cloud list loads or a model opens in the background)."""
+    number = _handle_number(revit_handle)
+    if not number:
+        return False
+    def after_deactivation(sender, args):
+        try:
+            window.Dispatcher.BeginInvoke(DispatcherPriority.Background,
+                                          Action(lambda: reclaim_front(window, number)))
+        except Exception:
+            pass
+    try:
+        window.Deactivated += after_deactivation
+    except Exception:
+        return False
+    return True
+
+
 class ModelRow(forms.Reactive):
     """One model file from the catalog. Plain attributes for the columns and the item style;
     Checked notifies the checkbox. Greyed rows (newer or unreadable version) have Enabled False."""
@@ -354,6 +418,7 @@ class ModelWindow(forms.WPFWindow):
         self.close_btn.Click += self._on_close
         self.views_btn.Click += self._on_views
         self.export_btn.Click += self._on_export
+        self._revit_handle = None
         self.Loaded += self._on_loaded
         self.Closed += self._on_closed
         self.error_text.Text = ""
@@ -388,6 +453,14 @@ class ModelWindow(forms.WPFWindow):
             window.Owner = self
         except Exception:   # a window that cannot be owned still works, only less tidily
             pass
+        if self._revit_handle:
+            keep_in_front(window, self._revit_handle)
+
+    def keep_in_front(self, revit_handle):
+        """script.py gives the Revit main window handle: this window and its children then
+        win the front back from Revit (see reclaim_front)."""
+        self._revit_handle = revit_handle
+        return keep_in_front(self, revit_handle)
 
     def _show_shared_path(self):
         if self._shared_path:

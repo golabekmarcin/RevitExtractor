@@ -1956,6 +1956,18 @@ class QueueStagingTest(TempDirTest):
         self.assertIn(self.model_dir(job), job.result.message)
         self.assertFalse(queue.busy())
 
+    def test_revits_backup_folder_goes_even_with_read_only_files_inside(self):
+        import stat
+        folder = os.path.join(self.tmp, "run", "model", "Zażółć-Konstrukcja_backup")
+        os.makedirs(os.path.join(folder, "inner"))
+        for name in ("a.rvt", os.path.join("inner", "b.slog")):
+            path = os.path.join(folder, name)
+            with open(path, "wb") as handle:
+                handle.write(b"x")
+            os.chmod(path, stat.S_IREAD)
+        rx_runner._rmtree_writable(folder)
+        self.assertFalse(os.path.exists(folder))
+
     def test_stage_record_keeps_how_the_cleanup_ended(self):
         queue = self.queue()
         a = queue.add(self.staged_job())

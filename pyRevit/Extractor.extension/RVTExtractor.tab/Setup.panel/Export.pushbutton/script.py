@@ -241,6 +241,12 @@ def main():
     except Exception:
         script.get_logger().warning("Could not parent the export window to Revit.")
     try:
+        # a second line of defence: when Revit still takes the front (a cloud list loading, a
+        # model opening in the background), the window takes it back
+        window.keep_in_front(HOST_APP.uiapp.MainWindowHandle)
+    except Exception:
+        script.get_logger().warning("Could not keep the export window in front.")
+    try:
         window.show_dialog()
     except Exception as error:
         _alert(tr("The export window failed.\n\n{0}",

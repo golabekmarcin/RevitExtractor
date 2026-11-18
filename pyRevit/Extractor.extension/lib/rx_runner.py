@@ -21,6 +21,7 @@ import datetime
 import os
 import re
 import shutil
+import stat
 import time
 import uuid
 from collections import namedtuple
@@ -521,7 +522,7 @@ class Queue(object):
         self._free_space = free_space
         self._tree_running = tree_running
         self._remove = remove or os.remove
-        self._rmtree = rmtree or shutil.rmtree
+        self._rmtree = rmtree or _rmtree_writable
         self._copier = copier or copy_steps
         self._copies = {}       # job id -> copy generator, while staging
         self._specs = {}        # job id -> LaunchSpec, while staging
@@ -1035,6 +1036,16 @@ class Queue(object):
     def progress(self, job_id):
         """Last meaningful console line of a started job (read-only), or ""."""
         return progress_line(self.tail(job_id))
+
+
+def _rmtree_writable(path):
+    """shutil.rmtree that clears the read-only attribute of what it cannot delete, then tries
+    again. Only called on <run>\\model\\<name>_backup, a folder Revit made inside our run
+    folder (never a link, never anything under the cache), whose files can be read-only."""
+    def clear_and_retry(function, target, _info):
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+    shutil.rmtree(path, onerror=clear_and_retry)
 
 
 def _short_error(error):
