@@ -474,6 +474,21 @@ def _write_stage_record(folder, job):
         handle.write(data)
 
 
+def _write_named_values(root, values):
+    """<run>\named-values.json from the model values the window read in Revit (see
+    rx_naming.NamedRun). Temp file, then the old one removed and the new one renamed
+    (IronPython 2.7 cannot overwrite through rename)."""
+    text = dumps_ascii({"schema": rx_naming.VALUES_SCHEMA, "version": rx_naming.VALUES_VERSION,
+                        "source": "revit", "elements": values}, sort_keys=True)
+    target = os.path.join(root, rx_naming.VALUES_FILE)
+    temp = target + ".tmp"
+    with open(temp, "wb") as handle:
+        handle.write(text.encode("ascii"))
+    if os.path.exists(target):
+        os.remove(target)
+    os.rename(temp, target)
+
+
 class Job(object):
     """Plain record of one export. States: queued -> running -> ok | failed | cancelled.
 
@@ -494,6 +509,7 @@ class Job(object):
         self.naming_state = None    # None | pending | running | done | partial | failed
         self.naming_done = 0
         self.naming_total = 0
+        self.notes = []             # appended to the result message when the job ends
         self.model_path = model_path
         self.index = index
         self.revit_dir = revit_dir
@@ -806,6 +822,23 @@ class Queue(object):
         job.ended_at = self._clock()
         job.result = Result(FAILED, None, None, message)
 
+    def _hand_over_values(self, job):
+        """Model values from the window go to <run>\named-values.json and out of memory. A failed
+        write only adds a note: the named copies then fall back to the export's own data."""
+        values = job.naming.get("values") if job.naming else None
+        if not isinstance(values, dict):
+            return
+        try:
+            _write_named_values(job.paths.root, values)
+        except Exception as error:
+            job.notes.append(tr(
+                "Sheet and view values from Revit could not be saved ({0}); named copies will use "
+                "the export's own data.",
+                "Nie zapisano wartości arkuszy i widoków z Revita ({0}); kopie z nazwami użyją "
+                "danych z samego eksportu.").format(type(error).__name__))
+            return
+        job.naming = dict(job.naming, values=None)
+
     def _start(self, job):
         job.started_at = self._clock()
         try:
@@ -821,6 +854,7 @@ class Queue(object):
             spec = launch_spec(exe, job.revit_dir, job.model_path, paths, self._root())
             prepare_run(paths, job.index)
             job.paths = paths
+            self._hand_over_values(job)
             handle = self._starter.start(spec)
         except Exception as error:  # one job fails, the queue goes on
             self._fail(job, tr("The export could not start: {0}",
@@ -867,6 +901,7 @@ class Queue(object):
                         links=bool(linking and linking()), dest=job.output_parent)
             prepare_run(paths, job.index)
             job.paths = paths
+            self._hand_over_values(job)
             os.mkdir(folder)
             _write_stage_record(folder, job)
             extra = {}
@@ -1167,6 +1202,8 @@ class Queue(object):
         else:
             job.state = result.state
             job.result = result
+        if job.notes and job.state != CANCELLED:
+            job.result = _with_message(job.result, " ".join(job.notes))
         if job.stage is not None:
             if job.stage["notes"] and job.state != CANCELLED:
                 job.result = _with_message(job.result, " ".join(job.stage["notes"]))

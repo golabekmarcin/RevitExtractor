@@ -498,8 +498,10 @@ class Wiring(unittest.TestCase):
 
     def test_model_token_reads_the_values(self):
         run = self.run_named("{SheetNumber} - {SheetName}")
-        self.assertEqual((run.state, self.names(run), run.notes),
-                         ("done", ["A101 - Ground floor.pdf"], []))
+        self.assertEqual((run.state, self.names(run), run.values_source),
+                         ("done", ["A101 - Ground floor.pdf"], "export"))
+        self.assertEqual(len(run.notes), 1)
+        self.assertIn("English attribute names only", run.notes[0])
 
     def test_param_part_reads_the_values(self):
         run = self.run_named("{param:Zone Code} {OriginalName}")
@@ -532,6 +534,52 @@ class Wiring(unittest.TestCase):
         self.assertEqual((calls, self.names(run)), ([], ["B7.pdf"]))
         run = self.run_named("{SheetNumber}", values={}, values_reader=self.spy_reader(calls))
         self.assertEqual(calls, [])
+
+    def write_values(self, data):
+        with io.open(os.path.join(self.root, "named-values.json"), "wb") as fh:
+            fh.write(data if isinstance(data, bytes) else json.dumps(data).encode("utf-8"))
+
+    GOOD = {"schema": "rx-named-values", "version": 1, "source": "revit", "elements": {
+        S1: {"kind": "sheet", "id": "9", "name": "X", "tokens": {"SheetNumber": "R9"}, "params": {}}}}
+
+    def test_values_file_wins_over_the_export_and_is_recorded(self):
+        calls = []
+        run = self.run_named("{SheetNumber}", values_reader=self.spy_reader(calls))
+        self.assertEqual(run.values_source, "export")
+        shutil.rmtree(os.path.join(self.root, "named"))
+        self.write_values(self.GOOD)
+        run = self.run_named("{SheetNumber}", values_reader=self.spy_reader(calls))
+        self.assertEqual((len(calls), self.names(run), run.notes, run.values_source),
+                         (1, ["R9.pdf"], [], "revit"))
+        with io.open(os.path.join(self.root, "named.json"), "rb") as fh:
+            self.assertEqual(json.loads(fh.read().decode("ascii"))["values_source"], "revit")
+
+    def test_given_values_beat_the_file(self):
+        self.write_values(self.GOOD)
+        given = {S1: {"kind": "sheet", "id": "1", "name": "X", "tokens": {"SheetNumber": "B7"},
+                      "params": {}}}
+        run = self.run_named("{SheetNumber}", values=given)
+        self.assertEqual((self.names(run), run.values_source), (["B7.pdf"], "revit"))
+
+    def test_a_broken_or_foreign_values_file_falls_back_to_the_export(self):
+        bad = [b"{not json", b"[]", json.dumps(dict(self.GOOD, schema="other")).encode(),
+               json.dumps(dict(self.GOOD, version=2)).encode(),
+               json.dumps(dict(self.GOOD, elements=[1])).encode(),
+               json.dumps(dict(self.GOOD, elements={S1: 5})).encode()]
+        for data in bad:
+            with self.subTest(data=data[:20]):
+                self.write_values(data)
+                run = self.run_named("{SheetNumber}")
+                self.assertEqual((run.state, self.names(run), run.values_source),
+                                 ("done", ["A101.pdf"], "export"))
+                self.assertIn("named-values.json could not be used", run.notes[0])
+                shutil.rmtree(os.path.join(self.root, "named"))
+                os.remove(os.path.join(self.root, "named.json"))
+
+    def test_no_source_records_none(self):
+        os.remove(os.path.join(self.out, "Resource", "objects_vals.json.gz"))
+        run = self.run_named("{SheetNumber}")
+        self.assertEqual(run.values_source, "none")
 
     def test_failed_reading_keeps_original_names_and_continues(self):
         os.remove(os.path.join(self.out, "Resource", "objects_vals.json.gz"))

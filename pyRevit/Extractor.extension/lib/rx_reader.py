@@ -70,12 +70,9 @@ class IfcSetupError(ValueError):
 
 # --------------------------------------------------------------------------- views
 
-def collect_views(doc, DB):
-    """{"views_2d": [...], "views_3d": [...]}: plain rows, no Revit object is kept.
-
-    Same rows as ExportSetupLegacy/extractor_model.collect_views (a test checks parity).
-    """
-    rows_2d, rows_3d = [], []
+def _kept_views(doc, DB):
+    """[(view, view_type, is_sheet)] for every printable view and real sheet."""
+    kept = []
     for view in DB.FilteredElementCollector(doc).OfClass(DB.View):
         if view.IsTemplate or not view.CanBePrinted:
             continue
@@ -86,6 +83,18 @@ def collect_views(doc, DB):
         is_sheet = isinstance(view, DB.ViewSheet)
         if is_sheet and view.IsPlaceholder:
             continue
+        kept.append((view, view_type, is_sheet))
+    return kept
+
+
+def collect_views(doc, DB, kept=None):
+    """{"views_2d": [...], "views_3d": [...]}: plain rows, no Revit object is kept.
+
+    Same rows as ExportSetupLegacy/extractor_model.collect_views (a test checks parity).
+    `kept` (from _kept_views) saves a second collector pass.
+    """
+    rows_2d, rows_3d = [], []
+    for view, view_type, is_sheet in (_kept_views(doc, DB) if kept is None else kept):
         element_id = element_id_value(view.Id)
         name = text(view.Name)
         number = text(view.SheetNumber) if is_sheet else ""
@@ -104,6 +113,148 @@ def collect_views(doc, DB):
         "views_2d": sorted(rows_2d, key=lambda row: (row["kind"], row["name"].lower())),
         "views_3d": sorted(rows_3d, key=lambda row: row["name"].lower()),
     }
+
+
+# --------------------------------------------------------------------------- values
+# Naming values (specs/SPEC-named-copies.md, Source B). ParameterTypeId members are language
+# neutral; each is documented in revit-api revisions 2022 and 2026 (same member hashes). Not
+# run in Revit.
+_MAX_VALUE = 255
+_MAX_CATALOG = 2000
+_SHEET_TOKENS = (
+    ("SheetNumber", "SheetNumber"), ("SheetName", "SheetName"),
+    ("CurrentRevision", "SheetCurrentRevision"),
+    ("CurrentRevisionDate", "SheetCurrentRevisionDate"),
+    ("CurrentRevisionDescription", "SheetCurrentRevisionDescription"),
+    ("SheetIssueDate", "SheetIssueDate"), ("DrawnBy", "SheetDrawnBy"),
+    ("CheckedBy", "SheetCheckedBy"), ("DesignedBy", "SheetDesignedBy"),
+    ("ApprovedBy", "SheetApprovedBy"))
+_VIEW_TOKENS = (
+    ("ViewName", "ViewName"), ("TitleOnSheet", "ViewDescription"),
+    ("DetailLevel", "ViewDetailLevel"), ("Discipline", "ViewDiscipline"),
+    ("Phase", "ViewPhase"), ("ViewSheetNumber", "ViewerSheetNumber"))
+_ISO_SIZES = (("A0", 841, 1189), ("A1", 594, 841), ("A2", 420, 594), ("A3", 297, 420),
+              ("A4", 210, 297))
+_MM_PER_FOOT = 304.8
+
+
+def _param_text(param):
+    """Text of a parameter: AsString, else AsValueString; "" when empty or unreadable."""
+    try:
+        if param is None or not param.HasValue:
+            return ""
+        value = param.AsString()
+        if value is None:
+            value = param.AsValueString()
+        return text(value)[:_MAX_VALUE] if value is not None else ""
+    except Exception:
+        return ""
+
+
+def _typed(element, DB, member):
+    try:
+        return _param_text(element.GetParameter(getattr(DB.ParameterTypeId, member)))
+    except Exception:
+        return ""
+
+
+def _size_mm(holder, DB, member):
+    try:
+        param = holder.GetParameter(getattr(DB.ParameterTypeId, member))
+        return param.AsDouble() * _MM_PER_FOOT if param is not None else None
+    except Exception:
+        return None
+
+
+def _sheet_size(doc, DB, sheet):
+    """First title block on the sheet: ISO name within 1 mm (either orientation), else WxH mm."""
+    try:
+        blocks = list(DB.FilteredElementCollector(doc, sheet.Id).OfCategory(
+            DB.BuiltInCategory.OST_TitleBlocks).WhereElementIsNotElementType())
+        if not blocks:
+            return ""
+        holders = [blocks[0]]
+        try:
+            holders.append(doc.GetElement(blocks[0].GetTypeId()))  # may sit on the type
+        except Exception:
+            pass
+        width = height = None
+        for holder in holders:
+            width, height = _size_mm(holder, DB, "SheetWidth"), _size_mm(holder, DB, "SheetHeight")
+            if width is not None and height is not None:
+                break
+        if width is None or height is None:
+            return ""
+        for name, short, long_ in _ISO_SIZES:
+            for a, b in ((width, height), (height, width)):
+                if abs(a - short) <= 1 and abs(b - long_) <= 1:
+                    return name
+        return "%dx%d" % (round(width), round(height))
+    except Exception:
+        return ""
+
+
+def _view_extras(doc, DB, view):
+    out = {}
+    try:
+        out["Scale"] = text(view.Scale)
+    except Exception:
+        pass
+    try:
+        template_id = view.ViewTemplateId
+        if element_id_value(template_id) != -1:
+            out["ViewTemplate"] = text(element_name(doc.GetElement(template_id), DB))
+    except Exception:
+        pass
+    try:
+        out["ViewFamily"] = text(doc.GetElement(view.GetTypeId()).FamilyName)
+    except Exception:
+        pass
+    return out
+
+
+def collect_values(doc, DB, views):
+    """{UniqueId: {"kind", "id", "name", "tokens", "params"}} for the given view/sheet elements.
+    Plain text only; empty tokens and parameters are left out. Reads only."""
+    elements = {}
+    for view in views:
+        is_sheet = isinstance(view, DB.ViewSheet)
+        element_id = text(element_id_value(view.Id))
+        name = text(view.Name)
+        tokens = {}
+        for token, member in (_SHEET_TOKENS if is_sheet else ()) + _VIEW_TOKENS:
+            tokens[token] = _typed(view, DB, member)
+        if is_sheet:
+            name = "{0} - {1}".format(text(view.SheetNumber), name)
+            tokens["SheetSize"] = _sheet_size(doc, DB, view)
+        else:
+            tokens.update(_view_extras(doc, DB, view))
+        tokens["ElementId"] = element_id
+        params = {}
+        try:
+            for param in view.Parameters:
+                try:
+                    key, value = text(param.Definition.Name), _param_text(param)
+                except Exception:
+                    continue
+                if value.strip() and key not in params:
+                    params[key] = value
+        except Exception:
+            pass
+        elements[text(view.UniqueId)] = {
+            "kind": "sheet" if is_sheet else "view", "id": element_id, "name": name,
+            "tokens": dict((k, v) for k, v in tokens.items() if v.strip()), "params": params}
+    return elements
+
+
+def collect_catalog(elements):
+    """{"views": [...], "sheets": [...]}: sorted unique parameter names, at most 2000 each."""
+    names = {"view": set(), "sheet": set()}
+    for record in elements.values():
+        if record.get("kind") in names:
+            names[record["kind"]].update(record.get("params") or ())
+    return {"views": sorted(names["view"])[:_MAX_CATALOG],
+            "sheets": sorted(names["sheet"])[:_MAX_CATALOG]}
 
 
 # --------------------------------------------------------------------------- cloud links
@@ -301,13 +452,14 @@ def _close(doc):
     return _is_bool(result, True), ""
 
 
-def read_model(app, DB, path, caps, workshared=None, links=False):
+def read_model(app, DB, path, caps, workshared=None, links=False, values=False):
     """Snapshot {"title", "path", "views_2d", "views_3d", "ifc_setups", "ifc_error"} of the
     model at `path`, read in the background. Raises ReadError.
 
     Call only from the button's command (modal), never from the modeless status window.
     `workshared` comes from the catalog; None (unknown) counts as workshared.
     `links=True` adds "links" (collect_cloud_links rows); otherwise no link member is read.
+    `values=True` adds "values" (collect_values) from the same open and the same view list.
     """
     # Guard first: OpenDocumentFile on a file that is already open may hand back the user's
     # own document, and closing that would discard their work. Only a real True passes.
@@ -333,9 +485,12 @@ def read_model(app, DB, path, caps, workshared=None, links=False):
     # From here on `doc` is the document this call opened and nothing else. It is closed
     # exactly once, in `finally`; an error raised by the body wins over a close failure.
     closed, close_detail = False, ""
-    link_rows = None
+    link_rows = value_rows = None
     try:
-        views = collect_views(doc, DB)
+        kept = _kept_views(doc, DB)
+        views = collect_views(doc, DB, kept)
+        if _is_bool(values, True):
+            value_rows = collect_values(doc, DB, [item[0] for item in kept])
         ifc_setups, ifc_error = [], ""
         if caps.ifc_setups:
             ifc_setups, ifc_error = _read_ifc_setups(doc, DB)
@@ -356,6 +511,8 @@ def read_model(app, DB, path, caps, workshared=None, links=False):
     }
     if link_rows is not None:
         snapshot["links"] = link_rows
+    if value_rows is not None:
+        snapshot["values"] = value_rows
     return snapshot
 
 

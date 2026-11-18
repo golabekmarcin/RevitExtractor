@@ -80,7 +80,15 @@ class TempCase(unittest.TestCase):
 class ParseJournal(unittest.TestCase):
     def test_path_line_two_backslashes(self):
         got = list(parse_journal(path_line(P1, "Demo Tower", M3, "Alpha-Architecture.rvt")))
-        self.assertEqual(got, [Sighting(P1, "Demo Tower", M3, "Alpha-Architecture.rvt", "path")])
+        self.assertEqual(got, [Sighting(P1, "Demo Tower", M3, "Alpha-Architecture.rvt", "path", "US")])
+
+    def test_region_from_path_and_browser_lines(self):
+        got = list(parse_journal(path_line(P1, "Demo Tower", M3, "A.rvt", region="EMEA")))
+        self.assertEqual(got[0].region, "EMEA")
+        self.assertEqual(list(parse_journal(browser_line(P1, M3, "B.rvt")))[0].region, "US")
+
+    def test_sighting_without_region_defaults_to_empty(self):
+        self.assertEqual(Sighting(P1, None, M3, "A.rvt", "button").region, "")
 
     def test_path_line_one_backslash(self):
         got = list(parse_journal(path_line(P1, "Demo Tower", M3, "A.rvt", slashes="\\")))
@@ -113,7 +121,7 @@ class ParseJournal(unittest.TestCase):
             "{" + "B" * 8 + "-" + "-".join(["B" * 4] * 3) + "-" + "B" * 12 + "}"
         got = list(parse_journal(browser_line(project, model, "Gamma-Browser.rvt")))
         self.assertEqual(got, [Sighting(project.lower(), None, normalize_guid(model),
-                                        "Gamma-Browser.rvt", "browser")])
+                                        "Gamma-Browser.rvt", "browser", "US")])
         self.assertEqual(got[0].model_guid, got[0].model_guid.lower())
         self.assertNotIn("{", got[0].model_guid)
 
@@ -276,6 +284,28 @@ class MemoryTests(TempCase):
         self.assertEqual(again.included, {ACCOUNT + "/" + P1})
         self.assertEqual(again.links_for("k", 50.0), [{"name": "L.rvt", "model_guid": M4}])
 
+    def test_region_round_trip_and_old_entry_gives_empty(self):
+        memory = Memory(self.path()).load()
+        memory.merge([Sighting(P1, "Demo Tower", M3, "A.rvt", "path", "EMEA"),
+                      Sighting(P1, None, M4, "B.rvt", "path")], 100.0)
+        memory.save()
+        again = Memory(self.path()).load()
+        self.assertEqual(again.model_region(P1, M3), "EMEA")
+        self.assertEqual(again.model_region(P1, M4), "")
+        self.assertEqual(again.model_region(P1, M5), "")
+        # a later sighting that does not name a region keeps the known one
+        again.merge([Sighting(P1, None, M3, "A.rvt", "browser")], 200.0)
+        self.assertEqual(again.model_region(P1, M3), "EMEA")
+
+    def test_memory_file_without_region_key_loads(self):
+        os.makedirs(os.path.dirname(self.path()))
+        Path(self.path()).write_text(json.dumps({
+            "version": rx_cloud.MEMORY_VERSION, "included": [], "projects": {}, "links": {},
+            "names": {P1 + "/" + M3: {"name": "Old.rvt", "mtime": 1.0}}}), encoding="utf-8")
+        memory = Memory(self.path()).load()
+        self.assertEqual(memory.model_name(P1, M3), "Old.rvt")
+        self.assertEqual(memory.model_region(P1, M3), "")
+
     def test_polish_names_survive_the_file(self):
         memory = Memory(self.path()).load()
         memory.merge([Sighting(P1, "Przyk\u0142ad", M3, "Za\u017c\u00f3\u0142\u0107.rvt", "path")], 1.0)
@@ -394,6 +424,16 @@ class CatalogCase(TempCase):
 
 
 class CatalogStates(CatalogCase):
+    def test_row_carries_the_region_and_an_old_memory_gives_empty(self):
+        self.journal([path_line(P1, "Demo Tower", M3, "A.rvt", region="EMEA")])
+        self.cache(P1, M3)
+        self.cache(P1, M4)
+        memory = Memory(os.path.join(self.tmp, "mem.json"))
+        memory.names[P1 + "/" + M4] = {"name": "Old.rvt", "mtime": 1.0}  # a pre-region entry
+        by_name = {r.name: r for r in self.run_scan(memory).rows}
+        self.assertEqual(by_name["A.rvt"].region, "EMEA")
+        self.assertEqual(by_name["Old.rvt"].region, "")
+
     def test_every_state_and_the_newer_of_rule(self):
         self.journal([path_line(P1, "Demo Tower", M3, "Alpha-Architecture.rvt"),
                       path_line(P1, "Demo Tower", M4, "Old-Model.rvt"),

@@ -2430,6 +2430,59 @@ class FakeNamer(object):
         return run
 
 
+class NamedValuesHandOverTest(TempDirTest):
+    """T6: the window's model values go to <run>\named-values.json and out of memory."""
+    VALUES = {"AAAA-1": {"kind": "sheet", "id": "A1", "name": "Plan",
+                         "tokens": {"SheetNumber": "A1"}, "params": {"Zone": "Z"}}}
+
+    def setUp(self):
+        super(NamedValuesHandOverTest, self).setUp()
+        self.revit = os.path.join(self.tmp, "Revit")
+        os.makedirs(os.path.join(self.revit, "RevitExtractor"))
+        open(os.path.join(self.revit, "RevitExtractor", "RevitExtractor.exe"), "w").close()
+        self.out = os.path.join(self.tmp, "out")
+        self.tokens = iter("%08x" % n for n in range(1, 1000))
+
+    def run_job(self, values=None, **kw):
+        queue = Queue(FakeStarter(), FakeClock(), system_root=SYSTEM_ROOT,
+                      token=lambda: next(self.tokens), **kw)
+        naming = {"template": "{OriginalName}", "system": {}, "values": values}
+        job = rx_runner.Job(QueueTest.model(self, "a"), SAMPLE_INDEX, self.revit, self.out,
+                            naming=naming)
+        job_id = queue.add(job)
+        queue.poll()
+        return queue, queue.jobs()[0], naming
+
+    def test_file_has_the_shape_and_memory_is_freed(self):
+        _, job, naming = self.run_job(dict(self.VALUES))
+        path = os.path.join(job.paths.root, "named-values.json")
+        with open(path, "rb") as fh:
+            data = json.loads(fh.read().decode("ascii"))
+        self.assertEqual(data, {"schema": "rx-named-values", "version": 1, "source": "revit",
+                                "elements": self.VALUES})
+        self.assertIsNone(job.naming["values"])
+        self.assertIsNotNone(naming["values"], "the caller's dict is not changed")
+        self.assertNotIn("naming", job.as_dict())
+        self.assertNotIn("Plan", json.dumps(job.as_dict()))
+        self.assertFalse(os.path.exists(path + ".tmp"))
+        self.assertEqual(os.listdir(job.paths.output), [])
+
+    def test_no_values_writes_nothing(self):
+        _, job, _ = self.run_job(None)
+        self.assertFalse(os.path.exists(os.path.join(job.paths.root, "named-values.json")))
+        self.assertEqual(job.notes, [])
+
+    def test_a_failed_write_adds_a_note_and_the_run_goes_on(self):
+        with patch.object(rx_runner, "_write_named_values",
+                                        side_effect=OSError(28, "no space")):
+            queue, job, naming = self.run_job(dict(self.VALUES))
+        self.assertEqual(job.state, "running")
+        self.assertIsNotNone(job.naming["values"], "naming keeps the values: no file to fall back on")
+        self.assertEqual(len(job.notes), 1)
+        self.assertIn("OSError", job.notes[0])
+        self.assertNotIn("Plan", job.notes[0])
+
+
 class NamingQueueTest(TempDirTest):
     """Named copies after an ok export: queue state, shared budget, failure isolation."""
     # QueueTest's fixtures and helpers without re-running its tests.

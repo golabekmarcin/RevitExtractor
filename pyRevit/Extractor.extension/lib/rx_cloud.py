@@ -40,12 +40,14 @@ _BROWSER_MARK = "ModelBrowserOpenDocumentEvent:open:"
 _PERCENT = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
 
 Sighting = namedtuple(str("Sighting"),
-                      str("project_guid project_name model_guid file_name source"))
+                      str("project_guid project_name model_guid file_name source region"))
+Sighting.__new__.__defaults__ = ("",)  # region: "" when the source does not say
 CacheFile = namedtuple(str("CacheFile"),
                        str("account project_guid model_guid place path size mtime"))
 CloudRow = namedtuple(str("CloudRow"),
                       str("key project name cache_path cache_date size state enabled note "
-                          "account project_guid model_guid place cache_mtime"))
+                          "account project_guid model_guid place cache_mtime region"))
+CloudRow.__new__.__defaults__ = ("",)
 Project = namedtuple(str("Project"), str("key account guid name selected count unnamed note"))
 Catalog = namedtuple(str("Catalog"), str("rows projects counts message"))
 StageItem = namedtuple(str("StageItem"), str("src name size mtime"))
@@ -204,7 +206,8 @@ def _path_sightings(line):
     pname = match.group("pname")
     if _has_percent(pname):
         pname = _unquote(pname)
-    return [Sighting(project, _clean_name(pname), model, file_name, "path")]
+    return [Sighting(project, _clean_name(pname), model, file_name, "path",
+                     match.group("region").strip())]
 
 
 def _browser_sightings(line):
@@ -230,7 +233,8 @@ def _browser_sightings(line):
     file_name = _clean_name(name) if isinstance(name, type("")) else None
     if not file_name:
         return []
-    return [Sighting(project, None, model, file_name, "browser")]
+    region = region.strip() if isinstance(region, type("")) else ""
+    return [Sighting(project, None, model, file_name, "browser", region)]
 
 
 def _parse_lines(lines):
@@ -376,18 +380,22 @@ class Memory(object):
                 self._remember(self.projects, item.project_guid, item.project_name, journal_mtime)
             if item.file_name:
                 self._remember(self.names, model_key(item.project_guid, item.model_guid),
-                               item.file_name, journal_mtime)
+                               item.file_name, journal_mtime, item.region)
 
-    def _remember(self, table, key, name, mtime):
+    def _remember(self, table, key, name, mtime, region=""):
         entry = table.get(key)
         try:
             if isinstance(entry, dict) and float(entry.get("mtime", 0)) > float(mtime):
                 return
         except (TypeError, ValueError):
             pass
+        old_region = entry.get("region") if isinstance(entry, dict) else None
+        region = region or old_region or ""  # a sighting without a region keeps the known one
         if not (isinstance(entry, dict) and entry.get("name") == name
-                and entry.get("mtime") == mtime):
+                and entry.get("mtime") == mtime and (old_region or "") == region):
             table[key] = {"name": name, "mtime": mtime}
+            if region:
+                table[key]["region"] = region
             self.dirty = True
 
     def project_name(self, project_guid):
@@ -395,6 +403,12 @@ class Memory(object):
 
     def model_name(self, project_guid, model_guid):
         return self._name(self.names.get(model_key(project_guid, model_guid)))
+
+    def model_region(self, project_guid, model_guid):
+        """The cloud region of a remembered model; "" for an old memory entry."""
+        entry = self.names.get(model_key(project_guid, model_guid))
+        region = entry.get("region") if isinstance(entry, dict) else None
+        return region if isinstance(region, type("")) else ""
 
     @staticmethod
     def _name(entry):
@@ -527,7 +541,8 @@ def build_catalog(cache_files, memory, now, stale_days=STALE_DAYS, counts=None, 
             key="cloud:%s/%s" % (project, model), project=pname, name=name, cache_path=item.path,
             cache_date=_date_text(item.mtime), size=item.size, state="ok", enabled=True,
             note="", account=item.account, project_guid=project, model_guid=model,
-            place=item.place, cache_mtime=item.mtime))
+            place=item.place, cache_mtime=item.mtime,
+            region=memory.model_region(project, model)))
     # duplicates: same project and file name (case-insensitive); the newer copy stays
     newest = {}
     for row in rows:

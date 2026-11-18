@@ -492,6 +492,9 @@ def tie(items, manifest, values):
 # - a destination is never overwritten (hard links and O_EXCL copies fail on an existing name);
 # - closing steps() early leaves complete items and named.json at "running".
 
+VALUES_SCHEMA = "rx-named-values"   # <run>\named-values.json, written by rx_runner from Revit's values
+VALUES_VERSION = 1
+VALUES_FILE = "named-values.json"
 RECORD_SCHEMA = "rx-named-copies"
 RECORD_VERSION = 1
 _COPY_CHUNK = 2 ** 20
@@ -560,6 +563,7 @@ class NamedRun(object):
         self._record = os.path.join(run_paths.root, "named.json")
         self._started = False
         self._record_failed = False
+        self.values_source = "none"   # "revit" | "export" | "none", recorded in named.json
         self._space_checked = False
 
     # ---- public ----
@@ -631,6 +635,12 @@ class NamedRun(object):
         self.notes.extend(discovery.notes)
         manifest = self._manifest()
         values = self.naming.get("values")
+        if values is not None:
+            self.values_source = "revit"
+        else:
+            values = self._values_file()
+            if values is not None:
+                self.values_source = "revit"
         if values is None and needs_values(parsed):
             try:   # reading only adds notes: it never fails the run
                 reader = self._values_reader(os.path.join(self.run_paths.output, "Resource"),
@@ -644,6 +654,12 @@ class NamedRun(object):
                 self._value_notes.extend(n for n in reader.notes if _is_text(n))
                 if reader.state == "done" and isinstance(reader.values, dict):
                     values = reader.values
+                    self.values_source = "export"
+                    self._value_notes.append(tr(
+                        "Sheet and view values were read from the export's own data, which has "
+                        "English attribute names only; a non-English model may not match.",
+                        "Wartości arkuszy i widoków odczytano z danych eksportu, które mają "
+                        "tylko angielskie nazwy atrybutów; model w innym języku może nie pasować."))
             except Exception:
                 pass
             if values is None:
@@ -696,6 +712,24 @@ class NamedRun(object):
             entry["mode"] = "failed"
             entry["error"] = error
             self.counts["failed"] += 1
+
+    def _values_file(self):
+        """The records from <run>\named-values.json, or None (a bad file adds a note)."""
+        path = os.path.join(self.run_paths.root, VALUES_FILE)
+        if not os.path.exists(path):
+            return None
+        try:
+            with io.open(path, "rb") as handle:
+                data = json.loads(handle.read().decode("utf-8-sig"))
+            elements = data.get("elements")
+            if data.get("schema") == VALUES_SCHEMA and data.get("version") == VALUES_VERSION and                     isinstance(elements, dict) and all(isinstance(v, dict) for v in elements.values()):
+                return elements
+        except Exception:
+            pass
+        self._value_notes.append(tr(
+            "named-values.json could not be used, so the export's own data is read instead.",
+            "Nie można użyć named-values.json, więc czytane są dane z samego eksportu."))
+        return None
 
     def _manifest(self):
         try:
@@ -876,7 +910,7 @@ class NamedRun(object):
             text = dumps_ascii(OrderedDict([
                 ("schema", RECORD_SCHEMA), ("version", RECORD_VERSION),
                 ("template", self.naming.get("template")),
-                ("templates", self.naming.get("templates")), ("state", self.state),
+                ("templates", self.naming.get("templates")), ("state", self.state), ("values_source", self.values_source),
                 ("counts", self.counts), ("notes", self.notes), ("items", self.items)]),
                 indent=1)
             with io.open(temp, "w", encoding="utf-8") as handle:

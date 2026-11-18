@@ -1007,7 +1007,7 @@ class WriterTests(WriterCase):
         text = self.read_record()
         record = json.loads(text)
         self.assertEqual(list(record), ["schema", "version", "template", "templates", "state",
-                                        "counts", "notes", "items"])
+                                        "values_source", "counts", "notes", "items"])
         self.assertEqual((record["schema"], record["version"], record["state"]),
                          ("rx-named-copies", 1, "done"))
         self.assertIn("Rzut pi\\u0119tra.pdf", text)
