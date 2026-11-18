@@ -526,6 +526,55 @@ VIEW = {"kind": "view", "id": "200", "name": "Level 1", "tokens": {"ViewName": "
         "params": {}}
 
 
+class TieByElementIdTests(unittest.TestCase):
+    """The layout of a real export (observed 2026-11-18): every sheet and view sits in a folder
+    "<name> <ElementId in decimal>", and the viewable id ends with the same number in hex."""
+
+    SHEET_ID = "11111111-1111-1111-1111-111111111111-0007af95"      # 0x7af95 = 503701
+    VIEW_ID = "22222222-2222-2222-2222-222222222222-000ea86d"       # 0xea86d = 960621
+    OTHER_ID = "33333333-3333-3333-3333-333333333333-000ea29f"      # 0xea29f = 959135
+
+    def manifest(self):
+        return manifest_of(
+            node("folder", "Sheets", [
+                node("geometry", "A104 - Elev./Sec./Det.", vid=self.SHEET_ID),
+                node("geometry", "A101 - Site Plan", vid=self.OTHER_ID)]),
+            node("folder", "3D View", [node("geometry", "{3D}", vid=self.VIEW_ID)]))
+
+    def test_a_pdf_is_tied_through_its_folder_even_when_the_name_was_sanitised(self):
+        it = deliverable("Resource/Sheet/A104 - Elev__Sec__Det_ 503701/pdf/A104 - Elev__Sec__Det_.pdf")
+        pairs, untied = rx_naming.tie([it], self.manifest(), None)
+        self.assertEqual(pairs[0][1]["name"], "A104 - Elev./Sec./Det.")
+        self.assertEqual(untied, 0)
+
+    def test_a_view_folder_is_tied_through_its_own_name(self):
+        it = deliverable("Resource/3D View/{3D} 960621", kind="view")
+        pairs, _ = rx_naming.tie([it], self.manifest(), None)
+        self.assertEqual(pairs[0][1]["name"], "{3D}")
+
+    def test_values_are_found_by_the_viewable_id(self):
+        values = {self.SHEET_ID: dict(SHEET, tokens={"SheetNumber": "A104", "SheetName": "Details"})}
+        it = deliverable("Resource/Sheet/A104 - Elev__Sec__Det_ 503701/pdf/x.pdf")
+        pairs, untied = rx_naming.tie([it], self.manifest(), values)
+        self.assertEqual(pairs[0][1]["tokens"]["SheetNumber"], "A104")
+        self.assertEqual(untied, 0)
+
+    def test_two_viewables_with_the_same_element_number_are_not_guessed(self):
+        manifest = manifest_of(node("folder", "Sheets", [
+            node("geometry", "One", vid=self.SHEET_ID),
+            node("geometry", "Two", vid="44444444-4444-4444-4444-444444444444-0007af95")]))
+        it = deliverable("Resource/Sheet/Unrelated name 503701/pdf/other.pdf")
+        pairs, untied = rx_naming.tie([it], manifest, None)
+        self.assertIsNone(pairs[0][1])
+        self.assertEqual(untied, 1)
+
+    def test_a_folder_without_a_number_or_an_unknown_number_ties_nothing(self):
+        for rel in ("Resource/Sheet/No number/pdf/x.pdf", "Resource/Sheet/Name 1/pdf/x.pdf"):
+            pairs, untied = rx_naming.tie([deliverable(rel)], self.manifest(), None)
+            self.assertIsNone(pairs[0][1], rel)
+            self.assertEqual(untied, 1)
+
+
 class TieTests(unittest.TestCase):
     def manifest(self):
         return manifest_of(

@@ -381,6 +381,26 @@ def _top_folder(rel):
     return dirs[0] if dirs else None
 
 
+_FOLDER_ELEMENT_ID = re.compile(r"^.* (\d+)$")
+_VIEWABLE_ELEMENT_ID = re.compile(r"-([0-9a-f]{8})$", re.IGNORECASE)
+
+
+def _folder_element_id(item):
+    """The ElementId in the name of the nearest folder of a deliverable, or None. The Extractor
+    puts every sheet and view in a folder called "<name> <ElementId in decimal>" (observed
+    2026-11-18 on a real export: Resource/Sheet/A101 - Site Plan 959135/pdf/A101 - Site Plan.pdf,
+    Resource/3D View/{3D} 960621/{3D}.svf), and the last 8 hex digits of the viewable's id are
+    the same number."""
+    parts = item.rel.split("/")
+    if item.kind != "view":
+        parts = parts[:-1]
+    for part in reversed(parts):
+        match = _FOLDER_ELEMENT_ID.match(part)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def _record_names(record):
     tokens = record.get("tokens") or {}
     if record.get("kind") == "sheet":
@@ -396,10 +416,18 @@ def tie(items, manifest, values):
     guessed beyond the spec's rules; see 'Tying a file to its sheet or view'."""
     viewables = _viewables(manifest or {})
     by_id = dict((v[0], v) for v in viewables)
+    by_element = {}
+    for found in viewables:
+        match = _VIEWABLE_ELEMENT_ID.search("%s" % (found[0],))
+        if match:
+            by_element.setdefault(int(match.group(1), 16), []).append(found)
     pairs = []
     untied = 0
     for item in items:
         viewable = by_id.get(item.viewable) if item.viewable else None
+        if viewable is None:
+            hits = by_element.get(_folder_element_id(item)) or []
+            viewable = hits[0] if len(hits) == 1 else None
         if viewable is None:
             stem = item.rel.split("/")[-1]
             if item.kind != "view":

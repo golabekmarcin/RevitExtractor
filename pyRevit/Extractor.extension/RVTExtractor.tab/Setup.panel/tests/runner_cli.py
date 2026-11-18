@@ -15,6 +15,11 @@
   export-sample --lang en|pl            the Export button's model and view windows, driven by
             their real code with the WPF fakes of test_export_button.py (made-up models and
             views): text table, rows and each named control's text/check/enabled/visible state
+  name      RUN [--template T] [--split]   rx_naming.NamedRun to the end on a real run folder
+            (RUN = the folder holding output\\ and index.json, or its output\\), real hard links;
+            default template "{OriginalName} {Date}". Prints counts only (no name or path).
+            Exit 0 only when the state is done, output\\ is unchanged (size, mtime, SHA-256 of
+            every file) and at least one item was named; 1 otherwise.
 
 Output is ASCII JSON (non-ASCII escaped), so Windows PowerShell 5.1 reads it intact.
 Errors: exit code 2 and {"error": "..."}.
@@ -75,6 +80,72 @@ def command_progress(args):
     paths = run_paths(args.root)
     tail = rx_runner._read_text(paths.console, rx_runner._PROGRESS_TAIL_BYTES)
     return {"progress": rx_runner.progress_line(tail)}
+
+
+def output_snapshot(folder):
+    """{relative path: (size, mtime_ns, sha256)} of every file under `folder`."""
+    import hashlib
+    out = {}
+    for dirpath, _, files in os.walk(folder):
+        for name in files:
+            path = os.path.join(dirpath, name)
+            st = os.stat(path)
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(2 ** 20), b""):
+                    digest.update(chunk)
+            out[os.path.relpath(path, folder)] = (st.st_size, st.st_mtime_ns, digest.hexdigest())
+    return out
+
+
+def command_name(args):
+    """rx_naming.NamedRun to the end on a real run folder, with the real hard-link function.
+    Prints counts only: no name or path of the model, the run or its files."""
+    import rx_naming
+    root = os.path.abspath(args.run)
+    if os.path.basename(root).lower() == "output" and \
+            os.path.isfile(os.path.join(os.path.dirname(root), "index.json")):
+        root = os.path.dirname(root)
+    paths = run_paths(root)
+    if not os.path.isdir(paths.output) or not os.path.isfile(paths.index):
+        raise ValueError("not a run folder (needs output\\ and index.json)")
+    now = datetime.datetime.now()
+    naming = {"template": args.template, "values": None, "split": args.split,
+              "system": rx_naming.system_values(now, "user", "user", "Sample", "short", "long")}
+    before = output_snapshot(paths.output)
+    run = rx_naming.NamedRun(paths, naming)
+    for _ in run.steps():
+        pass
+    after = output_snapshot(paths.output)
+    named = os.path.join(root, "named")
+    kinds = {}
+    for entry in run.items:
+        kind = "view" if entry["kind"] == "dir" else \
+            os.path.splitext(entry["source"])[1].lstrip(".").lower()
+        kinds[kind] = kinds.get(kind, 0) + 1
+    longest, on_disk = 0, 0
+    for dirpath, dirs, files in os.walk(named):
+        for child in dirs + files:
+            on_disk += 1
+            longest = max(longest, len(os.path.join(dirpath, child)))
+    links = []
+    for entry in run.items:
+        if entry["mode"] != "linked":
+            continue
+        target = os.path.join(named, *entry["name"].split("/"))
+        if os.path.isfile(target):
+            links.append(os.stat(target).st_nlink)
+        for dirpath, _, files in os.walk(target):
+            links.extend(os.stat(os.path.join(dirpath, f)).st_nlink for f in files)
+    unchanged = before == after
+    made = run.counts["linked"] + run.counts["copied"]
+    data = {"state": run.state, "counts": run.counts, "items_by_kind": kinds,
+            "named_entries_on_disk": on_disk, "linked_files_checked": len(links),
+            "links_verified": bool(links) and all(n >= 2 for n in links),
+            "longest_named_path": longest, "output_unchanged": unchanged,
+            "output_files_compared": len(before), "notes": len(run.notes)}
+    ok = run.state == "done" and unchanged and made > 0
+    return data, (0 if ok else 1)
 
 
 def command_kill_spec(args):
@@ -361,17 +432,25 @@ def main(argv):
     sample.add_argument("--lang", choices=("en", "pl"), default="en")
     export_sample = commands.add_parser("export-sample")
     export_sample.add_argument("--lang", choices=("en", "pl"), default="en")
+    name = commands.add_parser("name")
+    name.add_argument("run")
+    name.add_argument("--template", default="{OriginalName} {Date}")
+    name.add_argument("--split", action="store_true")
     args = parser.parse_args(argv)
     handlers = {"plan": command_plan, "check": command_check, "progress": command_progress,
                 "kill-spec": command_kill_spec, "analyzer-plan": command_analyzer_plan,
-                "status-sample": command_status_sample, "export-sample": command_export_sample}
+                "status-sample": command_status_sample, "export-sample": command_export_sample,
+                "name": command_name}
+    code = 0
     try:
         data = handlers[args.command](args)
+        if args.command == "name":
+            data, code = data
     except (rx_runner.RunnerError, ValueError) as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=True))
         return 2
     print(json.dumps(data, ensure_ascii=True, sort_keys=True))
-    return 0
+    return code
 
 
 if __name__ == "__main__":

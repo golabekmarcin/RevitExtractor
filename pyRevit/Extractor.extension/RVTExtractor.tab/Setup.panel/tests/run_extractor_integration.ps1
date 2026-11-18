@@ -19,6 +19,13 @@ Real Extractor run, started from rx_runner's launch spec (specs/SPEC-export-runn
                   the staged job on rx_runner.Queue with a real Extractor run. PASS = result ok,
                   both cache copies' SHA-256 unchanged, only stage.json left in the run's model
                   folder, no RevitExtractor process left. Uses tests\cloud_cli.py.
+    -Named        named copies (specs/SPEC-named-copies.md, criterion 13): the normal run, then
+                  runner_cli.py name on its run folder (rx_naming.NamedRun, real hard links,
+                  template "{OriginalName} {Date}"); prints its counts-only JSON. PASS = result ok,
+                  naming exit 0 (state done, output\ SHA-256/size/mtime unchanged, at least one
+                  item named), no RevitExtractor process left. Then, when node is on PATH, the
+                  deliverables and mapping counts of Analyzer\scripts\probe-export-structure.mjs
+                  on that output folder (else "probe skipped (node not found)").
     -RevitDirectory, -ModelPath, -ModelPath2, -OutputParent   override the defaults
 
 The process is started with System.Diagnostics.Process from exactly the spec's file, arguments,
@@ -38,6 +45,7 @@ param(
     [switch]$Cancel,
     [switch]$Analyzer,
     [switch]$Cloud,
+    [switch]$Named,
     [ValidateSet(0, 2)]
     [int]$Parallel = 0,
     [ValidateRange(1, 240)]
@@ -50,6 +58,7 @@ $ErrorActionPreference = 'Stop'
 if ($Cancel -and $Parallel) { throw 'Use -Cancel or -Parallel, not both.' }
 if ($Cloud -and ($Cancel -or $Parallel -or $Analyzer)) { throw '-Cloud runs alone.' }
 if ($Analyzer -and ($Cancel -or $Parallel)) { throw '-Analyzer goes with the normal run only.' }
+if ($Named -and ($Cancel -or $Parallel -or $Cloud)) { throw '-Named goes with the normal run only.' }
 
 $testsDir = $PSScriptRoot
 $cli = Join-Path $testsDir 'runner_cli.py'
@@ -422,6 +431,32 @@ function Test-AnalyzerPlan($Run) {
     }
 }
 
+function Test-Named($Run) {
+    # named-copies criterion 13. Prints counts only; failures go to Add-Failure.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $text = (& $Python -B $cli name ([string]$Run.Plan.paths.root) | Out-String) } finally { $ErrorActionPreference = $previous }
+    $code = $LASTEXITCODE
+    Write-Host "runner_cli.py name (exit $code):"
+    Write-Host $text.Trim()
+    if ($code -ne 0) { Add-Failure "runner_cli.py name exit code $code" }
+    if ($text.Trim()) {
+        $data = $text | ConvertFrom-Json
+        if (!$data.PSObject.Properties['output_unchanged'] -or !$data.output_unchanged) { Add-Failure 'output\ changed during naming (or no snapshot)' }
+    }
+    $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $node) { Write-Host 'probe skipped (node not found)'; return }
+    $probe = Join-Path $repo 'Analyzer\scripts\probe-export-structure.mjs'
+    $ErrorActionPreference = 'Continue'
+    try { $probeText = (& $node.Source $probe ([string]$Run.Plan.paths.output) | Out-String) } finally { $ErrorActionPreference = $previous }
+    if ($LASTEXITCODE -ne 0 -or !$probeText.Trim()) { Add-Failure "probe failed (exit $LASTEXITCODE)"; return }
+    $report = $probeText | ConvertFrom-Json
+    Write-Host 'probe deliverables:'
+    Write-Host ($report.deliverables | ConvertTo-Json -Depth 8)
+    Write-Host 'probe mapping:'
+    Write-Host ($report.mapping | ConvertTo-Json -Depth 8)
+}
+
 # ------------------------------------------------------------------------------------------------
 $revit = Find-Revit
 $exe = Join-Path $revit.Directory 'RevitExtractor\RevitExtractor.exe'
@@ -443,6 +478,7 @@ foreach ($path in @($sample, $ModelPath2) | Where-Object { $_ }) {
 }
 
 $mode = if ($Cloud) { 'cloud' } elseif ($Cancel) { 'cancel' } elseif ($Parallel) { "parallel $Parallel" } elseif ($Analyzer) { 'normal + Analyzer' } else { 'normal' }
+if ($Named) { $mode += ' + Named' }
 Write-Step "export-runner integration ($mode)"
 Write-Host "Revit:            $($revit.Year) - $($revit.Directory)"
 Write-Host "Extractor:        $exe"
@@ -517,6 +553,11 @@ try {
             Write-Step 'Analyzer (status-window, Open in Analyzer)'
             if ($result.State -eq 'ok') { [void](Test-AnalyzerPlan $run) }
             else { Add-Failure 'Analyzer check needs a successful run' }
+        }
+        if ($Named) {
+            Write-Step 'Named copies (runner_cli.py name, real hard links)'
+            if ($result.State -eq 'ok') { Test-Named $run }
+            else { Add-Failure 'Named check needs a successful run' }
         }
     }
 
