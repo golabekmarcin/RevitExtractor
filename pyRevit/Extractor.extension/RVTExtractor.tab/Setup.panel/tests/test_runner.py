@@ -2119,6 +2119,9 @@ class QueueStagingTest(TempDirTest):
         self.assertEqual(self.starter.started, [], "no process for the failed job")
         self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"],
                          "the copies this job made are removed at once (no process ran)")
+        record = self.stage_json(job)
+        self.assertEqual((record["error"], record["cache_changed"]), ("StageError", 1),
+                         "stage.json tells why nothing ran: type name and a count only")
         queue.poll()
         self.assertEqual(self.job(queue, b).state, "running")
         self.assertEqual(self.starter.started_models(), [self.plain_job("b").model_path])

@@ -1178,16 +1178,18 @@ class ModelWindow(forms.WPFWindow):
         self._resume(resume)
         self._refresh_state()
 
-    def _read_in_background(self, name, call, status=None):
+    def _read_in_background(self, name, call, status=None, note=None):
         """Run `call` (a background read of one model) with the scan paused, the window off and
-        a wait cursor. Returns (snapshot, failure); failure is the exception, never raised."""
+        a wait cursor. Returns (snapshot, failure); failure is the exception, never raised.
+        `note` is added after the status text."""
         self._timer.Stop()                  # no file is read while the model is open
         self._show_error("")
-        self._set_status(status or tr(
+        shown = status or tr(
             "Reading {0} in the background (worksets closed, nothing is "
             "saved). This can take a few minutes…",
             "Odczytywanie {0} w tle (zamknięte zestawy robocze, nic nie jest "
-            "zapisywane). To może potrwać kilka minut…").format(name))
+            "zapisywane). To może potrwać kilka minut…").format(name)
+        self._set_status(shown + (" " + note if note else ""))
         self.IsEnabled = False
         Mouse.OverrideCursor = Cursors.Wait
         snapshot, failure = None, None
@@ -1408,20 +1410,34 @@ class ModelWindow(forms.WPFWindow):
                 len(unique) - MAX_NOTES_SHOWN)
         return text_
 
-    def _refresh_cloud(self, row, snapshot):
+    def _refresh_cloud(self, row, links):
         """The row's CloudRow with its size and time (and the link copies' in the cache list)
         read again after the open, which rewrote those cache files. Read-only stat."""
         cloud, files = rx_cloud.refresh_stat(
-            row.cloud, self._links_of(snapshot), self._cache_files(),
-            self._cloud_value("stat", os.stat))
+            row.cloud, links, self._cache_files(), self._cloud_value("stat", os.stat))
         self._cloud_files = files
         return cloud
 
-    def _refresh_opened(self, rows, snapshots):
-        """Row key -> refreshed CloudRow for every row that opened; call once all opens are done
-        (a later open can rewrite a link copy an earlier one shares)."""
-        return dict((row.key, self._refresh_cloud(row, snapshots[row.key]))
-                    for row in rows if row.key in snapshots)
+    def _refresh_opened(self, rows, link_lists):
+        """Row key -> refreshed CloudRow for every row, opened or not; call once all opens are
+        done. A later open can rewrite a link copy an earlier one shares, and a FAILED open can
+        rewrite the host's cache file too (Revit 2022, 2026-11-19: the copy then failed with
+        "The cache file changed")."""
+        return dict((row.key, self._refresh_cloud(row, link_lists.get(row.key))) for row in rows)
+
+    def _link_lists(self, rows, snapshots):
+        """Row key -> link list: the open's, or for a row that did not open the memory's list of
+        its scan-time copy (looked up before the refresh changes that copy's mtime)."""
+        memory = self._cloud["memory"]
+        lists = {}
+        for row in rows:
+            if row.key in snapshots:
+                lists[row.key] = self._links_of(snapshots[row.key])
+            else:
+                remembered = memory.links_for(link_key(row.cloud), row.cloud.cache_mtime)
+                if remembered is not None:
+                    lists[row.key] = remembered
+        return lists
 
     def _store_links(self, row, links, cloud=None):
         """An open succeeded: keep the link list in the cloud memory (a failed save only costs
@@ -1465,11 +1481,16 @@ class ModelWindow(forms.WPFWindow):
                         "Otwieranie {0} ({1} z {2}) ze wszystkimi zestawami roboczymi…") \
                 .format(row.Name, number, len(rows)) if all_worksets else None
             cloud = row.cloud
+            # only the root cache file is ever handed to Revit (rx_reader.root_cache_file checks again)
+            local = cloud.cache_path if getattr(cloud, "place", None) == "root" else None
             snapshot, failure = self._read_in_background(
-                row.Name, lambda cloud=cloud: self._read_cloud(
+                row.Name, lambda cloud=cloud, local=local: self._read_cloud(
                     cloud.region, cloud.project_guid, cloud.model_guid,
-                    all_worksets=all_worksets, values=all_worksets),
-                status=status)
+                    all_worksets=all_worksets, values=all_worksets, local_path=local),
+                status=status, note=tr(
+                    "If Revit shows a dialog of its own, close it: the export goes on after that.",
+                    "Jeśli Revit pokaże własne okno dialogowe, zamknij je: eksport będzie "
+                    "kontynuowany."))
             if failure is None and isinstance(snapshot, dict):
                 snapshots[row.key] = snapshot
                 continue
@@ -1542,9 +1563,9 @@ class ModelWindow(forms.WPFWindow):
         if opened is None:
             return None
         snapshots, reasons = opened
-        clouds = self._refresh_opened(models, snapshots)
+        link_lists = self._link_lists(models, snapshots)
+        clouds = self._refresh_opened(models, link_lists)
         self._after_opens(models, snapshots, clouds)
-        link_lists = dict((key, self._links_of(snapshot)) for key, snapshot in snapshots.items())
         memory = self._cloud["memory"]
         try:
             planned = {}
@@ -1593,7 +1614,7 @@ class ModelWindow(forms.WPFWindow):
             self._resume(resume)
             return
         snapshot = snapshots[row.key]
-        clouds = self._refresh_opened([row], snapshots)
+        clouds = self._refresh_opened([row], self._link_lists([row], snapshots))
         self._after_opens([row], snapshots, clouds, links=False)
         shown = dict(snapshot)
         shown["title"] = row.Name

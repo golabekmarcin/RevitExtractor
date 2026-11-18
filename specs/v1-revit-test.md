@@ -530,6 +530,8 @@ $m = Join-Path $run.FullName 'model'
 
 Expected: `Items in the model folder: 1`, `stage.json present: True`, `RevitExtractor processes: 0`.
 
+- [ ] **H8** A cloud open that fails. If the export or Choose views says "could not be opened", or Revit shows its own dialog while a model opens (for example "The host model failed to open"), close Revit's dialog first; the export then goes on from the cache. The open first tries the model's root cache file (never a `LinkedModels` or `CentralCache` copy), then the cloud path. Every failed open writes a local log to `%APPDATA%\RevitExtractor\logs\cloud-open-<yyyymmdd>.log` (about 200 KB at most per file, the last 10 days; GUIDs are masked, but Revit's own error texts can name the model, so the file stays on your computer). Send the entry of that run **privately**, not through git, and note which Revit dialog text you saw. A copy that fails before the Extractor starts leaves only `model\stage.json` in the run folder (its `error` field gives the exception type, `cache_changed` a count); there are no logs then.
+
 Open questions this part answers (also in `HANDOVER.md`): do journals after Revit 2022 keep the same lines (H1); folders cannot be chosen, only projects, because the journals carry no folder (H1 key names); does a background open of a cache file work without touching the cloud or the file (H3); can the journal or cache folder be moved (the kit only reports whether the fixed paths exist).
 
 ## Part I: file names, "named copies" (25 minutes)

@@ -434,13 +434,13 @@ class CatalogStates(CatalogCase):
         self.assertEqual(by_name["A.rvt"].region, "EMEA")
         self.assertEqual(by_name["Old.rvt"].region, "")
 
-    def test_every_state_and_the_newer_of_rule(self):
+    def test_every_state_and_the_root_rule(self):
         self.journal([path_line(P1, "Demo Tower", M3, "Alpha-Architecture.rvt"),
                       path_line(P1, "Demo Tower", M4, "Old-Model.rvt"),
                       path_line(P1, "Demo Tower", M5, "alpha-architecture.RVT"),
                       path_line(P2, "Other Site", M6, "Beta-MEP.rvt")])
         self.cache(P1, M3, "root", age_days=2.0)
-        self.cache(P1, M3, "linked", age_days=0.5)        # newer-of rule: the linked copy
+        self.cache(P1, M3, "linked", age_days=0.5)        # newer, but a host row is the root file
         self.cache(P1, M4, age_days=30.0)                  # stale
         self.cache(P1, M5, age_days=9.0)                   # duplicate name (older)
         self.memory_ = Memory(os.path.join(self.tmp, "mem.json"))
@@ -449,8 +449,9 @@ class CatalogStates(CatalogCase):
         catalog = self.run_scan(self.memory_)
         by_name = {r.name: r for r in catalog.rows}
         self.assertEqual(by_name["Alpha-Architecture.rvt"].state, "ok")
-        self.assertEqual(by_name["Alpha-Architecture.rvt"].place, "linked")
-        self.assertAlmostEqual(by_name["Alpha-Architecture.rvt"].cache_mtime, NOW - 0.5 * DAY)
+        self.assertEqual(by_name["Alpha-Architecture.rvt"].place, "root")
+        self.assertNotIn("LinkedModels", by_name["Alpha-Architecture.rvt"].cache_path)
+        self.assertAlmostEqual(by_name["Alpha-Architecture.rvt"].cache_mtime, NOW - 2.0 * DAY)
         self.assertEqual(by_name["Old-Model.rvt"].state, "stale")
         self.assertTrue(by_name["Old-Model.rvt"].enabled)
         self.assertIn(by_name["Old-Model.rvt"].cache_date, by_name["Old-Model.rvt"].note)

@@ -477,7 +477,8 @@ def _write_stage_record(folder, job):
                          "mode": job.stage_modes.get(item["name"])}   # linked | copied | None
                         for item in job.stage["items"]],
               # how the clean-up of the staged files ended; error = exception type and code only
-              "cleanup": job.cleanup, "cleanup_error": job.cleanup_error}
+              "cleanup": job.cleanup, "cleanup_error": job.cleanup_error,
+              "error": job.stage_error}    # a failed copy: exception type and code only
     data = dumps_ascii(record, indent=2, sort_keys=True).encode("ascii")
     with open(os.path.join(folder, STAGE_RECORD), "wb") as handle:
         handle.write(data)
@@ -545,6 +546,7 @@ class Job(object):
         self.stage_link_count = 0   # files that will be (are) hard-linked; stage_total counts copies only
         self.stage_watch = None     # every cache file to compare after the run (default: stage items)
         self.cache_changed = None
+        self.stage_error = None     # a failed copy: exception type and code (stage.json)
         self._linked_names = set()
         self.cleanup = None         # None | "pending" | "done" | "incomplete"
         self.cleanup_error = None   # type name and error code of the last failed delete
@@ -1113,6 +1115,9 @@ class Queue(object):
 
     def _stage_failed(self, job, error):
         self._close_copies(job)
+        # stage.json (written by the clean-up below) says why the Extractor never ran
+        job.stage_error = _short_error(error)
+        job.cache_changed = len(self._sources_changed(job))
         self._fail(job, tr("The copy from the cache failed: {0}",
                            "Kopiowanie z pamięci podręcznej nie powiodło się: {0}")
                    .format(_error_text(error)))

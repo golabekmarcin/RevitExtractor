@@ -615,37 +615,225 @@ def _release_warning(detail):
               "(Zwolnij wszystkie moje).").format(detail)
 
 
-def read_cloud(app, DB, region, project_guid, model_guid, caps, values=True, all_worksets=True):
+def root_cache_file(path):
+    """True for a root cache file <...>\\<project GUID>\\<model GUID>.rvt: never a copy under
+    LinkedModels or CentralCache (owner decision 2026-11-19: only the root file is opened)."""
+    if not isinstance(path, _TEXT_TYPES) or not path.strip():
+        return False
+    parts = [part.lower() for part in re.split(r"[\\/]+", text(path).strip()) if part]
+    return (len(parts) >= 3 and parts[-1].endswith(".rvt")
+            and "linkedmodels" not in parts and "centralcache" not in parts)
+
+
+def _watch_dialogs(uiapp, seen):
+    """Subscribe a READ-ONLY UIApplication.DialogBoxShowing logger (revit-api 2022 + 2026,
+    member f79bb5c99496a61583d25a1e): each dialog Revit shows is appended to `seen` and never
+    answered (no OverrideResult: no dialog id or cancel-only result is documented for Revit's
+    own open dialogs). Returns the unsubscribe function; never raises. UNVERIFIED in Revit:
+    subscribing a Python function from a command and removing it with -=."""
+    if uiapp is None:
+        return lambda: None
+
+    def on_dialog(sender, args):
+        try:
+            entry = {"kind": _type_names(args)[0], "id": text(getattr(args, "DialogId", "") or "")}
+            for member in ("Message", "DialogType"):
+                value = getattr(args, member, None)
+                if value is not None and value != "":
+                    entry[member.lower()] = text(value)
+            seen.append(entry)
+        except Exception:
+            pass
+    try:
+        uiapp.DialogBoxShowing += on_dialog
+    except Exception as error:
+        seen.append({"kind": "hook not subscribed", "id": _type_names(error)[0]})
+        return lambda: None
+
+    def stop():
+        try:
+            uiapp.DialogBoxShowing -= on_dialog
+        except Exception:
+            pass
+    return stop
+
+
+def _value(read):
+    try:
+        return text(read())
+    except Exception as error:
+        return "unreadable (%s)" % _type_names(error)[0]
+
+
+def _diagnostics_lines(app, region, project_guid, model_guid, all_worksets, local_path, trace,
+                       error):
+    """The local log entry of one failed read_cloud (rx_cloud_log masks every GUID again)."""
+    import datetime
+    import rx_cloud_log
+    lines = ["=== %s cloud open failed (stages reached: %s)" % (
+        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        " > ".join(trace.get("stages") or ["none"])),
+        "revit: version=%s build=%s subversion=%s" % (
+            _value(lambda: app.VersionNumber), _value(lambda: app.VersionBuild),
+            _value(lambda: app.SubVersionNumber)),
+        "documents empty at start: %s" % trace.get("documents_empty"),
+        "logged in: %s" % trace.get("logged_in"),
+        "region: %r" % (region,),
+        "project guid: %s; model guid: %s" % (rx_cloud_log.guid_shape(project_guid),
+                                              rx_cloud_log.guid_shape(model_guid)),
+        "options: DetachFromCentralOption=DoNotDetach, worksets=%s, Audit=False" % (
+            "OpenAllWorksets" if _is_bool(all_worksets, True) else "CloseAllWorksets"),
+        "local path: %s" % ("none" if not local_path else
+                            "root cache file" if root_cache_file(local_path)
+                            else "refused (not a root cache file)")]
+    for number, attempt in enumerate(trace.get("attempts") or [], 1):
+        lines.append("attempt %d: route=%s stage=%s callback=%s outcome=%s" % (
+            number, attempt.get("route"), attempt.get("stage"), attempt.get("callback"),
+            attempt.get("outcome")))
+        if attempt.get("error") is not None:
+            lines.extend(rx_cloud_log.exception_lines(attempt["error"], "    "))
+        if attempt.get("traceback"):
+            lines.append("    python traceback:")
+            lines.extend("      " + line for line in attempt["traceback"].splitlines())
+    dialogs = trace.get("dialogs") or []
+    lines.append("revit dialogs during the read: %d" % len(dialogs))
+    for number, dialog in enumerate(dialogs, 1):
+        lines.append("  dialog %d: %s" % (number, ", ".join(
+            "%s=%s" % (key, dialog[key]) for key in sorted(dialog))))
+    lines.append("raised:")
+    lines.extend(rx_cloud_log.exception_lines(error, "  "))
+    return lines
+
+
+def _log_hint():
+    import rx_cloud_log
+    return tr("Details are in the log folder {0}.",
+              "Szczegóły są w folderze logów {0}.").format(rx_cloud_log.FOLDER_TEXT)
+
+
+def _dialog_hint():
+    return tr("Revit showed its own dialog while opening the model.",
+              "Revit pokazał własne okno dialogowe podczas otwierania modelu.")
+
+
+def read_cloud(app, DB, region, project_guid, model_guid, caps, values=True, all_worksets=True,
+               local_path=None, diagnostics=None, uiapp=None):
     """Snapshot like read_model plus "links" (always) and "values" (when asked) from one
     in-place open of the cloud model; "release_warning" (bilingual) when relinquishing failed.
     "title" and "path" are "": the caller shows the catalog names. Raises ReadError.
-    Call only from the button's command (modal), never from the modeless status window."""
+    Call only from the button's command (modal), never from the modeless status window.
+
+    Routes, in order, each logged: the ROOT cache file by local path (`local_path`, only when
+    root_cache_file says so), then the cloud path from region + GUIDs. On any failure
+    `diagnostics(lines)` (rx_cloud_log.append) gets the local log entry; when it returns a
+    path, a ReadError's text names the log folder. `uiapp` (optional) gets a read-only
+    DialogBoxShowing logger for the time of the call."""
+    trace = {"stages": [], "attempts": [], "dialogs": []}
+    stop = _watch_dialogs(uiapp, trace["dialogs"])
+    try:
+        return _read_cloud(app, DB, region, project_guid, model_guid, caps, values,
+                           all_worksets, local_path, trace)
+    except Exception as error:
+        written = None
+        if diagnostics is not None:
+            try:
+                written = diagnostics(_diagnostics_lines(app, region, project_guid, model_guid,
+                                                         all_worksets, local_path, trace, error))
+            except Exception:
+                written = None
+        if isinstance(error, ReadError):
+            shown = [d for d in trace["dialogs"] if d.get("kind") != "hook not subscribed"]
+            extra = [_dialog_hint()] if shown else []
+            if written:
+                extra.append(_log_hint())
+            if extra:
+                error.message = " ".join([error.message] + extra)
+                error.args = (error.message,)
+        raise error     # not a bare raise: on IronPython 2.7 it would re-raise a logger error
+    finally:
+        stop()
+
+
+def _open_route(app, DB, route, local_path, region, project_guid, model_guid, all_worksets,
+                attempt):
+    """One OpenDocumentFile call. revit-api 2022 + 2026: ConvertUserVisiblePathToModelPath
+    (17eab931ac5e34cfcd3df0b4), ConvertCloudGUIDsToCloudPath (3510449bfb07e6164835e614),
+    OpenDocumentFile(ModelPath, OpenOptions, IOpenFromCloudCallback) (87d498f0058e5941169ea91b;
+    the callback is "only used for opening cloud model"). UNDOCUMENTED and not run in Revit:
+    a DoNotDetach open of a cloud model's root cache file by its local path."""
+    attempt["stage"] = "path conversion"
+    if route == "local":
+        model_path = DB.ModelPathUtils.ConvertUserVisiblePathToModelPath(text(local_path).strip())
+    else:
+        from System import Guid  # Revit only; tests put a fake in sys.modules
+        model_path = DB.ModelPathUtils.ConvertCloudGUIDsToCloudPath(
+            text(region).strip(), Guid(text(project_guid)), Guid(text(model_guid)))
+    attempt["stage"] = "open"
+    options = cloud_open_options(DB, all_worksets)
+    attempt["callback_object"] = callback = cloud_open_callback(DB)
+    attempt["callback"] = type(callback).__name__
+    return app.OpenDocumentFile(model_path, options, callback)
+
+
+def _read_cloud(app, DB, region, project_guid, model_guid, caps, values, all_worksets,
+                local_path, trace):
+    trace["stages"].append("guard")
+    try:
+        trace["documents_empty"] = app.Documents.IsEmpty
+    except Exception as error:
+        trace["documents_empty"] = "unreadable (%s)" % _type_names(error)[0]
     _require_no_documents(app)
+    trace["stages"].append("sign-in")
     try:
         logged_in, detail = app.IsLoggedIn, ""  # static; read via the instance (UNVERIFIED)
     except Exception as error:
         logged_in, detail = None, _type_names(error)[0]
+    trace["logged_in"] = logged_in if not detail else "unreadable (%s)" % detail
     if not _is_bool(logged_in, True):
         raise _not_signed_in(detail)
-    if not isinstance(region, _TEXT_TYPES) or not region.strip():
+    routes = []
+    if root_cache_file(local_path):
+        routes.append("local")
+    if isinstance(region, _TEXT_TYPES) and region.strip():
+        routes.append("cloud")
+    if not routes:
         raise ReadError("open_failed", tr(
             "The cloud region of this model is unknown, so it cannot be opened. Open it once "
             "in Revit, then scan again.",
             "Region chmury tego modelu jest nieznany, więc nie można go otworzyć. Otwórz go raz "
             "w Revicie i przeskanuj ponownie."), "region unknown")
-    callback = None
-    try:
-        from System import Guid  # Revit only; tests put a fake in sys.modules
-        model_path = DB.ModelPathUtils.ConvertCloudGUIDsToCloudPath(
-            text(region).strip(), Guid(text(project_guid)), Guid(text(model_guid)))
-        options = cloud_open_options(DB, all_worksets)
-        callback = cloud_open_callback(DB)
-        doc = app.OpenDocumentFile(model_path, options, callback)
-    except Exception as error:
-        raise _cloud_open_failed(error, getattr(callback, "conflicts", 0))
+    doc, failures = None, []
+    for route in routes:
+        if failures and not _is_bool(app.Documents.IsEmpty, True):
+            trace["attempts"].append({"route": route, "stage": "guard",
+                                      "outcome": "skipped: a document is open"})
+            break
+        attempt = {"route": route}
+        trace["attempts"].append(attempt)
+        try:
+            doc = _open_route(app, DB, route, local_path, region, project_guid, model_guid,
+                              all_worksets, attempt)
+        except Exception as error:
+            import traceback
+            attempt["outcome"], attempt["error"] = "failed", error
+            attempt["traceback"] = traceback.format_exc()
+            conflicts = getattr(attempt.get("callback_object"), "conflicts", 0)
+            failures.append(_cloud_open_failed(error, conflicts))
+            if (conflicts or failures[-1].kind == "not_signed_in"
+                    or "OperationCanceledException" in _type_names(error)):
+                break   # the next route would hit the same conflict, sign-in or cancel
+            continue
+        if doc is None:
+            attempt["outcome"] = "returned nothing"
+            failures.append(ReadError("open_failed", tr(
+                "Revit could not open the cloud model.",
+                "Revit nie mógł otworzyć modelu w chmurze.")))
+            continue
+        attempt["outcome"] = "opened"
+        break
     if doc is None:
-        raise ReadError("open_failed", tr("Revit could not open the cloud model.",
-                                          "Revit nie mógł otworzyć modelu w chmurze."))
+        signed_out = [item for item in failures if item.kind == "not_signed_in"]
+        raise (signed_out or failures)[0]
 
     # `doc` is the document this call opened. Release runs even when collecting fails, and
     # Close(False) runs exactly once in `finally`, even when release raises.
@@ -654,6 +842,7 @@ def read_cloud(app, DB, region, project_guid, model_guid, caps, values=True, all
     ifc_setups, ifc_error = [], ""
     try:
         try:
+            trace["stages"].append("collect")
             kept = _kept_views(doc, DB)
             view_rows = collect_views(doc, DB, kept)
             if _is_bool(values, True):
@@ -663,8 +852,11 @@ def read_cloud(app, DB, region, project_guid, model_guid, caps, values=True, all
             link_rows = collect_cloud_links(doc, DB)
         except Exception as error:
             failure = error
+            trace["stages"].append("collect failed")
+        trace["stages"].append("release")
         released, release_detail = release(doc, DB)
     finally:
+        trace["stages"].append("close")
         closed, unused = _close(doc)
     doc = None
     warning = "" if released else _release_warning(release_detail)

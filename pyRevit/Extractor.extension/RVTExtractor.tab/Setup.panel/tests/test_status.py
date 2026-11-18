@@ -117,8 +117,9 @@ class ProgressInfo(unittest.TestCase):
 
 # --- Criterion 2: job_view ---------------------------------------------------------------------
 
-def make_job(state, started=None, ended=None, result=None, with_paths=True, cancel=False):
+def make_job(state, started=None, ended=None, result=None, with_paths=True, cancel=False, pid=None):
     job = rx_runner.Job(MODEL, INDEX, REVIT, OUT)
+    job.pid = pid
     job.id = "job-1"
     job.state = state
     job.queued_at = NOW
@@ -155,7 +156,7 @@ class JobView(unittest.TestCase):
             ("cancelling", lambda: job_view(make_job("running", NOW, cancel=True), INFO,
                                             at(1, 5), None)),
             ("ok", lambda: job_view(make_job("ok", NOW, at(2), ok), None, at(9), None)),
-            ("failed", lambda: job_view(make_job("failed", NOW, at(2), failed), None, at(9),
+            ("failed", lambda: job_view(make_job("failed", NOW, at(2), failed, pid=4242), None, at(9),
                                         None)),
             ("cancelled", lambda: job_view(make_job("cancelled", NOW, at(1), result(
                 "cancelled", "Export cancelled.")), None, at(9), None)),
@@ -228,6 +229,7 @@ class JobView(unittest.TestCase):
 
     def test_failed_points_at_the_logs(self):
         job = make_job("failed", NOW, at(1, 2, 1), result("failed", "Exit code 1."))
+        job.pid = 4242
         view = job_view(job, None, at(9), None)
         self.assertEqual(view["state_text"], "Failed")
         self.assertTrue(view["progress"].startswith("Exit code 1."))
@@ -244,7 +246,27 @@ class JobView(unittest.TestCase):
         self.assertEqual(job_view(job, None, at(9), None)["progress"], message)
         incomplete = rx_runner.check_result(0, "", False, True).message
         job = make_job("failed", NOW, at(1), result("failed", incomplete))
+        job.pid = 4242
         self.assertIn("logs are in the run folder", job_view(job, None, at(9), None)["progress"])
+
+    def test_a_copy_that_failed_before_the_start_promises_no_logs(self):
+        # Revit 2022, 2026-11-19: "The logs are in the run folder" but there were none.
+        job = make_job("failed", NOW, at(1), result(
+            "failed", "The copy from the cache failed: The cache file changed while it was "
+            "copied. Export again."))
+        job.stage = {"items": [], "notes": []}
+        progress = job_view(job, None, at(9), None)["progress"]
+        self.assertNotIn("logs", progress)
+        self.assertIn("model\\stage.json", progress)
+        plain = make_job("failed", NOW, at(1), result("failed", "The export could not start: x"))
+        self.assertEqual(job_view(plain, None, at(9), None)["progress"],
+                         "The export could not start: x", "no Extractor run, no log hint")
+
+    def test_the_copy_record_hint_is_polish_in_polish(self):
+        job = make_job("failed", NOW, at(1), result("failed", "x"))
+        job.stage = {"items": [], "notes": []}
+        progress = under_polish(job_view, job, None, at(9), None)["progress"]
+        self.assertIn("Extractor nie wystartował", progress)
 
     def test_failed_start_has_no_run_folder(self):
         job = make_job("failed", NOW, NOW, result("failed", "The export could not start: x"),

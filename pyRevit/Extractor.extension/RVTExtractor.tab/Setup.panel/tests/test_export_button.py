@@ -1029,9 +1029,11 @@ class ModelWindowHarness(object):
             raise self.read_error
         return self.read_answer
 
-    def read_cloud(self, region, project_guid, model_guid, all_worksets=True, values=True):
+    def read_cloud(self, region, project_guid, model_guid, all_worksets=True, values=True,
+                   local_path=None):
         self.cloud_opens.append({"args": (region, project_guid, model_guid),
                                  "all_worksets": all_worksets, "values": values,
+                                 "local_path": local_path,
                                  "status": self.window.status_text.Text,
                                  "timer_on": TIMERS[-1].IsEnabled, "cursor": MOUSE.OverrideCursor,
                                  "enabled": self.window.IsEnabled})
@@ -2741,12 +2743,19 @@ class ScriptTests(unittest.TestCase):
         with patch.object(rx_reader, "read_cloud",
                           Mock(return_value={"values": values})) as read_cloud:
             snapshot = window.read_cloud("US", CP1, CM3)
-        read_cloud.assert_called_once_with(self.app, self.db, "US", CP1, CM3, window.caps,
-                                           values=True, all_worksets=True)
+        kwargs = read_cloud.call_args[1]
+        self.assertEqual(read_cloud.call_args[0], (self.app, self.db, "US", CP1, CM3, window.caps))
+        self.assertEqual((kwargs["values"], kwargs["all_worksets"], kwargs["local_path"]),
+                         (True, True, None))
+        self.assertTrue(callable(kwargs["diagnostics"]))
+        self.assertIsNotNone(kwargs["uiapp"], "the dialog logger gets the UIApplication")
         with patch.object(rx_reader, "read_cloud", Mock(return_value={})) as closed:
             window.read_cloud("US", CP1, CM3, all_worksets=False, values=False)
-        closed.assert_called_once_with(self.app, self.db, "US", CP1, CM3, window.caps,
-                                       values=False, all_worksets=False)
+        self.assertEqual((closed.call_args[1]["values"], closed.call_args[1]["all_worksets"]),
+                         (False, False))
+        with patch.object(rx_reader, "read_cloud", Mock(return_value={})) as local:
+            window.read_cloud("US", CP1, CM3, local_path="C:\\root.rvt")
+        self.assertEqual(local.call_args[1]["local_path"], "C:\\root.rvt")
         self.assertEqual(snapshot["catalog"], {"views": ["Zone"], "sheets": []})
 
     def test_system_tokens_name_the_model_by_its_real_file_name(self):
@@ -2794,6 +2803,7 @@ CDAY = 86400.0
 GUID_ANYWHERE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                            r"[0-9a-fA-F]{12}")
 CACHE_ROOT = os.path.join("C:\\", "cache-root")
+DIALOG_NOTE = " If Revit shows a dialog of its own, close it: the export goes on after that."
 CP1_KEY = rx_cloud.project_key(CACC, CP1)
 CP2_KEY = rx_cloud.project_key(CACC, CP2)
 
@@ -3445,8 +3455,8 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.fire("export_btn")
         self.assertEqual([o["args"][2] for o in self.cloud_opens], [CM3, CM4])
         self.assertEqual([o["status"] for o in self.cloud_opens], [
-            "Opening Alpha-Architecture.rvt (1 of 2) with all worksets\u2026",
-            "Opening Beta-MEP.rvt (2 of 2) with all worksets\u2026"])
+            "Opening Alpha-Architecture.rvt (1 of 2) with all worksets\u2026" + DIALOG_NOTE,
+            "Opening Beta-MEP.rvt (2 of 2) with all worksets\u2026" + DIALOG_NOTE])
         self.assertEqual([job["model_name"] for job in self.submitted[0]["jobs"]],
                          ["Alpha-Architecture.rvt", "Beta-MEP.rvt"])
         self.assertIsNone(MOUSE.OverrideCursor)
@@ -3459,7 +3469,8 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
             self.tick_cloud("Alpha-Architecture.rvt")
             self.fire("export_btn")
         self.assertEqual(self.cloud_opens[0]["status"], "Otwieranie Alpha-Architecture.rvt (1 z 1) "
-                         "ze wszystkimi zestawami roboczymi\u2026")
+                         "ze wszystkimi zestawami roboczymi\u2026 Je\u015bli Revit poka\u017ce w\u0142asne "
+                         "okno dialogowe, zamknij je: eksport b\u0119dzie kontynuowany.")
 
     def test_the_closed_worksets_status_is_polish_in_polish(self):
         with patch.dict(sys.modules, polish_modules()):
@@ -3563,15 +3574,64 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(len(stage["items"]), 1)
         self.assertIn("Beta-MEP.rvt", stage["notes"][0])
 
-    def test_a_failed_open_leaves_the_scan_time_numbers_alone(self):
+    def test_a_failed_open_that_rewrote_the_cache_files_plans_the_new_numbers(self):
+        # Revit 2022 (2026-11-19): an open that raised still refreshed the cache file, and the
+        # scan-time numbers made the copy fail with "The cache file changed".
         self.cloud_error = RuntimeError("boom")
         self.open_cloud()
         alpha = self.cby("Alpha-Architecture.rvt").cloud
-        self.disk = {alpha.cache_path: (99, CNOW)}
+        beta_path = self.alpha_and_beta_files()[1]
+        self.memory.store_links(logic.link_key(alpha), alpha.cache_mtime,
+                                [self.link("Beta-MEP", CP1, CM4)])
+        self.disk = {alpha.cache_path: (99, CNOW), beta_path: (77, CNOW)}
         self.tick_cloud("Alpha-Architecture.rvt")
         self.fire("export_btn")
-        item = self.submitted[0]["jobs"][0]["stage"]["items"][0]
-        self.assertEqual((item["size"], item["mtime"]), (alpha.size, alpha.cache_mtime))
+        items = self.submitted[0]["jobs"][0]["stage"]["items"]
+        self.assertEqual([(i["name"], i["size"], i["mtime"]) for i in items],
+                         [("Alpha-Architecture.rvt", 99, CNOW), ("Beta-MEP.rvt", 77, CNOW)],
+                         "the remembered links of the scan-time copy are kept and re-stat'ed")
+
+    def test_revit_opens_the_root_cache_file_even_when_a_linked_copy_is_newer(self):
+        root = [f for f in self.files if f.model_guid == CM3][0]
+        self.files.append(cloud_file(CP1, CM3, mtime=CNOW - 60, size=99, place="linked"))
+        self.cscan = FakeCloudScan(self.files)
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertEqual(self.cloud_opens[0]["local_path"], root.path)
+        self.assertNotIn("LinkedModels", self.cloud_opens[0]["local_path"])
+        self.assertTrue(rx_reader.root_cache_file(self.cloud_opens[0]["local_path"]))
+        host = self.submitted[0]["jobs"][0]["stage"]["items"][0]
+        self.assertEqual(host["src"], root.path, "the staged host is the file Revit opened")
+
+    def test_a_model_known_only_from_linked_models_gets_no_local_path(self):
+        self.files = [cloud_file(CP1, CM3, place="linked")]
+        self.cscan = FakeCloudScan(self.files)
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertIsNone(self.cloud_opens[0]["local_path"])
+
+    def test_the_opening_status_says_to_close_a_revit_dialog(self):
+        self.open_cloud()
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        self.assertIn("If Revit shows a dialog of its own, close it", self.cloud_opens[0]["status"])
+
+    def test_a_failed_open_whose_plan_matches_the_disk_copies_without_the_changed_error(self):
+        import rx_cloud_stage
+        self.cloud_error = RuntimeError("boom")
+        self.open_cloud()
+        alpha = self.cby("Alpha-Architecture.rvt").cloud
+        self.disk = {alpha.cache_path: (5, CNOW)}
+        self.tick_cloud("Alpha-Architecture.rvt")
+        self.fire("export_btn")
+        stage = self.submitted[0]["jobs"][0]["stage"]
+        steps = rx_cloud_stage.copy_steps(
+            stage, os.path.join(self.tmp, "run", "model"),
+            open=lambda path, mode: io.BytesIO(b"12345"),
+            stat=lambda path: self.stat(path) if path in self.disk else os.stat(path))
+        self.assertEqual(list(steps)[-1][:2], (5, 5), "no 'The cache file changed' error")
 
     def test_choose_views_plans_from_the_refreshed_files(self):
         self.cloud_answer = {"views_2d": [], "views_3d": [], "ifc_setups": [], "ifc_error": "",
@@ -3744,9 +3804,9 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
                          [(False, False), (True, True)])
         self.assertEqual(self.cloud_opens[0]["status"],
                          "Reading Alpha-Architecture.rvt in the background (worksets closed, "
-                         "nothing is saved). This can take a few minutes…")
+                         "nothing is saved). This can take a few minutes…" + DIALOG_NOTE)
         self.assertEqual(self.cloud_opens[1]["status"],
-                         "Opening Alpha-Architecture.rvt (1 of 1) with all worksets…")
+                         "Opening Alpha-Architecture.rvt (1 of 1) with all worksets…" + DIALOG_NOTE)
         for opened in self.cloud_opens:
             self.assertIsNone(GUID_ANYWHERE.search(opened["status"]))
         snapshot, note = made[0]

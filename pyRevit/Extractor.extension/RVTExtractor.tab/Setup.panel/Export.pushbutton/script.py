@@ -25,6 +25,7 @@ rx_dotnet.ensure_assemblies()   # .NET 8 (Revit 2025+) needs some assemblies add
 
 import rx_catalog
 import rx_cloud
+import rx_cloud_log
 import rx_reader
 from rx_capabilities import for_revit
 from rx_export_logic import CONFIG_SECTION, load_settings, save_settings
@@ -274,9 +275,14 @@ def main():
         extra = {"links": True} if links else {}
         return rx_reader.read_model(app, DB, path, caps, workshared, **extra)
 
-    def read_cloud(region, project_guid, model_guid, all_worksets=True, values=True):
-        snapshot = rx_reader.read_cloud(app, DB, region, project_guid, model_guid, caps,
-                                        values=values, all_worksets=all_worksets)
+    log_folder = rx_cloud_log.log_folder(appdata)   # %APPDATA%: never the run folder or the cache
+
+    def read_cloud(region, project_guid, model_guid, all_worksets=True, values=True,
+                   local_path=None):
+        snapshot = rx_reader.read_cloud(
+            app, DB, region, project_guid, model_guid, caps, values=values,
+            all_worksets=all_worksets, local_path=local_path, uiapp=uiapp,
+            diagnostics=lambda lines: rx_cloud_log.append(log_folder, lines))
         if isinstance(snapshot.get("values"), dict):
             snapshot["catalog"] = rx_reader.collect_catalog(snapshot["values"])
         return snapshot

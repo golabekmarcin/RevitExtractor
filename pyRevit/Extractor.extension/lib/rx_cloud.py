@@ -524,10 +524,24 @@ def _newest_copies(cache_files):
     return dict((key, value[1]) for key, value in best.items())
 
 
+def _host_copies(cache_files):
+    """(project, model) -> the file a row stands for: the newest ROOT copy
+    (<account>\\<project>\\<model>.rvt) over every account, the newest LinkedModels copy only
+    when there is no root copy. Owner decision 2026-11-19: Revit opens the root file in place,
+    never a LinkedModels or CentralCache copy. Links still take _newest_copies."""
+    best = {}
+    for item in cache_files:
+        key = (item.project_guid, item.model_guid)
+        rank = (1 if item.place == "root" else 0, item.mtime)
+        if key not in best or rank > best[key][0]:
+            best[key] = (rank, item)
+    return dict((key, value[1]) for key, value in best.items())
+
+
 def build_catalog(cache_files, memory, now, stale_days=STALE_DAYS, counts=None, message=""):
     """Rows, projects and counts from the cache files and the name memory. Pure."""
     counts = dict(counts or {})
-    copies = _newest_copies(cache_files)
+    copies = _host_copies(cache_files)
     rows, unnamed, project_accounts = [], {}, {}
     for (project, model), item in sorted(copies.items()):
         pkey = project_key(item.account, project)

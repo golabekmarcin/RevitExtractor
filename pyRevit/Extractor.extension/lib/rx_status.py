@@ -435,10 +435,19 @@ def job_view(job, info, now, position, held=False, isdir=os.path.isdir):
     elif state == FAILED:
         state_text = tr("Failed", "Błąd")
         progress = message
-        # The runner's exit-code and failed-jobs messages already name console.log.
-        if paths is not None and "console.log" not in progress:
-            progress = (progress + " " if progress else "") + tr(
-                "The logs are in the run folder.", "Logi są w folderze eksportu.")
+        # Logs exist only once the Extractor started (pid); a copy that failed before the start
+        # leaves model\stage.json only. The exit-code messages already name console.log.
+        hint = None
+        if paths is not None and getattr(job, "pid", None) is not None:
+            if "console.log" not in progress:
+                hint = tr("The logs are in the run folder.", "Logi są w folderze eksportu.")
+        elif paths is not None and getattr(job, "stage", None) is not None:
+            hint = tr("The Extractor did not start; the run folder holds only the copy record "
+                      "(model\\stage.json).",
+                      "Extractor nie wystartował; folder eksportu zawiera tylko zapis kopiowania "
+                      "(model\\stage.json).")
+        if hint:
+            progress = (progress + " " if progress else "") + hint
     elif state == CANCELLED:
         state_text = tr("Cancelled", "Anulowany")
         progress = message

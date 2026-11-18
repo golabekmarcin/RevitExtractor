@@ -76,7 +76,7 @@ Layout as Q14, about 760 × 420: title and a summary line, the job list, a hint 
 | Timer | A `DispatcherTimer` (1 s) owned by the session, not by the window. Each tick calls `queue.poll()`, then `progress_info(queue.tail(id))` for running jobs. It stops when the queue is idle and starts on submit. Ticks wait while Revit is busy or shows a modal dialog, so the next queued export can start late. |
 | Progress | Running row: elapsed time, the last finished step (`rvt-TaskName` of the last `rvt-TaskData` line, as the Extractor writes it, in English) and the last `[[progress]]` percentage, if any. Task lines arrive only when a step completes. |
 | Waiting | Queued row: its position. When `queue.held`: "another Extractor is running on this computer". |
-| Result | The runner's `Result.message`. A failed row also says the logs are in the run folder. |
+| Result | The runner's `Result.message`. A failed row whose Extractor started also says the logs are in the run folder; a cloud job whose copy failed before the start says the run folder holds only `model\stage.json`. |
 | Footer | Cancel export, Open output folder, Open in Analyzer, Close. They act on the highlighted row and are enabled by `job_view`. |
 | Cancel | `queue.cancel(id)`, no confirmation: the run folder stays. For a cloud job, the runner deletes the copies it staged in `<run>\model\` (after the process tree has exited, or at once during staging); `stage.json` stays. |
 | Open output folder | `output` for an `ok` job, the run folder otherwise. Shell-open of an existing folder, no arguments. |

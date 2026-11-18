@@ -98,6 +98,6 @@ H1 journals found and names right (Polish and `%20` names); H2 the current-sessi
 3. Projects ticked by default [none].
 4. Folder selection: does the browser JSON carry a folder field? H1 lists the keys only [project only in v1].
 5. Add the fallback button [yes].
-6. Which copy: root, `LinkedModels` or `CentralCache` [newer of root and `LinkedModels`].
+6. Which copy: root, `LinkedModels` or `CentralCache` [newer of root and `LinkedModels`; changed 2026-11-19 by the owner for the host row: the root file whenever one exists (Revit opens it in place, and it is the staged host), `LinkedModels` only when no root copy exists; links keep the newer-of rule; `CentralCache` never].
 7. Can the journal or cache folder be moved through `Revit.ini` or Options? [fixed paths; `-Check` reports whether they exist].
 8. Missing link: warn or fail [warn and export].
