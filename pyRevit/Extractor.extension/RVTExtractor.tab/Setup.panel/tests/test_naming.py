@@ -200,6 +200,9 @@ class CheckNaming(unittest.TestCase):
         self.assertTrue(rx_naming.needs_values(check_naming(
             self.good(templates={"sheet": "{Date}", "view": "{ViewName}"}))))
         self.assertFalse(rx_naming.needs_values(check_naming(self.good())))
+        # Different system-only templates still need the reader: it says which file is a sheet.
+        self.assertTrue(rx_naming.needs_values(check_naming(
+            self.good(templates={"sheet": "{Date}", "view": "{ModelName}"}))))
         for bad in ("x", {"sheet": "{Nope}", "view": ""}, {"sheet": "", "view": 3}):
             with self.assertRaises(NamingError, msg=repr(bad)):
                 check_naming(self.good(templates=bad))

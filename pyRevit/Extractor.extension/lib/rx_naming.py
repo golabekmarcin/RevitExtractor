@@ -234,7 +234,10 @@ def check_naming(naming):
 
 def needs_values(parsed):
     """True when either parsed template (the dict check_naming returns) uses a sheet or view
-    value (a model token or {param:})."""
+    value (a model token or {param:}), or when the two differ: only the reader knows which file
+    is a sheet and which a view."""
+    if parsed.get("sheet") != parsed.get("view"):
+        return True
     return any(kind == "param" or (kind == "token" and _SCOPES[item] == "model")
                for template in parsed.values() for kind, item in template)
 
