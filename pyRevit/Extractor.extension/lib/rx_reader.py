@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Read one model's views in the background and leave the file untouched.
 
-Opens detached with all worksets closed, collects the view rows, and closes with Close(False)
-exactly once. Never saves, never starts a transaction, never closes a document it did not open.
+read_model opens detached with all worksets closed, collects the view rows, and closes with
+Close(False) exactly once. read_cloud opens a cloud model in place (all worksets open),
+collects, relinquishes, and closes the same way. Never saves, never synchronises with central,
+never starts a transaction, never closes a document it did not open.
 No Revit import: the caller passes `app` (Autodesk.Revit.ApplicationServices.Application) and
 `DB` (Autodesk.Revit.DB); a test enforces this. Compatible with pyRevit IronPython 2.7.
 Spec: specs/SPEC-model-reader.md. Nothing here has been run inside Revit.
@@ -39,7 +41,7 @@ VIEW_KINDS = {
     "ThreeD": ("3D views", "Widoki 3D"),
 }
 
-READ_ERROR_KINDS = ("busy", "open_failed", "close_failed")
+READ_ERROR_KINDS = ("busy", "open_failed", "close_failed", "not_signed_in")
 
 
 def _is_bool(value, expected):
@@ -49,7 +51,7 @@ def _is_bool(value, expected):
 
 
 class ReadError(Exception):
-    """kind: "busy" | "open_failed" | "close_failed". message: bilingual (already translated).
+    """kind: one of READ_ERROR_KINDS. message: bilingual (already translated).
     detail: the original host text, if any."""
 
     def __init__(self, kind, message, detail=""):
@@ -452,6 +454,16 @@ def _close(doc):
     return _is_bool(result, True), ""
 
 
+def _require_no_documents(app):
+    # Guard first: OpenDocumentFile on a file that is already open may hand back the user's
+    # own document, and closing that would discard their work. Only a real True passes.
+    if not _is_bool(app.Documents.IsEmpty, True):
+        raise ReadError("busy", tr(
+            "Close all open models before a model is read in the background. "
+            "Nothing was opened.",
+            "Zamknij wszystkie otwarte modele przed odczytem modelu w tle. Niczego nie otwarto."))
+
+
 def read_model(app, DB, path, caps, workshared=None, links=False, values=False):
     """Snapshot {"title", "path", "views_2d", "views_3d", "ifc_setups", "ifc_error"} of the
     model at `path`, read in the background. Raises ReadError.
@@ -461,13 +473,7 @@ def read_model(app, DB, path, caps, workshared=None, links=False, values=False):
     `links=True` adds "links" (collect_cloud_links rows); otherwise no link member is read.
     `values=True` adds "values" (collect_values) from the same open and the same view list.
     """
-    # Guard first: OpenDocumentFile on a file that is already open may hand back the user's
-    # own document, and closing that would discard their work. Only a real True passes.
-    if not _is_bool(app.Documents.IsEmpty, True):
-        raise ReadError("busy", tr(
-            "Close all open models before a model is read in the background. "
-            "Nothing was opened.",
-            "Zamknij wszystkie otwarte modele przed odczytem modelu w tle. Niczego nie otwarto."))
+    _require_no_documents(app)
     if not isinstance(path, _TEXT_TYPES) or not path.strip():
         raise ReadError("open_failed", tr("No model file was given.",
                                           "Nie podano pliku modelu."))
@@ -513,6 +519,171 @@ def read_model(app, DB, path, caps, workshared=None, links=False, values=False):
         snapshot["links"] = link_rows
     if value_rows is not None:
         snapshot["values"] = value_rows
+    return snapshot
+
+
+# --------------------------------------------------------------------------- cloud, in place
+# One in-place open per cloud model (owner decision, step 2 of naming-profiles): not detached,
+# all worksets open, nothing edited; then relinquish and Close(False). Never synchronises with
+# central, never saves. Messages and details name no model, path or GUID: only exception type
+# names and counts. revit-api 2022 + 2026: OpenOptions members, DetachFromCentralOption.
+# DoNotDetach, WorksetConfigurationOption.OpenAllWorksets, Application.IsLoggedIn (static),
+# ModelPathUtils.ConvertCloudGUIDsToCloudPath(String, Guid, Guid), OpenDocumentFile(ModelPath,
+# OpenOptions, IOpenFromCloudCallback), IOpenFromCloudCallback.OnOpenConflict,
+# OpenConflictResult.Cancel, WorksharingUtils.RelinquishOwnership(Document, RelinquishOptions,
+# TransactWithCentralOptions), RelinquishOptions(Boolean), FilteredWorksetCollector(Document).
+# OfKind, WorksetKind.UserWorkset, Workset.IsEditable, Document.IsWorkshared. Not run in Revit.
+
+def cloud_open_options(DB):
+    """OpenOptions for the in-place cloud open: DoNotDetach, all worksets open, no audit."""
+    options = DB.OpenOptions()
+    options.DetachFromCentralOption = DB.DetachFromCentralOption.DoNotDetach
+    options.SetOpenWorksetsConfiguration(
+        DB.WorksetConfiguration(DB.WorksetConfigurationOption.OpenAllWorksets))
+    options.Audit = False
+    return options
+
+
+def cloud_open_callback(DB):
+    """An IOpenFromCloudCallback that cancels the open on every conflict, so the owner's
+    unsynchronised local changes are never discarded and the model is never detached.
+    The class is built here because DB exists only in Revit (tests pass a fake).
+    UNVERIFIED in IronPython: a Python class deriving from the .NET interface passed to
+    OpenDocumentFile."""
+    class CancelOnConflict(DB.IOpenFromCloudCallback):
+        def OnOpenConflict(self, scenario):
+            self.conflicts = getattr(self, "conflicts", 0) + 1
+            return DB.OpenConflictResult.Cancel
+    return CancelOnConflict()
+
+
+def _cloud_open_failed(error, conflicts):
+    name = _type_names(error)[0]
+    if name == "RevitServerUnauthenticatedUserException":
+        return _not_signed_in(name)
+    if conflicts:
+        return ReadError("open_failed", tr(
+            "Revit reported a conflict with your local copy of this cloud model, so the read "
+            "was cancelled. Nothing was changed. Open the model in Revit, resolve it, then try "
+            "again.",
+            "Revit zgłosił konflikt z Twoją lokalną kopią tego modelu w chmurze, więc odczyt "
+            "anulowano. Niczego nie zmieniono. Otwórz model w Revicie, rozwiąż konflikt i "
+            "spróbuj ponownie."), name)
+    messages = _open_messages()
+    for candidate in _type_names(error):
+        if candidate in messages:
+            return ReadError("open_failed", messages[candidate], name)
+    return ReadError("open_failed", tr("Revit could not open the cloud model ({0}).",
+                                       "Revit nie mógł otworzyć modelu w chmurze ({0}).")
+                     .format(name), name)
+
+
+def _not_signed_in(detail=""):
+    return ReadError("not_signed_in", tr(
+        "Sign in to your Autodesk account in Revit to read cloud models. Nothing was opened.",
+        "Zaloguj się w Revicie do konta Autodesk, aby odczytać modele z chmury. Niczego nie "
+        "otwarto."), detail)
+
+
+def release(doc, DB):
+    """(ok, detail): hand back every workset and element this session owns in `doc`, then
+    check that no user workset is still editable. Never raises (Exception); detail names
+    only an exception type or a count. Not workshared (strictly False) -> (True, "")."""
+    try:
+        if _is_bool(doc.IsWorkshared, False):
+            return True, ""
+        DB.WorksharingUtils.RelinquishOwnership(doc, DB.RelinquishOptions(True),
+                                                DB.TransactWithCentralOptions())
+        left = [workset for workset in
+                DB.FilteredWorksetCollector(doc).OfKind(DB.WorksetKind.UserWorkset)
+                if not _is_bool(workset.IsEditable, False)]  # unknown counts as still ours
+    except Exception as error:
+        return False, _type_names(error)[0]
+    if left:
+        return False, "editable worksets: %d" % len(left)
+    return True, ""
+
+
+def _release_warning(detail):
+    return tr("Revit could not hand back everything this read took ({0}). The model may still "
+              "be checked out to you: open it in Revit and use Relinquish All Mine.",
+              "Revit nie oddał wszystkiego, co zajął ten odczyt ({0}). Model może być nadal "
+              "zajęty przez Ciebie: otwórz go w Revicie i użyj „Relinquish All Mine” "
+              "(Zwolnij wszystkie moje).").format(detail)
+
+
+def read_cloud(app, DB, region, project_guid, model_guid, caps, values=True):
+    """Snapshot like read_model plus "links" (always) and "values" (when asked) from one
+    in-place open of the cloud model; "release_warning" (bilingual) when relinquishing failed.
+    "title" and "path" are "": the caller shows the catalog names. Raises ReadError.
+    Call only from the button's command (modal), never from the modeless status window."""
+    _require_no_documents(app)
+    try:
+        logged_in, detail = app.IsLoggedIn, ""  # static; read via the instance (UNVERIFIED)
+    except Exception as error:
+        logged_in, detail = None, _type_names(error)[0]
+    if not _is_bool(logged_in, True):
+        raise _not_signed_in(detail)
+    if not isinstance(region, _TEXT_TYPES) or not region.strip():
+        raise ReadError("open_failed", tr(
+            "The cloud region of this model is unknown, so it cannot be opened. Open it once "
+            "in Revit, then scan again.",
+            "Region chmury tego modelu jest nieznany, więc nie można go otworzyć. Otwórz go raz "
+            "w Revicie i przeskanuj ponownie."), "region unknown")
+    callback = None
+    try:
+        from System import Guid  # Revit only; tests put a fake in sys.modules
+        model_path = DB.ModelPathUtils.ConvertCloudGUIDsToCloudPath(
+            text(region).strip(), Guid(text(project_guid)), Guid(text(model_guid)))
+        options = cloud_open_options(DB)
+        callback = cloud_open_callback(DB)
+        doc = app.OpenDocumentFile(model_path, options, callback)
+    except Exception as error:
+        raise _cloud_open_failed(error, getattr(callback, "conflicts", 0))
+    if doc is None:
+        raise ReadError("open_failed", tr("Revit could not open the cloud model.",
+                                          "Revit nie mógł otworzyć modelu w chmurze."))
+
+    # `doc` is the document this call opened. Release runs even when collecting fails, and
+    # Close(False) runs exactly once in `finally`, even when release raises.
+    failure, released, release_detail = None, False, ""
+    view_rows = link_rows = value_rows = None
+    ifc_setups, ifc_error = [], ""
+    try:
+        try:
+            kept = _kept_views(doc, DB)
+            view_rows = collect_views(doc, DB, kept)
+            if _is_bool(values, True):
+                value_rows = collect_values(doc, DB, [item[0] for item in kept])
+            if caps.ifc_setups:
+                ifc_setups, ifc_error = _read_ifc_setups(doc, DB)
+            link_rows = collect_cloud_links(doc, DB)
+        except Exception as error:
+            failure = error
+        released, release_detail = release(doc, DB)
+    finally:
+        closed, unused = _close(doc)
+    doc = None
+    warning = "" if released else _release_warning(release_detail)
+    if not closed:
+        error = _close_failed()
+        if warning:
+            error.message = "{0} {1}".format(error.message, warning)
+        raise error
+    if failure is not None:
+        if not warning:
+            raise failure
+        name = _type_names(failure)[0]
+        raise ReadError("open_failed", "{0} {1}".format(
+            tr("Reading the cloud model failed ({0}).",
+               "Odczyt modelu w chmurze nie powiódł się ({0}).").format(name), warning), name)
+    snapshot = {"title": "", "path": "", "views_2d": view_rows["views_2d"],
+                "views_3d": view_rows["views_3d"], "ifc_setups": ifc_setups,
+                "ifc_error": ifc_error, "links": link_rows}
+    if value_rows is not None:
+        snapshot["values"] = value_rows
+    if warning:
+        snapshot["release_warning"] = warning
     return snapshot
 
 
