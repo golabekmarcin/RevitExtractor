@@ -274,9 +274,9 @@ def main():
         extra = {"links": True} if links else {}
         return rx_reader.read_model(app, DB, path, caps, workshared, **extra)
 
-    def read_cloud(region, project_guid, model_guid):
+    def read_cloud(region, project_guid, model_guid, all_worksets=True, values=True):
         snapshot = rx_reader.read_cloud(app, DB, region, project_guid, model_guid, caps,
-                                        values=True)
+                                        values=values, all_worksets=all_worksets)
         if isinstance(snapshot.get("values"), dict):
             snapshot["catalog"] = rx_reader.collect_catalog(snapshot["values"])
         return snapshot

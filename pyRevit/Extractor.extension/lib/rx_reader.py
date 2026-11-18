@@ -2,7 +2,7 @@
 """Read one model's views in the background and leave the file untouched.
 
 read_model opens detached with all worksets closed, collects the view rows, and closes with
-Close(False) exactly once. read_cloud opens a cloud model in place (all worksets open),
+Close(False) exactly once. read_cloud opens a cloud model in place (all worksets open, or closed on request),
 collects, relinquishes, and closes the same way. Never saves, never synchronises with central,
 never starts a transaction, never closes a document it did not open.
 No Revit import: the caller passes `app` (Autodesk.Revit.ApplicationServices.Application) and
@@ -524,22 +524,25 @@ def read_model(app, DB, path, caps, workshared=None, links=False, values=False):
 
 # --------------------------------------------------------------------------- cloud, in place
 # One in-place open per cloud model (owner decision, step 2 of naming-profiles): not detached,
-# all worksets open, nothing edited; then relinquish and Close(False). Never synchronises with
+# all worksets open (export) or closed (Choose views), nothing edited; then relinquish and Close(False). Never synchronises with
 # central, never saves. Messages and details name no model, path or GUID: only exception type
 # names and counts. revit-api 2022 + 2026: OpenOptions members, DetachFromCentralOption.
-# DoNotDetach, WorksetConfigurationOption.OpenAllWorksets, Application.IsLoggedIn (static),
+# DoNotDetach, WorksetConfigurationOption.OpenAllWorksets / CloseAllWorksets (both documented
+# 2022 and 2026), Application.IsLoggedIn (static),
 # ModelPathUtils.ConvertCloudGUIDsToCloudPath(String, Guid, Guid), OpenDocumentFile(ModelPath,
 # OpenOptions, IOpenFromCloudCallback), IOpenFromCloudCallback.OnOpenConflict,
 # OpenConflictResult.Cancel, WorksharingUtils.RelinquishOwnership(Document, RelinquishOptions,
 # TransactWithCentralOptions), RelinquishOptions(Boolean), FilteredWorksetCollector(Document).
 # OfKind, WorksetKind.UserWorkset, Workset.IsEditable, Document.IsWorkshared. Not run in Revit.
 
-def cloud_open_options(DB):
-    """OpenOptions for the in-place cloud open: DoNotDetach, all worksets open, no audit."""
+def cloud_open_options(DB, all_worksets=True):
+    """OpenOptions for the in-place cloud open: DoNotDetach, all worksets open (the export) or
+    all closed (Choose views, for speed), no audit."""
     options = DB.OpenOptions()
     options.DetachFromCentralOption = DB.DetachFromCentralOption.DoNotDetach
-    options.SetOpenWorksetsConfiguration(
-        DB.WorksetConfiguration(DB.WorksetConfigurationOption.OpenAllWorksets))
+    option = DB.WorksetConfigurationOption
+    options.SetOpenWorksetsConfiguration(DB.WorksetConfiguration(
+        option.OpenAllWorksets if all_worksets else option.CloseAllWorksets))
     options.Audit = False
     return options
 
@@ -612,7 +615,7 @@ def _release_warning(detail):
               "(Zwolnij wszystkie moje).").format(detail)
 
 
-def read_cloud(app, DB, region, project_guid, model_guid, caps, values=True):
+def read_cloud(app, DB, region, project_guid, model_guid, caps, values=True, all_worksets=True):
     """Snapshot like read_model plus "links" (always) and "values" (when asked) from one
     in-place open of the cloud model; "release_warning" (bilingual) when relinquishing failed.
     "title" and "path" are "": the caller shows the catalog names. Raises ReadError.
@@ -635,7 +638,7 @@ def read_cloud(app, DB, region, project_guid, model_guid, caps, values=True):
         from System import Guid  # Revit only; tests put a fake in sys.modules
         model_path = DB.ModelPathUtils.ConvertCloudGUIDsToCloudPath(
             text(region).strip(), Guid(text(project_guid)), Guid(text(model_guid)))
-        options = cloud_open_options(DB)
+        options = cloud_open_options(DB, all_worksets)
         callback = cloud_open_callback(DB)
         doc = app.OpenDocumentFile(model_path, options, callback)
     except Exception as error:

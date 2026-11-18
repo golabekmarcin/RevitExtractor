@@ -1029,8 +1029,9 @@ class ModelWindowHarness(object):
             raise self.read_error
         return self.read_answer
 
-    def read_cloud(self, region, project_guid, model_guid):
+    def read_cloud(self, region, project_guid, model_guid, all_worksets=True, values=True):
         self.cloud_opens.append({"args": (region, project_guid, model_guid),
+                                 "all_worksets": all_worksets, "values": values,
                                  "status": self.window.status_text.Text,
                                  "timer_on": TIMERS[-1].IsEnabled, "cursor": MOUSE.OverrideCursor,
                                  "enabled": self.window.IsEnabled})
@@ -2741,7 +2742,11 @@ class ScriptTests(unittest.TestCase):
                           Mock(return_value={"values": values})) as read_cloud:
             snapshot = window.read_cloud("US", CP1, CM3)
         read_cloud.assert_called_once_with(self.app, self.db, "US", CP1, CM3, window.caps,
-                                           values=True)
+                                           values=True, all_worksets=True)
+        with patch.object(rx_reader, "read_cloud", Mock(return_value={})) as closed:
+            window.read_cloud("US", CP1, CM3, all_worksets=False, values=False)
+        closed.assert_called_once_with(self.app, self.db, "US", CP1, CM3, window.caps,
+                                       values=False, all_worksets=False)
         self.assertEqual(snapshot["catalog"], {"views": ["Zone"], "sheets": []})
 
     def test_system_tokens_name_the_model_by_its_real_file_name(self):
@@ -3456,6 +3461,15 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(self.cloud_opens[0]["status"], "Otwieranie Alpha-Architecture.rvt (1 z 1) "
                          "ze wszystkimi zestawami roboczymi\u2026")
 
+    def test_the_closed_worksets_status_is_polish_in_polish(self):
+        with patch.dict(sys.modules, polish_modules()):
+            self.open_cloud()
+            self.tick_cloud("Alpha-Architecture.rvt")
+            with patch.object(EXPORT_UI, "ViewWindow", self.views_window([], job=False)):
+                self.fire("views_btn")
+        self.assertIn("zamkni\u0119te zestawy", self.cloud_opens[0]["status"])
+        self.assertIsNone(GUID_ANYWHERE.search(self.cloud_opens[0]["status"]))
+
     def values_answer(self):
         return {"views_2d": [], "views_3d": [], "links": [],
                 "values": {"uid1": {"kind": "view", "id": "1", "name": "Plan", "tokens": {},
@@ -3724,8 +3738,17 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.tick_cloud("Alpha-Architecture.rvt")
         with patch.object(EXPORT_UI, "ViewWindow", self.views_window(made)):
             self.fire("views_btn")
-        self.assertEqual(len(self.cloud_opens), 1)
+        self.assertEqual(len(self.cloud_opens), 2, "once to read, once for the export")
         self.assertEqual(self.cloud_opens[0]["args"][1:], (CP1, CM3))
+        self.assertEqual([(o["all_worksets"], o["values"]) for o in self.cloud_opens],
+                         [(False, False), (True, True)])
+        self.assertEqual(self.cloud_opens[0]["status"],
+                         "Reading Alpha-Architecture.rvt in the background (worksets closed, "
+                         "nothing is saved). This can take a few minutes…")
+        self.assertEqual(self.cloud_opens[1]["status"],
+                         "Opening Alpha-Architecture.rvt (1 of 1) with all worksets…")
+        for opened in self.cloud_opens:
+            self.assertIsNone(GUID_ANYWHERE.search(opened["status"]))
         snapshot, note = made[0]
         self.assertEqual(snapshot["title"], "Alpha-Architecture.rvt")
         self.assertIn("Alpha-Architecture.rvt", snapshot["path"])
@@ -3761,7 +3784,7 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(self.submitted, [])
         self.assertIsNone(MOUSE.OverrideCursor)
 
-    def test_a_choose_views_job_keeps_its_snapshot_and_is_not_opened_again(self):
+    def test_a_choose_views_job_keeps_its_views_and_is_opened_again_at_export(self):
         self.cloud_answer = self.values_answer()
         self.submit_error = RuntimeError("session unreachable")
         made = []
@@ -3774,7 +3797,8 @@ class CloudWindowTests(ModelWindowHarness, unittest.TestCase):
         self.assertEqual(self.cticked(), ["Alpha-Architecture.rvt"])
         self.submit_error = None
         self.fire("export_btn")
-        self.assertEqual(len(self.cloud_opens), 1, "the kept job needs no new open")
+        self.assertEqual(len(self.cloud_opens), 3, "read, failed export open, retry open")
+        self.assertEqual([o["all_worksets"] for o in self.cloud_opens], [False, True, True])
         retry = self.submitted[-1]["jobs"][0]
         self.assertEqual(retry["index"], {"views": 1})
         self.assertEqual(retry["model_name"], "Alpha-Architecture.rvt")

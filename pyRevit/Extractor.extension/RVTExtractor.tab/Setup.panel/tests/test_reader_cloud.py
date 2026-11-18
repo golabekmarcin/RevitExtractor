@@ -132,10 +132,11 @@ class Host(object):
             raise self.close_error
         return self.close_result
 
-    def read(self, region=REGION, values=True, caps=None):
+    def read(self, region=REGION, values=True, caps=None, all_worksets=True):
         with patch.dict(sys.modules, self.system):
             return read_cloud(self.app, self.DB, region, PROJECT, MODEL,
-                              caps or NS(ifc_setups=False), values=values)
+                              caps or NS(ifc_setups=False), values=values,
+                              all_worksets=all_worksets)
 
     def events(self):
         return [item if isinstance(item, str) else item[0] for item in self.log]
@@ -154,6 +155,18 @@ class CloudOptions(unittest.TestCase):
         self.assertEqual(options.worksets, ("WorksetConfiguration", "OpenAll"))
         self.assertIs(options.Audit, False)
         self.assertFalse(hasattr(options, "AllowOpeningLocalByWrongUser"))
+
+    def test_closed_worksets_variant_is_still_in_place_and_no_audit(self):
+        options = cloud_open_options(Host(self).DB, all_worksets=False)
+        self.assertEqual(options.DetachFromCentralOption, "DoNotDetach")
+        self.assertEqual(options.worksets, ("WorksetConfiguration", "Close"))
+        self.assertIs(options.Audit, False)
+
+    def test_read_cloud_closed_worksets_opens_with_the_closed_option(self):
+        host = Host(self)
+        host.read(all_worksets=False)
+        self.assertEqual(host.options.worksets, ("WorksetConfiguration", "Close"))
+        self.assertEqual(host.close_calls, 1)
 
     def test_callback_cancels_every_scenario(self):
         host = Host(self)

@@ -1448,8 +1448,10 @@ class ModelWindow(forms.WPFWindow):
             return tr("Revit returned nothing.", "Revit nic nie zwrócił.")
         return _error_text(failure)
 
-    def _open_cloud_rows(self, rows):
-        """Open each cloud row in place, one at a time, in the background. Returns (snapshots by
+    def _open_cloud_rows(self, rows, all_worksets=True):
+        """Open each cloud row in place, one at a time, in the background: all worksets open
+        with the naming values (the export), or all closed without them (Choose views, a pure
+        read). Returns (snapshots by
         row key, reasons by row key of the opens that failed), or None when the window was
         closed: Revit could not close a model, so nothing may be exported. After a "not signed
         in" the remaining rows are not tried."""
@@ -1461,11 +1463,12 @@ class ModelWindow(forms.WPFWindow):
                 continue
             status = tr("Opening {0} ({1} of {2}) with all worksets…",
                         "Otwieranie {0} ({1} z {2}) ze wszystkimi zestawami roboczymi…") \
-                .format(row.Name, number, len(rows))
+                .format(row.Name, number, len(rows)) if all_worksets else None
             cloud = row.cloud
             snapshot, failure = self._read_in_background(
                 row.Name, lambda cloud=cloud: self._read_cloud(
-                    cloud.region, cloud.project_guid, cloud.model_guid),
+                    cloud.region, cloud.project_guid, cloud.model_guid,
+                    all_worksets=all_worksets, values=all_worksets),
                 status=status)
             if failure is None and isinstance(snapshot, dict):
                 snapshots[row.key] = snapshot
@@ -1480,7 +1483,7 @@ class ModelWindow(forms.WPFWindow):
         self._resume(resume)
         return snapshots, reasons
 
-    def _after_opens(self, rows, snapshots, clouds):
+    def _after_opens(self, rows, snapshots, clouds, links=True):
         """What every successful open leaves behind: the links in the memory, the parameter names
         in the property catalog (never logged), and one alert for the whole run when Revit could
         not hand back everything it took."""
@@ -1489,7 +1492,8 @@ class ModelWindow(forms.WPFWindow):
             snapshot = snapshots.get(row.key)
             if snapshot is None:
                 continue
-            self._store_links(row, self._links_of(snapshot), clouds.get(row.key))
+            if links:   # a worksets-closed read may miss links: only an export open stores them
+                self._store_links(row, self._links_of(snapshot), clouds.get(row.key))
             if isinstance(snapshot.get("catalog"), dict):   # script.py: rx_reader.collect_catalog
                 merge_catalog(os.path.join(os.path.dirname(self._prefs_path or ""),
                                            "property-catalog.json"), snapshot["catalog"])
@@ -1519,46 +1523,66 @@ class ModelWindow(forms.WPFWindow):
                              "Nazwy jego plików zgodne z nazwami Extractora.")
         job["stage"]["notes"].append(note)
 
-    def _export_cloud(self, models):
-        fresh = [row for row in models if row.job_key not in self._kept_jobs]
-        planned = {}
+    def _export_open_jobs(self, models, indexes):
+        """Open every row of `models` once, one at a time, with all worksets open (this open syncs
+        the cache and gives the links and naming values), then plan one job per row. `indexes`
+        maps a row's job_key to the index the user chose in Choose views; the other rows get the
+        default or shared index. Returns the jobs in order, or None (an error is shown, or the
+        window was closed)."""
+        fresh = [row for row in models if row.job_key not in indexes]
+        shared = None
         if fresh:
-            memory = self._cloud["memory"]
             try:
                 shared = self._shared_index_or_none()
             except SetupError as error:
                 self._show_error(_error_text(error))
-                return
-            self._show_error("")
-            opened = self._open_cloud_rows(fresh)
-            if opened is None:
-                return
-            snapshots, reasons = opened
-            clouds = self._refresh_opened(fresh, snapshots)
-            self._after_opens(fresh, snapshots, clouds)
-            link_lists = dict((key, self._links_of(snapshot))
-                              for key, snapshot in snapshots.items())
-            try:
-                jobs = plan_cloud_jobs([clouds.get(row.key, row.cloud) for row in fresh], self._caps,
-                                       self._cache_files(), memory, link_lists, (), shared)
-            except (SetupError, StageError) as error:
-                self._show_error(_error_text(error))
-                return
-            for row, job in zip(fresh, jobs):
-                self._finish_cloud_job(row, job, snapshots.get(row.key), reasons.get(row.key))
-            planned = dict(zip([row.job_key for row in fresh], jobs))
-        jobs = [self._kept_jobs.get(row.job_key) or planned[row.job_key] for row in models]
+                return None
+        self._show_error("")
+        opened = self._open_cloud_rows(models)
+        if opened is None:
+            return None
+        snapshots, reasons = opened
+        clouds = self._refresh_opened(models, snapshots)
+        self._after_opens(models, snapshots, clouds)
+        link_lists = dict((key, self._links_of(snapshot)) for key, snapshot in snapshots.items())
+        memory = self._cloud["memory"]
+        try:
+            planned = {}
+            if fresh:
+                planned = dict(zip([row.job_key for row in fresh], plan_cloud_jobs(
+                    [clouds.get(row.key, row.cloud) for row in fresh], self._caps,
+                    self._cache_files(), memory, link_lists, (), shared)))
+            for row in models:
+                if row.job_key in indexes:
+                    planned[row.job_key] = plan_cloud_job(
+                        clouds.get(row.key, row.cloud), indexes[row.job_key],
+                        self._cache_files(), memory, link_lists.get(row.key))
+        except (SetupError, StageError) as error:
+            self._show_error(_error_text(error))
+            return None
+        for row in models:
+            self._finish_cloud_job(row, planned[row.job_key], snapshots.get(row.key),
+                                   reasons.get(row.key))
+        return [planned[row.job_key] for row in models]
+
+    def _export_cloud(self, models):
+        indexes = dict((row.job_key, self._kept_jobs[row.job_key]["index"])
+                       for row in models if row.job_key in self._kept_jobs)
+        jobs = self._export_open_jobs(models, indexes)
+        if jobs is None:
+            return
         notes = []
         for job in jobs:
             notes.extend((job.get("stage") or {}).get("notes") or [])
         self._queue(jobs, models, notes=notes)
 
     def _views_cloud(self, row):
-        """Choose views… for one cloud row: one in-place open (links and naming values included),
-        the slice 1 picker on a copy of the snapshot that shows the real name, then a cloud job
-        that keeps its snapshot, so Export does not open the model again."""
+        """Choose views… for one cloud row: a pure read (worksets closed, nothing edited), the
+        slice 1 picker on a copy of the snapshot that shows the real name, then the export open
+        (all worksets) that keeps the picked views and gives the links and naming values, and a
+        cloud job that is queued (and kept for Export when the hand-over fails)."""
         resume = self._scanning()
-        opened = self._open_cloud_rows([row])
+        opened = self._open_cloud_rows([row], all_worksets=False)
         if opened is None:
             return
         snapshots, reasons = opened
@@ -1570,8 +1594,7 @@ class ModelWindow(forms.WPFWindow):
             return
         snapshot = snapshots[row.key]
         clouds = self._refresh_opened([row], snapshots)
-        self._after_opens([row], snapshots, clouds)
-        links = self._links_of(snapshot)
+        self._after_opens([row], snapshots, clouds, links=False)
         shown = dict(snapshot)
         shown["title"] = row.Name
         shown["path"] = "%s / %s" % (row.Project, row.Name)   # never the GUID-named cache file
@@ -1586,15 +1609,9 @@ class ModelWindow(forms.WPFWindow):
             return
         picked = getattr(view, "job", None)
         if picked:
-            try:
-                job = plan_cloud_job(clouds[row.key], picked["index"], self._cache_files(),
-                                     self._cloud["memory"], links)
-            except (SetupError, StageError) as error:
-                self._show_error(_error_text(error))
-                self._resume(resume)
-                return
-            self._finish_cloud_job(row, job, snapshot, None)
-            self._queue([job], [row], retain=True, notes=job["stage"]["notes"])
+            jobs = self._export_open_jobs([row], {row.job_key: picked["index"]})
+            if jobs is not None:
+                self._queue(jobs, [row], retain=True, notes=jobs[0]["stage"]["notes"])
         self._resume(resume)
         self._refresh_state()
 

@@ -61,7 +61,7 @@ Amendments:
 | `ModelPath.CloudPath`, `.GetProjectGUID()`, `.GetModelGUID()`; `ModelPathUtils.ConvertModelPathToUserVisiblePath` | fallback names |
 | `RevitLinkType` with `OfClass`, `.IsNestedLink`; `Element.Name` under IronPython (reflection fallback) | link names |
 | `Element.GetExternalResourceReferences()` (declared on `Element`, not on `RevitLinkType`), `ExternalResourceReference.GetReferenceInformation()` | link GUIDs. The keys `LinkedModelModelId`, `LinkedModelProjectId` and `LinkedModelRegion` were observed on Revit 2022 (archive section 5) and are **undocumented** (the docs describe only a `(String, String)` map) |
-| `OpenDocumentFile` on a `CollaborationCache` file with `DetachAndPreserveWorksets` | behaviour, owner's test only |
+| `OpenDocumentFile` on a cloud model in place (`DoNotDetach`; `CloseAllWorksets` for Choose views, `OpenAllWorksets` for the export open) | behaviour, owner's test only |
 | .NET `System.IO.DriveInfo.AvailableFreeSpace`, and its assembly for `rx_dotnet` on .NET 8 | free-space check |
 | IronPython: the `mbcs` codec exists; `io.open` reads a journal that the running Revit holds open | journal reading |
 | pyRevit 6.5.5: `context: doc-project` | fallback button. Use the form the Export bundle already uses, `context:` + `rule: "doc-project"`; a bare `context: doc-project` string is not exercised in this repo |

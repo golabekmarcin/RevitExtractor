@@ -4,7 +4,7 @@ Module of `SPEC.md`. Depends on: `capabilities`. Status: **written under the own
 
 ## Objective
 
-Read one model's views in the background and leave the file untouched (Q4/Q7, Q15): open detached with all worksets closed, collect the view rows the slice 1 window uses, close without saving.
+Read one model's views in the background and leave the file untouched (Q4/Q7, Q15): open detached with all worksets closed, collect the view rows the slice 1 window uses, close without saving. Cloud models (`read_cloud`) open in place, not detached: all worksets closed and no naming values for Choose views (a pure read), all worksets open with the values for the export open (it syncs the cache); see HANDOVER 2j.
 
 ## Interface (`lib/rx_reader.py`; no Revit import, the caller passes `app` and `DB`)
 

@@ -497,7 +497,7 @@ $keys = Get-ChildItem $j -Filter 'journal*.txt' -ErrorAction SilentlyContinue | 
 ```
 
 - [ ] **H2** The current-session journal is readable. Open the ACC model (this Revit session), close it without saving, then **Export** > **Cloud (ACC)**: the model is listed, and `-Check` prints `unreadable 0` for the journals.
-- [ ] **H3** Background open of the cache copy. Save a size/time list of the cache files (numbers, no names), tick the host model in the Cloud list, click **Choose views...**, then list again and compare:
+- [ ] **H3** Background open of the cache copy. Save a size/time list of the cache files (numbers, no names), tick the host model in the Cloud list, click **Choose views...** (a read with all worksets closed; the export that follows opens all worksets), then list again and compare:
 
 ```powershell
 $y = 2022   # your Revit year
