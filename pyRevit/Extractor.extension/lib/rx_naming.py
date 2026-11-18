@@ -17,6 +17,7 @@ from rx_cloud_stage import copy_steps
 from rx_hardlink import make_hard_link
 from rx_i18n import tr
 from rx_json import dumps_ascii
+from rx_naming_pdb import ExportValues
 
 MAX_TEMPLATE = 200
 _MAX_COMPONENT = 255
@@ -213,6 +214,12 @@ def check_naming(naming):
         raise NamingError(tr("The model values must be empty or a dictionary of dictionaries.",
                              "Wartości z modelu muszą być puste lub słownikiem słowników."))
     return parsed
+
+
+def needs_values(parsed):
+    """True when a parsed template uses a sheet or view value (a model token or {param:})."""
+    return any(kind == "param" or (kind == "token" and TOKENS[item][2] == "model")
+               for kind, item in parsed)
 
 
 def file_budget(named_root, ext):
@@ -508,7 +515,7 @@ class NamedRun(object):
     state holds plain values only."""
 
     def __init__(self, run_paths, naming, link=make_hard_link, copier=copy_steps,
-                 free_space=None, listdir=os.listdir, now=None):
+                 free_space=None, listdir=os.listdir, now=None, values_reader=ExportValues):
         self.run_paths = run_paths
         self.naming = naming
         self.state = None
@@ -522,6 +529,8 @@ class NamedRun(object):
         self._free_space = free_space
         self._listdir = listdir
         self._now = now
+        self._values_reader = values_reader
+        self._value_notes = []   # added at the end, so a failure's own note stays first
         self._named = os.path.join(run_paths.root, "named")
         self._record = os.path.join(run_paths.root, "named.json")
         self._started = False
@@ -595,8 +604,31 @@ class NamedRun(object):
         for _ in discovery.steps():
             yield self.done, self.total
         self.notes.extend(discovery.notes)
-        pairs, self.counts["untied"] = tie(discovery.items, self._manifest(),
-                                           self.naming.get("values"))
+        manifest = self._manifest()
+        values = self.naming.get("values")
+        if values is None and needs_values(parsed):
+            try:   # reading only adds notes: it never fails the run
+                reader = self._values_reader(os.path.join(self.run_paths.output, "Resource"),
+                                             [v[0] for v in _viewables(manifest)])
+                read = reader.steps()
+                try:
+                    for _ in read:
+                        yield self.done, self.total
+                finally:
+                    read.close()
+                self._value_notes.extend(n for n in reader.notes if _is_text(n))
+                if reader.state == "done" and isinstance(reader.values, dict):
+                    values = reader.values
+            except Exception:
+                pass
+            if values is None:
+                parsed = []   # no values: every file keeps its original name, as the note says
+                self._value_notes.append(tr(
+                    "Sheet and view values could not be read, so every file keeps its original "
+                    "name.",
+                    "Nie odczytano wartości arkuszy i widoków, więc każdy plik zachowuje "
+                    "oryginalną nazwę."))
+        pairs, self.counts["untied"] = tie(discovery.items, manifest, values)
         plan = []
         for _ in self._plan(parsed, pairs, plan):
             yield self.done, self.total
@@ -792,6 +824,7 @@ class NamedRun(object):
         if self.state == "failed" and not self.notes:
             self.notes.append(tr("No named copy could be made; see named.json.",
                                  "Nie udało się utworzyć żadnej kopii z nazwą; zobacz named.json."))
+        self.notes.extend(self._value_notes)
         if self._started:
             self._write_record()
 

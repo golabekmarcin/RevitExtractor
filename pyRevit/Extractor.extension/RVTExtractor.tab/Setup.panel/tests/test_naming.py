@@ -963,7 +963,8 @@ class WriterTests(WriterCase):
                 raise OSError(13, "denied")
             return real(path, *a, **k)
         with unittest.mock.patch.object(io, "open", deny):
-            run = self.run_named(ORIGINALS)
+            # a file-only template: {SheetNumber} would now also try the (fake) property data
+            run = self.run_named(dict(ORIGINALS, template="{OriginalName}"))
         self.assertEqual(run.state, "done")
         self.assertEqual(run.notes, ["named.json could not be written."])
 
