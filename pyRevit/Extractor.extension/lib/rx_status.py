@@ -18,7 +18,7 @@ import os
 import re
 
 from rx_cloud_stage import copy_steps
-from rx_hardlink import hardlinks_enabled, make_hard_link
+from rx_hardlink import hardlinks_enabled, make_hard_link, staging_mode
 from rx_i18n import tr
 from rx_json import dumps_ascii
 from rx_runner import (CANCELLED, FAILED, OK, QUEUED, RUNNING, STAGING, Job, LaunchSpec,
@@ -224,6 +224,7 @@ def cloud_copier(path, read=_read_text):
         return copy_steps(plan, folder, chunk=chunk, link=link, report=report)
     copier.accepts_report = True
     copier.linking = linking    # the Queue sizes its disk check by it
+    copier.mode = lambda: staging_mode(read_preferences(path, read))   # cloud_staging
     return copier
 
 
@@ -348,9 +349,15 @@ def _megabytes(value, up=False):
 
 
 def _staging_text(job):
-    return tr("Copying from the cache: {0} of {1} MB",
-              "Kopiowanie z pamięci podręcznej: {0} z {1} MB").format(
+    """Linking is no copy: a size is shown only for the files that really copy."""
+    links = getattr(job, "stage_link_count", 0) or 0
+    copying = tr("Copying from the cache: {0} of {1} MB",
+                 "Kopiowanie z pamięci podręcznej: {0} z {1} MB").format(
         _megabytes(job.stage_done), _megabytes(job.stage_total, up=True))
+    if not links:
+        return copying
+    linking = tr("Linking {0} files…", "Tworzenie dowiązań do plików: {0}…").format(links)
+    return linking + " " + copying if job.stage_total else linking
 
 
 def _shown_model(job):
@@ -410,7 +417,8 @@ def job_view(job, info, now, position, held=False, isdir=os.path.isdir):
         progress = tr("Copied; waiting: another Extractor is running on this computer.",
                       "Skopiowano; oczekuje: na tym komputerze działa inny Extractor.")
     elif state == STAGING:
-        state_text = tr("Copying", "Kopiowanie")
+        linking_only = getattr(job, "stage_link_count", 0) and not job.stage_total
+        state_text = tr("Linking", "Dowiązywanie") if linking_only else tr("Copying", "Kopiowanie")
         progress = _staging_text(job)
     elif state == RUNNING and job.cancel_requested:
         state_text = tr("Cancelling", "Anulowanie")

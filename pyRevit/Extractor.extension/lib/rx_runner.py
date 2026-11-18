@@ -29,7 +29,8 @@ from collections import namedtuple
 import rx_dotnet
 import rx_naming
 from rx_cloud import safe_file_name
-from rx_cloud_stage import check_space, copy_steps
+from rx_cloud_stage import check_space, copy_steps, split_by_link
+from rx_hardlink import STAGING_MODES
 from rx_cloud_stage import _in_cache, _items as _stage_items
 from rx_i18n import tr
 from rx_index import SetupError, require_index_shape, to_json
@@ -403,6 +404,12 @@ def _time_text(value):
     return value.isoformat() if hasattr(value, "isoformat") else value
 
 
+def _no_copies():
+    """The copy step of a direct-mode job: nothing to stage."""
+    return
+    yield
+
+
 def _bad_stage(detail):
     return RunnerError(tr("The copy plan is not valid: {0}",
                           "Plan kopiowania jest nieprawidłowy: {0}").format(detail))
@@ -463,6 +470,8 @@ def _cache_date(mtime):
 def _write_stage_record(folder, job):
     """model\\stage.json: names (as given), sizes and cache dates; no source path."""
     record = {"version": 1, "model_name": job.model_name, "notes": job.stage["notes"],
+              "mode": job.stage_mode,    # links | host-only | direct
+              "cache_changed": job.cache_changed,    # count of changed cache files, None before the end
               "items": [{"name": item["name"], "size": item["size"],
                          "cache_date": _cache_date(item["mtime"]),
                          "mode": job.stage_modes.get(item["name"])}   # linked | copied | None
@@ -532,6 +541,11 @@ class Job(object):
         self.stage_total = 0
         self.stage_ready = False    # every item copied and checked; waiting for the launch
         self.stage_modes = {}       # item name -> "linked" | "copied", as each item finishes
+        self.stage_mode = "links"   # cloud_staging: links | host-only | direct
+        self.stage_link_count = 0   # files that will be (are) hard-linked; stage_total counts copies only
+        self.stage_watch = None     # every cache file to compare after the run (default: stage items)
+        self.cache_changed = None
+        self._linked_names = set()
         self.cleanup = None         # None | "pending" | "done" | "incomplete"
         self.cleanup_error = None   # type name and error code of the last failed delete
         self.foreign = False        # a run an earlier Revit session started: shown, never controlled
@@ -550,7 +564,8 @@ class Job(object):
             "stage": self.stage, "model_name": self.model_name, "model_key": self.model_key,
             "staged_model": self.staged_model, "stage_done": self.stage_done,
             "stage_total": self.stage_total, "stage_ready": self.stage_ready,
-            "stage_modes": dict(self.stage_modes),
+            "stage_modes": dict(self.stage_modes), "stage_mode": self.stage_mode,
+            "stage_link_count": self.stage_link_count, "cache_changed": self.cache_changed,
             "cleanup": self.cleanup, "cleanup_error": self.cleanup_error, "foreign": self.foreign,
             # not `naming` itself: it can hold model values and names
             "naming_state": self.naming_state, "naming_done": self.naming_done,
@@ -867,6 +882,15 @@ class Queue(object):
 
     # -- cloud jobs: staging
 
+    def _stage_mode(self):
+        """cloud_staging of this job (the copier reads the preferences file), "links" if unknown."""
+        reader = getattr(self._copier, "mode", None)
+        try:
+            mode = reader() if reader else "links"
+        except Exception:
+            mode = "links"
+        return mode if mode in STAGING_MODES else "links"
+
     def _free_bytes(self, path):
         if self._free_space is None:
             return None
@@ -884,6 +908,17 @@ class Queue(object):
             paths = plan_run(job.output_parent, job.started_at, self._token())
             folder = os.path.join(paths.root, STAGE_FOLDER)
             target = os.path.join(folder, job.model_name)
+            mode = self._stage_mode()
+            job.stage_mode = mode
+            if mode != "links":     # experiment: only the host is staged (or nothing at all)
+                job.stage_watch = [dict(item) for item in job.stage["items"]]
+                job.stage = {"items": job.stage["items"][:1], "notes": list(job.stage["notes"]) + [
+                    tr("Cloud staging mode: {0} (experiment).",
+                       "Tryb kopiowania z chmury: {0} (eksperyment).").format(mode),
+                    tr("Links were not provided (experiment mode).",
+                       "Dołączone modele nie zostały udostępnione (tryb eksperymentalny).")]}
+                if mode == "direct":
+                    target = job.stage["items"][0]["src"]   # the Extractor opens the cache file itself
             spec = launch_spec(exe, job.revit_dir, target, paths, self._root())
             # Before any write: the run folder (and so <run>\model) must lie outside Revit's
             # cache. copy_steps checks this too, but only once the run folder exists.
@@ -897,8 +932,15 @@ class Queue(object):
                     "w folderze pliku z tej pamięci; nic nie jest tam nigdy zapisywane. Wybierz "
                     "inny folder wyjściowy."))
             linking = getattr(self._copier, "linking", None)
-            check_space(job.stage, self._free_bytes(job.output_parent),
-                        links=bool(linking and linking()), dest=job.output_parent)
+            links = bool(linking and linking())
+            if mode == "direct":
+                job.stage_total = 0
+            else:
+                names, job.stage_total = split_by_link(job.stage, links, job.output_parent)
+                job._linked_names = set(names)
+                job.stage_link_count = len(names)
+                check_space(job.stage, self._free_bytes(job.output_parent), links=links,
+                            dest=job.output_parent)
             prepare_run(paths, job.index)
             job.paths = paths
             self._hand_over_values(job)
@@ -906,15 +948,26 @@ class Queue(object):
             _write_stage_record(folder, job)
             extra = {}
             if getattr(self._copier, "accepts_report", False):
-                def report(item, mode, modes=job.stage_modes):
-                    modes[item.name] = mode
+                def report(item, how, job=job):
+                    job.stage_modes[item.name] = how
+                    est = job._linked_names     # a link that fell back to a copy (or the reverse)
+                    if how == "copied" and item.name in est:
+                        est.discard(item.name)
+                        job.stage_total += item.size
+                    elif how == "linked" and item.name not in est:
+                        est.add(item.name)
+                        job.stage_total -= item.size
+                    job.stage_link_count = len(est)
                 extra["report"] = report
-            copies = self._copier(job.stage, folder, chunk=self._stage_chunk, **extra)
+            if mode == "direct":
+                copies = _no_copies()
+            else:
+                copies = self._copier(job.stage, folder, chunk=self._stage_chunk, **extra)
         except Exception as error:  # one job fails, the queue goes on
             self._fail(job, tr("The export could not start: {0}",
                                "Nie udało się uruchomić eksportu: {0}").format(_error_text(error)))
             return
-        job.staged_model = target
+        job.staged_model = None if mode == "direct" else target
         job.stage_done = 0
         job.stage_ready = False
         self._staged[job.id] = set()
@@ -946,7 +999,9 @@ class Queue(object):
                     self._stage_failed(job, error)
                     break
                 self._staged[job.id].add(item.name)
-                job.stage_done = done
+                linked = sum(i["size"] for i in job.stage["items"]
+                             if job.stage_modes.get(i["name"]) == "linked")
+                job.stage_done = max(0, min(done - linked, job.stage_total))   # copied bytes only
                 self._stage_used = self._stage_clock() - start
                 if self._stage_used >= self._stage_budget:
                     out_of_time = True
@@ -1035,7 +1090,7 @@ class Queue(object):
         """Names of cache files whose size or time differ from the plan. Read-only (stat). A
         hard link is the cache file itself, so a change here may be a write by Revit."""
         changed = []
-        for item in job.stage["items"]:
+        for item in (job.stage_watch or job.stage["items"]):
             try:
                 st = os.stat(item["src"])
                 same = (st.st_size == item["size"]
@@ -1208,7 +1263,13 @@ class Queue(object):
             if job.stage["notes"] and job.state != CANCELLED:
                 job.result = _with_message(job.result, " ".join(job.stage["notes"]))
             changed = self._sources_changed(job)
-            if changed:
+            job.cache_changed = len(changed)
+            if changed and job.stage_mode != "links":    # experiment: counts only, no names
+                job.result = _with_message(job.result, tr(
+                    "Warning: {0} cache file(s) changed during the export (experiment mode).",
+                    "Uwaga: liczba plików w pamięci podręcznej, które zmieniły się podczas "
+                    "eksportu (tryb eksperymentalny): {0}.").format(len(changed)))
+            elif changed:
                 linked = [n for n in changed if job.stage_modes.get(n) == "linked"]
                 job.result = _with_message(job.result, tr(
                     "Warning: cache file(s) changed during the export: {0}.",

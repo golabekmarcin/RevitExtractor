@@ -12,12 +12,22 @@ from __future__ import unicode_literals
 import os
 
 PREFERENCE_KEY = "cloud_hardlinks"
+MODE_KEY = "cloud_staging"
+# links = host and links as real-name hard links (default); host-only and direct are experiments:
+# the Extractor gets only the host as a link, or the host's cache path itself (nothing staged).
+STAGING_MODES = ("links", "host-only", "direct")
 
 
 def hardlinks_enabled(preferences):
     """True unless the preferences dict says cloud_hardlinks is exactly false. A missing or
     unreadable preferences file means on: a link that cannot be made falls back to a copy."""
     return not (isinstance(preferences, dict) and preferences.get(PREFERENCE_KEY) is False)
+
+
+def staging_mode(preferences):
+    """The cloud_staging preference; anything else, missing or unreadable means "links"."""
+    value = preferences.get(MODE_KEY) if isinstance(preferences, dict) else None
+    return value if value in STAGING_MODES else "links"
 
 
 def make_hard_link(source, link_path, os_link=getattr(os, "link", None), kernel32=None):

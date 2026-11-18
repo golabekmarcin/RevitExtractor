@@ -451,6 +451,16 @@ class CheckSpace(StageCase):
         self.assertIn("miejsca", "%s" % polish_error.exception)
         self.assertIsInstance(caught.exception, ValueError)
 
+    def test_links_budget_only_the_files_that_cannot_be_linked(self):
+        plan = self.plan(300 * 2 ** 20, 100 * 2 ** 20)
+        with unittest.mock.patch.object(rx_cloud_stage, "_linkable",
+                                        lambda item, dest: item.size == 300 * 2 ** 20):
+            names, copy_bytes = rx_cloud_stage.split_by_link(plan, True, "D:\out")
+            self.assertEqual((names, copy_bytes), (["M0.rvt"], 100 * 2 ** 20))
+            self.assertEqual(check_space(plan, 200 * 2 ** 20, links=True, dest="D:\out"),
+                             200 * 2 ** 20)
+            self.assertEqual(rx_cloud_stage.split_by_link(plan, False)[1], 400 * 2 ** 20)
+
     def test_unknown_free_space_does_not_block(self):
         self.assertEqual(check_space(self.plan(5), None), 10)
 

@@ -182,6 +182,21 @@ class CloudCopier(WritablePlan, StageCase):
         list(rx_status.cloud_copier(os.path.join(self.tmp, "nope.json"))(plan, self.dest, CHUNK))
         self.assertEqual(os.stat(plan.items[0].src).st_nlink, 2)
 
+    def test_staging_mode_parsing(self):
+        for value in ("links", "host-only", "direct"):
+            self.assertEqual(rx_hardlink.staging_mode({"cloud_staging": value}), value)
+        for bad in ({}, {"cloud_staging": "Direct"}, {"cloud_staging": None}, {"cloud_staging": []},
+                    {"cloud_staging": 3}, None, [], "direct"):
+            self.assertEqual(rx_hardlink.staging_mode(bad), "links", bad)
+
+    def test_copier_reads_the_mode_for_every_job(self):
+        path = self.prefs({"cloud_staging": "direct"})
+        copier = rx_status.cloud_copier(path)
+        self.assertEqual(copier.mode(), "direct")
+        self.prefs({})
+        self.assertEqual(copier.mode(), "links")
+        self.assertEqual(rx_status.cloud_copier(os.path.join(self.tmp, "nope.json")).mode(), "links")
+
     def test_preference_is_read_for_every_job(self):
         path = self.prefs({"cloud_hardlinks": False})
         copier = rx_status.cloud_copier(path)

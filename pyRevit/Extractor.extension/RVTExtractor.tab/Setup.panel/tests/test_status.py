@@ -1981,6 +1981,22 @@ class StagingView(unittest.TestCase):
         self.assertEqual(view["state_text"], "Kopiowanie")
         self.assertEqual(view["progress"], "Kopiowanie z pamięci podręcznej: 3 z 10 MB")
 
+    def test_linked_files_show_a_count_and_a_size_only_for_real_copies(self):
+        job = make_staged(done=0, total=0)
+        job.stage_link_count = 19
+        view = job_view(job, None, NOW, None)
+        self.assertEqual(view["progress"], "Linking 19 files…")
+        self.assertEqual(view["state_text"], "Linking")
+        job = make_staged(done=MB, total=4 * MB)
+        job.stage_link_count = 2
+        view = job_view(job, None, NOW, None)
+        self.assertEqual(view["progress"], "Linking 2 files… Copying from the cache: 1 of 4 MB")
+        self.assertEqual(view["state_text"], "Copying")
+        job = make_staged(done=0, total=0)
+        job.stage_link_count = 19
+        view = under_polish(job_view, job, None, NOW, None)
+        self.assertEqual(view["progress"], "Tworzenie dowiązań do plików: 19…")
+
     def test_megabytes_round_down_done_and_up_total(self):
         view = job_view(make_staged(done=0, total=1), None, NOW, None)
         self.assertEqual(view["progress"], "Copying from the cache: 0 of 1 MB")

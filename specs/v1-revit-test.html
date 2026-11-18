@@ -120,7 +120,8 @@ var PARTS = [
   { id: 'E', name: 'E. Polish' },
   { id: 'F', name: 'F. Revit 2025 machine' },
   { id: 'H', name: 'H. Cloud (ACC) models' },
-  { id: 'I', name: 'I. File names (named copies)' }
+  { id: 'I', name: 'I. File names (named copies)' },
+  { id: 'J', name: 'J. Cloud staging experiment' }
 ];
 var SYN = 'Uses only the Autodesk sample models copied by the kit. No client model is needed.';
 var CLOUDRULE = 'Needs a real ACC model, so this is an exception to the synthetic-data rule (like D4) and needs your explicit authorization. Only counts and choices leave the computer, never a model, project or file name, a path or a GUID.';
@@ -645,7 +646,38 @@ node scripts/probe-export-structure.mjs 'PUT-THE-FULL-PATH-OF-THE-OUTPUT-FOLDER-
   expect: ['named.json state is running (or done if Revit closed too late).', 'The next Export works.'],
   fields: [NSTATE, { k: 'next', l: 'The next Export worked', t: 'choice', o: YN }, F_ERR],
   prior: NAMEDPRIOR, evidence: 'The state and the answer.',
-  trouble: ['The next Export refused or hung: record what the status window said (generic words) and set FAIL.'] }
+  trouble: ['The next Export refused or hung: record what the status window said (generic words) and set FAIL.'] },
+{ id: 'J1', part: 'J', title: 'Cloud staging experiment: no links staged (host-only, direct)', where: 'PowerShell + Revit (Export window, Cloud tab)',
+  purpose: 'Test whether the Extractor can open the cache host without a staging folder of real-name links. Three runs of one small ACC model: the default (links), host-only (one link to the host only) and direct (the host\'s cache path, nothing staged). In the two experiment modes the export may miss the linked models; that is what you observe. No workaround is added.',
+  prereq: ['H8 done (the default mode is your reference run).', CLOUDRULE, 'Use a small ACC model and the same views for all three runs. Run them one at a time.', 'Have the full path of the host cache file (as in H8) for -Stamp. Type it only into your own PowerShell; never send it.'],
+  steps: ['Run block 1 with the default mode (it removes `cloud_staging`), export the model from the Cloud tab, wait for OK, then run block 4.', 'Run block 2 (host-only), export again, wait for OK, run block 4.', 'Run block 3 (direct), export again, wait for OK, run block 4. The result text names the mode and says links were not provided.', 'For each run open the result in the Analyzer: do the 3D view and the 2D views show the linked models? Answer from what you see.', 'Run block 5 once before the first run and once after the last (edit the path): both lines must be equal. Then run block 1 again to return to the default.'],
+  cmds: function () {
+    var pref = function (mode) { return String.raw`$p = Join-Path $env:APPDATA 'RevitExtractor\preferences.json'
+New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null
+$d = [ordered]@{}
+if (Test-Path -LiteralPath $p) { try { $o = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($n in $o.PSObject.Properties) { $d[$n.Name] = $n.Value } } catch {} }
+` + (mode ? String.raw`$d['cloud_staging'] = '` + mode + String.raw`'` : String.raw`$d.Remove('cloud_staging')   # no setting = links, the default`) + String.raw`
+[IO.File]::WriteAllText($p, ($d | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))   # UTF-8 without BOM
+'cloud_staging = ' + $(if ($d.Contains('cloud_staging')) { $d['cloud_staging'] } else { '(not set: links)' })`; };
+    return [{ t: '1. Default mode (links)', cwd: 'any', c: pref(null) },
+      { t: '2. Mode host-only', cwd: 'any', c: pref('host-only') },
+      { t: '3. Mode direct', cwd: 'any', c: pref('direct') },
+      { t: '4. After each run: counts of the newest run (no names)', cwd: 'any', c: P.out + String.raw`
+$run = Get-ChildItem $out -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
+$s = Get-Content -LiteralPath (Join-Path $run.FullName 'model\stage.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+'mode: ' + $s.mode + '; cache files changed: ' + $s.cache_changed + '; staged items: ' + @($s.items).Count
+'Files under output: ' + @(Get-ChildItem (Join-Path $run.FullName 'output') -Recurse -File).Count
+'Items in the model folder: ' + @(Get-ChildItem (Join-Path $run.FullName 'model') -Force).Count` },
+      { t: '5. Stamp of the host cache file, before the first and after the last run (edit the path)', cwd: 'any', c: P.kit + String.raw`
+& $kit -Stamp 'PUT-THE-FULL-PATH-OF-THE-HOST-CACHE-FILE-HERE'` }]; },
+  expect: ['Block 4 prints the mode of that run (links, host-only, direct), `cache files changed: 0`, and staged items: 2 or more for links, 1 for host-only and direct.', 'host-only: the model folder holds 2 items (stage.json and the host link); direct: 1 (stage.json only).', 'The result text of host-only and direct names the mode and says "Links were not provided (experiment mode)."', 'Block 5: the two stamps are equal.'],
+  fields: [{ k: 'files_links', l: 'Default: files under output', t: 'int' }, { k: 'files_host', l: 'host-only: files under output', t: 'int' }, { k: 'files_direct', l: 'direct: files under output', t: 'int' },
+    { k: 'ok_host', l: 'host-only run finished OK', t: 'choice', o: YN }, { k: 'ok_direct', l: 'direct run finished OK', t: 'choice', o: YN },
+    { k: 'links3d_default', l: 'Default: 3D view shows the linked models', t: 'choice', o: YN }, { k: 'links3d_host', l: 'host-only: 3D view shows the linked models', t: 'choice', o: YN }, { k: 'links3d_direct', l: 'direct: 3D view shows the linked models', t: 'choice', o: YN },
+    { k: 'links2d_host', l: 'host-only: 2D views show linked content', t: 'choice', o: YN }, { k: 'links2d_direct', l: 'direct: 2D views show linked content', t: 'choice', o: YN },
+    { k: 'changed', l: 'Largest "cache files changed" over the three runs', t: 'int' }, { k: 'stamp', l: 'Block 5: the two stamps are equal', t: 'choice', o: YN }, F_ERR],
+  evidence: 'The numbers and the answers. No names.', prior: 'The staging modes are unit-tested with fakes (CPython); the Extractor opening a cache path directly, or a host without its links, has never run in Revit.',
+  trouble: ['`cache files changed` above 0, or the two stamps differ: mark FAIL, set the default back (block 1) and do not repeat on this model.', 'A run fails (the Extractor cannot open the file): record the generic error category, mark that run "finished OK: no". That is a valid answer to the experiment, not a bug.', 'The output folder is inside the CollaborationCache: the job is refused before anything is written; choose another folder.'] }
 ];
 
 /* ---------- state ---------- */

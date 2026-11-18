@@ -87,15 +87,24 @@ def _linkable(item, dest):
                           == os.path.splitdrive(os.path.abspath(dest))[0].lower())
 
 
+def split_by_link(plan, links=False, dest=None):
+    """(names of the files that will be hard-linked, bytes that will really be copied). Without
+    `links` nothing is linked. It is an estimate: a link that fails at the copy step falls back
+    to a copy (copy_steps reports what happened)."""
+    items = _items(plan)
+    linked = [item for item in items if links and _linkable(item, dest)]
+    return ([item.name for item in linked],
+            sum(item.size for item in items) - sum(item.size for item in linked))
+
+
 def check_space(plan, free_bytes, links=False, dest=None):
     """Needed bytes, or StageError when they do not fit into `free_bytes`. None means the free
     space is unknown (the query failed): the copy goes ahead and fails on its own if the disk
-    fills up. With `links` (hard links are on) a file that can be linked needs no copy; read-only
-    files and files on another drive than `dest` are still copied, so they count in full."""
-    items = _items(plan)
-    needed = needed_bytes(plan)
-    if links:
-        needed -= sum(item.size for item in items if _linkable(item, dest))
+    fills up. Only files that really copy count, twice (the copy plus the Extractor's own
+    temporary copy, a spec assumption never measured). With `links` (hard links are on) a file
+    that can be linked counts nothing; read-only files and files on another drive than `dest`
+    are still copied."""
+    needed = 2 * split_by_link(plan, links, dest)[1]
     if free_bytes is None:
         return needed
     free = _number(free_bytes)

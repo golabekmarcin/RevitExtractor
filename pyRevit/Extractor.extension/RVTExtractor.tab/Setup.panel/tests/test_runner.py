@@ -1807,6 +1807,161 @@ class QueueStagingTest(TempDirTest):
         for path in (self.host, self.link):
             os.chmod(path, 0o444)
 
+    # -- honest staging status (T1) and experiment modes (T2)
+
+    def copier(self, mode="links", linking=True, link=os.link):
+        def copier(plan, folder, chunk, report=None):
+            return rx_runner.copy_steps(plan, folder, chunk=chunk, link=link if linking else None,
+                                        report=report)
+        copier.accepts_report = True
+        copier.linking = lambda: linking
+        copier.mode = lambda: mode
+        return copier
+
+    def stage_json(self, job):
+        with open(os.path.join(self.model_dir(job), "stage.json"), "rb") as handle:
+            return json.loads(handle.read().decode("ascii"))
+
+    def test_linked_files_count_as_links_and_add_no_megabytes(self):
+        queue = self.queue(copier=self.copier())
+        a = queue.add(self.staged_job())
+        queue.poll()
+        job = self.job(queue, a)
+        self.assertEqual((job.stage_link_count, job.stage_total), (2, 0))
+        job = self.poll_until(queue, a, ("running",))
+        self.assertEqual((job.stage_link_count, job.stage_total, job.stage_done), (2, 0, 0))
+        self.assertEqual(set(job.stage_modes.values()), {"linked"})
+
+    def test_a_link_that_falls_back_to_a_copy_moves_its_bytes_into_the_total(self):
+        calls = []
+
+        def link(source, target):
+            calls.append(source)
+            if len(calls) == 2:
+                raise OSError("no link here")
+            os.link(source, target)
+        queue = self.queue(copier=self.copier(link=link))
+        a = queue.add(self.staged_job())
+        queue.poll()
+        self.assertEqual(self.job(queue, a).stage_total, 0)
+        job = self.poll_until(queue, a, ("running",))
+        self.assertEqual((job.stage_link_count, job.stage_total, job.stage_done),
+                         (1, os.path.getsize(self.link), os.path.getsize(self.link)))
+
+    def test_without_hard_links_everything_is_a_copy(self):
+        queue = self.queue(copier=self.copier(linking=False))
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.assertEqual(job.stage_link_count, 0)
+        self.assertEqual(job.stage_total, os.path.getsize(self.host) + os.path.getsize(self.link))
+
+    def test_default_mode_is_links_and_is_recorded(self):
+        for copier in (None, self.copier(mode="nonsense")):
+            with self.subTest(copier=copier):
+                self.setUp()
+                queue = self.queue(**({"copier": copier} if copier else {}))
+                a = queue.add(self.staged_job())
+                job = self.poll_until(queue, a, ("running",))
+                self.assertEqual(job.stage_mode, "links")
+                self.assertEqual(self.stage_json(job)["mode"], "links")
+                self.assertEqual(len(self.stage_json(job)["items"]), 2)
+                self.exit(job)
+                queue.poll()
+                self.assertNotIn("experiment", self.job(queue, a).result.message)
+
+    def test_host_only_stages_exactly_one_link_and_says_so(self):
+        queue = self.queue(copier=self.copier("host-only"))
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.assertEqual(set(os.listdir(self.model_dir(job))),
+                         {"stage.json", "Zażółć-Konstrukcja.rvt"})
+        self.assertEqual((job.stage_link_count, job.stage_total), (1, 0))
+        self.assertTrue(os.path.samefile(job.staged_model, self.host))
+        self.assertEqual(self.stage_json(job)["mode"], "host-only")
+        self.exit(job)
+        queue.poll()
+        message = self.job(queue, a).result.message
+        self.assertIn("host-only", message)
+        self.assertIn("Links were not provided (experiment mode).", message)
+        self.assertEqual(self.job(queue, a).state, "ok")
+
+    def test_direct_stages_nothing_and_gives_the_extractor_the_cache_path(self):
+        queue = self.queue(copier=self.copier("direct"))
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        self.assertEqual(os.listdir(self.model_dir(job)), ["stage.json"])
+        (spec, handle), = self.starter.started
+        self.assertEqual(spec.env["RX_MODEL"], self.host)
+        self.assertIsNone(job.staged_model)
+        self.assertEqual((job.stage_link_count, job.stage_total), (0, 0))
+        record = self.stage_json(job)
+        self.assertEqual(record["mode"], "direct")
+        self.assertEqual([item["mode"] for item in record["items"]], [None])
+        handle.exited, handle.code = True, 0
+        open(os.path.join(job.paths.output, "bubble.json"), "w").close()
+        os.makedirs(os.path.join(job.paths.output, "Resource"))
+        with open(job.paths.console, "w") as console:
+            console.write(SUMMARY_OK)
+        queue.poll()
+        self.assertEqual(self.job(queue, a).state, "ok")
+        self.assertIn("direct", self.job(queue, a).result.message)
+        self.assertEqual(self.remover.removed, [], "nothing in the cache is ever deleted")
+
+    def test_direct_refuses_an_output_folder_inside_the_cache(self):
+        for mode in ("direct", "host-only"):
+            queue = self.queue(copier=self.copier(mode))
+            job = self.staged_job()
+            job.output_parent = os.path.join(self.cache_root, "exports")
+            a = queue.add(job)
+            queue.poll()
+            job = self.job(queue, a)
+            self.assertEqual(job.state, "failed", mode)
+            self.assertIn("CollaborationCache", job.result.message)
+            self.assertEqual(self.starter.started, [])
+
+    def changed_run(self, mode, changed_file):
+        queue = self.queue(copier=self.copier(mode))
+        a = queue.add(self.staged_job())
+        job = self.poll_until(queue, a, ("running",))
+        info = os.stat(changed_file)
+        os.utime(changed_file, ns=(info.st_atime_ns, info.st_mtime_ns + 60 * 10 ** 9))
+        if mode == "direct":
+            handle = self.starter.started[-1][1]
+            handle.exited, handle.code = True, 0
+            open(os.path.join(job.paths.output, "bubble.json"), "w").close()
+            os.makedirs(os.path.join(job.paths.output, "Resource"))
+            with open(job.paths.console, "w") as console:
+                console.write(SUMMARY_OK)
+        else:
+            self.exit(job)
+        queue.poll()
+        os.utime(changed_file, ns=(info.st_atime_ns, info.st_mtime_ns))
+        job = self.job(queue, a)
+        self.assertEqual(job.state, "ok")
+        self.assertEqual(job.cache_changed, 1, mode)
+        self.assertIn("1 cache file(s) changed", job.result.message)
+        for text in (job.result.message, json.dumps(self.stage_json(job))):
+            self.assertNotIn(M3, text)
+            self.assertNotIn(M4, text)
+            self.assertNotIn(self.tmp, text)
+        self.assertNotIn("Alpha-Architecture", job.result.message)
+        self.assertEqual(self.stage_json(job)["cache_changed"], 1)
+
+    def test_host_only_warns_with_counts_only_when_a_link_source_changed(self):
+        self.changed_run("host-only", self.link)
+
+    def test_direct_warns_with_counts_only_when_the_host_changed(self):
+        self.changed_run("direct", self.host)
+
+    def test_experiment_texts_exist_in_polish(self):
+        with patch.dict(sys.modules, polish()):
+            queue = self.queue(copier=self.copier("host-only"))
+            a = queue.add(self.staged_job())
+            job = self.poll_until(queue, a, ("running",))
+            self.exit(job)
+            queue.poll()
+        self.assertIn("eksperyment", self.job(queue, a).result.message)
+
     def test_progress_grows_and_each_poll_stays_within_its_budget(self):
         queue = self.queue()
         a = queue.add(self.staged_job())

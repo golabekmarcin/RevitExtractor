@@ -554,10 +554,43 @@ $run = Get-ChildItem $out -Directory | Where-Object { Test-Path (Join-Path $_.Fu
 
 If names are not recognised (Revit's language is not English), files keep their original name and a note says so: record the language, set INCONCLUSIVE and run I0 with `--show-names`.
 
+## Part J: cloud staging experiment, no links staged (20 minutes; results are private)
+
+Question: can the Extractor open the cache host **without** a staging folder of real-name links? **Not run in Revit by the agent: unverified.** Needs your ACC model (use a small one), so it follows the Part H rule: counts and choices only, never a name, path or GUID. Run H8 first (the default mode, `links`, is your reference run). The mode is the preference `cloud_staging` in `%APPDATA%\RevitExtractor\preferences.json`, read at each job (no Revit restart): `"links"` (default: host and links as real-name hard links), `"host-only"` (only the host is staged as one hard link, no links), `"direct"` (the Extractor gets the host's cache path itself, nothing is staged). Anything else means `links`. Only the host's own cache file is opened; in these two modes the export may miss the linked models: that is what you are observing. The tool adds no workaround.
+
+- [ ] **J1** Three runs of the same small ACC model, same views, one at a time (wait for each to finish): first the default (`links`), then `host-only`, then `direct`. Set the mode with this block (edit the value; `$null` removes the setting):
+
+```powershell
+$mode = 'host-only'   # 'host-only', 'direct', or $null for the default
+$p = Join-Path $env:APPDATA 'RevitExtractor\preferences.json'
+New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null
+$d = [ordered]@{}
+if (Test-Path -LiteralPath $p) { try { $o = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($n in $o.PSObject.Properties) { $d[$n.Name] = $n.Value } } catch {} }
+if ($mode) { $d['cloud_staging'] = $mode } else { $d.Remove('cloud_staging') }
+[IO.File]::WriteAllText($p, ($d | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+'cloud_staging = ' + $(if ($d.Contains('cloud_staging')) { $d['cloud_staging'] } else { '(not set: links)' })
+```
+
+  After each run, print counts of the newest run (no names; edit nothing):
+
+```powershell
+$ini = Join-Path $env:APPDATA 'pyRevit\pyRevit_config.ini'
+$out = $null; $inSec = $false
+if (Test-Path $ini) { foreach ($l in Get-Content $ini) { if ($l -match '^\[') { $inSec = ($l.Trim() -eq '[RevitExtractorExport]') } elseif ($inSec -and $l -match '^output_parent\s*=\s*(.+)$') { $out = $Matches[1].Trim().Trim('"') } } }
+if (-not $out) { $out = Join-Path $env:USERPROFILE 'RevitExtractor' }
+$run = Get-ChildItem $out -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
+$s = Get-Content -LiteralPath (Join-Path $run.FullName 'model\stage.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+'mode: ' + $s.mode + '; cache files changed: ' + $s.cache_changed + '; staged items: ' + @($s.items).Count
+'Files under output: ' + @(Get-ChildItem (Join-Path $run.FullName 'output') -Recurse -File).Count
+'Items in the model folder: ' + @(Get-ChildItem (Join-Path $run.FullName 'model') -Force).Count
+```
+
+  Also run `& $kit -Stamp <host cache file>` before the first and after the last run (size and time must be equal). Then, per run, open the result in the Analyzer: does the 3D view show the linked models (yes/no), do the 2D sheets or views show linked content (yes/no), and how many files are under `output` (the count line). Pass = the three counts and answers are recorded; the interesting result is whether `host-only` or `direct` differ from the default. FAIL if a run reports `cache files changed` above 0 or a `-Stamp` differs: stop and do not repeat on this model. When done, set `$mode = $null` (back to the default).
+
 ## What to send back, privately
 
 1. This list with PASS, FAIL or a note per item, and the times of D1, D3, D4 and D6.
-2. The outputs: the files in `C:\RX-test\results` (`S1.txt`, `C9.txt`, `C12.txt`, `C13.txt`, `G1.txt`, `G2.txt`, and `F1.txt` from the Revit 2025 machine). Part I: `I2.txt` ... `I9.txt` hold counts only. Part H: `H1.txt`, `H3-before.txt`, `H3-after.txt` hold numbers only; send the counts, not the files. To list them: `Get-ChildItem C:\RX-test\results | Select-Object Name, Length, LastWriteTime`.
+2. The outputs: the files in `C:\RX-test\results` (`S1.txt`, `C9.txt`, `C12.txt`, `C13.txt`, `G1.txt`, `G2.txt`, and `F1.txt` from the Revit 2025 machine). Part I: `I2.txt` ... `I9.txt` hold counts only. Part J: the three count blocks of J1 (numbers only). Part H: `H1.txt`, `H3-before.txt`, `H3-after.txt` hold numbers only; send the counts, not the files. To list them: `Get-ChildItem C:\RX-test\results | Select-Object Name, Length, LastWriteTime`.
 3. For any failure: the text of pyRevit's output window, and `console.log` and `stderr.log` of that run folder. These can name models and paths, so never commit them.
 
 ## What the agent does with the results
