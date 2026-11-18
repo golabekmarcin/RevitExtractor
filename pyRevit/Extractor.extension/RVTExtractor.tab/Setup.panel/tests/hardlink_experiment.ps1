@@ -31,10 +31,23 @@ function Get-Snapshot($files) {
 
 if ($Stage) {
     if (-not $CacheHost) { throw 'Pass -CacheHost <cache host file>' }
+    # Resolve to full paths first: relative paths have no drive qualifier.
+    $CacheHost = [IO.Path]::GetFullPath($CacheHost)
+    $Root = [IO.Path]::GetFullPath($Root)
+    $run = Join-Path $Root 'run1'
+    $snap = Join-Path $Root 'snapshot.json'
     $pairs = @(@{ n = $HostName; p = $CacheHost })
-    foreach ($l in $Link) { $k = $l.IndexOf('='); $pairs += @{ n = $l.Substring(0, $k); p = $l.Substring($k + 1) } }
+    foreach ($l in $Link) {
+        $k = $l.IndexOf('=')
+        if ($k -lt 1) { throw "Bad -Link value (expected 'RealName.rvt=<cache file>')." }
+        $pairs += @{ n = $l.Substring(0, $k); p = [IO.Path]::GetFullPath($l.Substring($k + 1)) }
+    }
+    foreach ($x in $pairs) { if (-not (Test-Path -LiteralPath $x.p -PathType Leaf)) { throw ('Cache file not found for {0}. Pass the full path to an existing file.' -f $x.n) } }
     $files = $pairs | ForEach-Object { $_.p }
-    if ((Split-Path -Qualifier $CacheHost) -ne (Split-Path -Qualifier $Root)) { throw 'Root must be on the same drive as the cache (hard links).' }
+    $rootDrive = [IO.Path]::GetPathRoot($Root)
+    foreach ($x in $pairs) {
+        if ([IO.Path]::GetPathRoot($x.p) -ne $rootDrive) { throw ('Root ({0}) must be on the same drive as the cache files (hard links).' -f $rootDrive) }
+    }
     if (Test-Path -LiteralPath $run) { throw 'run1 exists; run -Remove first.' }
     New-Item -ItemType Directory -Force -Path $Root | Out-Null
     Get-Snapshot $files | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $snap -Encoding UTF8
