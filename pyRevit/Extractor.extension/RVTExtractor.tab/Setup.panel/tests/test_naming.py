@@ -620,5 +620,383 @@ class TieTests(unittest.TestCase):
         self.assertIsNone(pairs[0][1])
 
 
+# ---- Task 4: writer and record (acceptance criteria 5, 6 and 8) ----
+import hashlib  # noqa: E402
+import json  # noqa: E402
+
+import rx_cloud_stage  # noqa: E402
+import rx_runner  # noqa: E402
+
+PDF_REL = "Resource/%s/A101 - Ground floor.pdf" % G1
+IFC_REL = "Model.ifc"
+VIEW_REL = "Resource/3D/%s" % G3
+VIEW_FILES = ["0/mesh.pf", "0/model.svf", "0/sub/t.bin"]
+ORIGINALS = {"template": "{SheetNumber}", "system": {}, "values": None}
+NAMED_VALUES = {"template": "{SheetNumber}{ViewName}", "system": {},
+                "values": {G1: SHEET, G3: VIEW}}
+
+
+def snapshot(folder):
+    """{relative path: "dir" | (size, mtime_ns, sha256)} of everything under `folder`."""
+    out = {}
+    for dirpath, dirs, files in os.walk(folder):
+        for name in dirs + files:
+            path = os.path.join(dirpath, name)
+            rel = os.path.relpath(path, folder).replace("\\", "/")
+            if os.path.isdir(path):
+                out[rel] = "dir"
+                continue
+            st = os.stat(path)
+            with io.open(path, "rb") as fh:
+                out[rel] = (st.st_size, st.st_mtime_ns, hashlib.sha256(fh.read()).hexdigest())
+    return out
+
+
+def copy_link(src, dst):
+    """A stand-in for a hard link that works on any drive: a new file, never an overwrite."""
+    with io.open(src, "rb") as s, io.open(dst, "xb") as d:
+        d.write(s.read())
+
+
+def no_link(src, dst):
+    raise OSError(1, "no links here")
+
+
+def _links_supported():
+    folder = tempfile.mkdtemp(prefix="rxnm-ln-")
+    try:
+        touch(folder, "a")
+        os.link(os.path.join(folder, "a"), os.path.join(folder, "b"))
+        return True
+    except (OSError, AttributeError, NotImplementedError):
+        return False
+    finally:
+        shutil.rmtree(folder, True)
+
+
+class WriterCase(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="rxnm-run-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.paths = rx_runner.run_paths_for(self.root)
+        self.out = self.paths.output
+        self.named = os.path.join(self.root, "named")
+        self.record = os.path.join(self.root, "named.json")
+        manifest = manifest_of(
+            node("folder", "Sheets", [node("geometry", "A101 - Ground floor", vid=G1)]),
+            node("folder", "3D", [node("geometry", "Level 1", vid=G3)]))
+        touch(self.out, "bubble.json", json.dumps(manifest).encode("utf-8"))
+        touch(self.out, PDF_REL, b"pdf-1" * 50)
+        touch(self.out, IFC_REL, b"ifc-1" * 30)
+        for i, rel in enumerate(VIEW_FILES):
+            touch(self.out, VIEW_REL + "/" + rel, b"view-%d" % i * (i + 3))
+        touch(self.out, "Resource/objects_ids.json.gz", b"excluded")
+
+    def src(self, rel):
+        return os.path.join(self.out, *rel.split("/"))
+
+    def dst(self, rel):
+        return os.path.join(self.named, *rel.split("/"))
+
+    def run_named(self, naming, exclude=(), **kw):
+        """Runs NamedRun to the end and checks criterion 6: output\\ is unchanged (except the
+        files a test changes on purpose) and only named\\ and named.json are new."""
+        kw.setdefault("link", copy_link)
+        before = snapshot(self.out)
+        top = set(os.listdir(self.root))
+        run = rx_naming.NamedRun(self.paths, dict(naming), **kw)
+        steps = list(run.steps())
+        after = snapshot(self.out)
+        for rel in exclude:
+            before.pop(rel, None)
+            after.pop(rel, None)
+        self.assertEqual(before, after)
+        self.assertLessEqual(set(os.listdir(self.root)) - top, {"named", "named.json"})
+        self.assertTrue(all(d <= t for d, t in steps))
+        return run
+
+    def read_record(self):
+        with io.open(self.record, "rb") as fh:
+            return fh.read().decode("ascii")
+
+    def assertSameBytes(self, a, b):
+        with io.open(a, "rb") as fa, io.open(b, "rb") as fb:
+            self.assertEqual(fa.read(), fb.read())
+
+
+class WriterTests(WriterCase):
+    LINKS = _links_supported()
+
+    def test_real_hard_links(self):
+        if not self.LINKS:
+            self.skipTest("the temp drive cannot make hard links (os.link failed)")
+        run = self.run_named(ORIGINALS, link=rx_naming.make_hard_link)
+        self.assertEqual(run.state, "done")
+        self.assertEqual(run.counts["linked"], 3)
+        for src, dst in ((PDF_REL, "A101 - Ground floor.pdf"), (IFC_REL, IFC_REL),
+                         (VIEW_REL + "/0/model.svf", G3 + "/0/model.svf")):
+            s, d = os.stat(self.src(src)), os.stat(self.dst(dst))
+            self.assertEqual((s.st_nlink, d.st_nlink), (2, 2))
+            self.assertEqual(s.st_ino, d.st_ino)
+            self.assertNotEqual(s.st_ino, 0)
+
+    def test_view_subtree_complete_and_names(self):
+        run = self.run_named(NAMED_VALUES)
+        self.assertEqual(run.state, "done")
+        self.assertEqual(sorted(os.listdir(self.named)), ["A101.pdf", "Level 1", "Model.ifc"])
+        inside = snapshot(self.dst("Level 1"))
+        source = snapshot(self.src(VIEW_REL))
+        self.assertEqual({k: v[2] if v != "dir" else v for k, v in inside.items()},
+                         {k: v[2] if v != "dir" else v for k, v in source.items()})
+        self.assertEqual(run.counts, {"total": 3, "linked": 3, "copied": 0, "failed": 0,
+                                      "untied": 1})
+        self.assertEqual([(i["source"], i["name"], i["kind"], i["mode"]) for i in run.items], [
+            (IFC_REL, "Model.ifc", "file", "linked"),
+            (PDF_REL, "A101.pdf", "file", "linked"),
+            (VIEW_REL, "Level 1", "dir", "linked")])
+        self.assertEqual((run.done, run.total), (5, 5))
+        self.assertEqual(run.result_message(),
+                         "Named copies: 3 in named\\ (0 copied instead of linked). 1 files "
+                         "could not be tied to a sheet or view and kept their name.")
+
+    def test_link_failure_copies_identical_bytes(self):
+        run = self.run_named(ORIGINALS, link=no_link)
+        self.assertEqual(run.state, "done")
+        self.assertEqual((run.counts["copied"], run.counts["linked"]), (3, 0))
+        self.assertEqual({i["mode"] for i in run.items}, {"copied"})
+        self.assertSameBytes(self.src(PDF_REL), self.dst("A101 - Ground floor.pdf"))
+        for rel in VIEW_FILES:
+            self.assertSameBytes(self.src(VIEW_REL + "/" + rel), self.dst(G3 + "/" + rel))
+        self.assertEqual(os.stat(self.dst(IFC_REL)).st_nlink, 1)
+        self.assertIn("(3 copied instead of linked)", run.result_message())
+
+    def test_copier_failure_fails_one_item(self):
+        def copier(plan, dest, **kw):
+            if plan.items[0].name.endswith(".pdf"):
+                raise rx_cloud_stage.StageError("boom")
+            return rx_cloud_stage.copy_steps(plan, dest, **kw)
+        run = self.run_named(ORIGINALS, link=no_link, copier=copier)
+        self.assertEqual(run.state, "partial")
+        self.assertEqual([i["mode"] for i in run.items], ["copied", "failed", "copied"])
+        self.assertEqual(run.items[1]["error"], "StageError")
+        self.assertEqual(run.result_message(),
+                         "Named copies: 2 of 3; 1 failed, see named.json. 1 files could not be "
+                         "tied to a sheet or view and kept their name.")
+
+    def test_not_enough_space_nothing_made(self):
+        asked = []
+        run = self.run_named(ORIGINALS, link=no_link,
+                             free_space=lambda p: asked.append(p) or 10)
+        self.assertEqual(run.state, "failed")
+        self.assertEqual(asked, [self.named])
+        self.assertEqual([i["error"] for i in run.items], ["not enough space"] * 3)
+        self.assertIn("Not enough free disk space", run.notes[0])
+        self.assertEqual(os.listdir(self.named), [])
+        self.assertTrue(run.result_message().startswith("Named copies were not made: Not enough"))
+        self.assertEqual(json.loads(self.read_record())["state"], "failed")
+
+    def test_not_enough_space_after_some_links_is_partial(self):
+        def link(src, dst):
+            if src.endswith(".pdf"):
+                raise OSError(17, "x")
+            copy_link(src, dst)
+        run = self.run_named(ORIGINALS, link=link, free_space=lambda p: 0)
+        self.assertEqual(run.state, "partial")
+        self.assertEqual([i["mode"] for i in run.items], ["linked", "failed", "failed"])
+        self.assertEqual(sorted(os.listdir(self.named)), [IFC_REL])
+
+    def test_unknown_free_space_goes_on(self):
+        def broken(path):
+            raise OSError(5, "x")
+        run = self.run_named(ORIGINALS, link=no_link, free_space=broken)
+        self.assertEqual(run.state, "done")
+
+    def test_existing_named_refused_and_nothing_touched(self):
+        touch(self.named, "keep.pdf", b"mine")
+        before = snapshot(self.root)
+        run = rx_naming.NamedRun(self.paths, dict(ORIGINALS), link=copy_link)
+        self.assertEqual(list(run.steps()), [])
+        self.assertEqual(snapshot(self.root), before)
+        self.assertEqual(run.state, "failed")
+        self.assertIn("already exists", run.notes[0])
+        self.assertIn("already exists", run.result_message())
+        self.assertFalse(os.path.exists(self.record))
+
+    def test_invalid_naming_failed_nothing_written(self):
+        before = snapshot(self.root)
+        run = rx_naming.NamedRun(self.paths, {"template": "{Nope}", "system": {}})
+        list(run.steps())
+        self.assertEqual(run.state, "failed")
+        self.assertIn("Unknown token", run.notes[0])
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_vanished_or_changed_source_fails_only_that_item(self):
+        changed = VIEW_REL + "/0/sub/t.bin"
+
+        def link(src, dst):
+            if src.endswith(".ifc"):    # the first item: now break two later sources
+                os.remove(self.src(PDF_REL))
+                with io.open(self.src(changed), "ab") as fh:
+                    fh.write(b"more")
+            copy_link(src, dst)
+        run = self.run_named(ORIGINALS, link=link, exclude=(PDF_REL, changed))
+        self.assertEqual(run.state, "partial")
+        self.assertEqual([i["mode"] for i in run.items], ["linked", "failed", "failed"])
+        self.assertTrue(run.items[1]["error"].startswith("FileNotFoundError"))
+        self.assertEqual(run.items[2]["error"], "source changed")
+        self.assertEqual((run.done, run.total), (5, 5))
+
+    def test_split_layout(self):
+        naming = dict(ORIGINALS, split=True)
+        run = self.run_named(naming)
+        self.assertEqual(run.state, "done")
+        self.assertEqual(sorted(os.listdir(self.named)), ["3D", "IFC", "PDF"])
+        self.assertEqual([i["name"] for i in run.items],
+                         ["IFC/Model.ifc", "PDF/A101 - Ground floor.pdf", "3D/" + G3])
+        self.assertTrue(os.path.isfile(self.dst("3D/%s/0/sub/t.bin" % G3)))
+
+    def test_clash_numbering(self):
+        touch(self.out, "Resource/%s/Other.pdf" % G2, b"pdf-2")
+        run = self.run_named({"template": "Sheet", "system": {}, "values": None})
+        self.assertEqual(run.state, "done")
+        self.assertEqual([i["name"] for i in run.items],
+                         ["Sheet.ifc", "Sheet.pdf", "Sheet (2).pdf", "Sheet"])
+
+    def test_path_too_long_fails_that_item(self):
+        length = len(self.named)
+        with unittest.mock.patch.object(rx_naming, "_MAX_FILE_PATH", length + 13), \
+                unittest.mock.patch.object(rx_naming, "_MAX_DIR_PATH", length + 41):
+            run = self.run_named(ORIGINALS)
+        self.assertEqual(run.state, "partial")
+        self.assertEqual([(i["name"], i["mode"], i["error"]) for i in run.items], [
+            ("Model.ifc", "linked", None), ("A101 - G.pdf", "linked", None),
+            (None, "failed", "path too long")])
+        self.assertFalse(os.path.exists(self.dst(G3)))
+
+    def test_unreadable_bubble_refuses_and_changes_nothing(self):
+        touch(self.out, "bubble.json", b"{not json")
+        before = sorted(os.listdir(self.paths.root))
+        run = self.run_named(NAMED_VALUES)
+        self.assertEqual(run.state, "failed")
+        self.assertIn("bubble.json could not be read", run.notes[0])
+        self.assertIn("bubble.json could not be read", run.result_message())
+        self.assertFalse(os.path.exists(self.named))
+        self.assertEqual(sorted(os.listdir(self.paths.root)), before, "no named, no named.json")
+
+    def test_record_ascii_relative_and_written_at_start_and_end(self):
+        touch(self.out, "Rzut piętra.pdf", b"pl")
+        run = rx_naming.NamedRun(self.paths, dict(ORIGINALS, template="{OriginalName} ł"),
+                                 link=copy_link)
+        first = None
+        for _ in run.steps():
+            if first is None and os.path.exists(self.record):
+                first = self.read_record()
+        self.assertEqual(json.loads(first)["state"], "running")
+        text = self.read_record()
+        record = json.loads(text)
+        self.assertEqual(list(record), ["schema", "version", "template", "state", "counts",
+                                        "notes", "items"])
+        self.assertEqual((record["schema"], record["version"], record["state"]),
+                         ("rx-named-copies", 1, "done"))
+        self.assertIn("Rzut pi\\u0119tra.pdf", text)
+        self.assertIn("Rzut piętra ł.pdf", [i["name"] for i in record["items"]])
+        for absolute in (self.root, self.root.replace("\\", "\\\\"),
+                         os.path.basename(self.root), tempfile.gettempdir()):
+            self.assertNotIn(absolute, text)
+        self.assertEqual(record["items"], run.items)
+        self.assertFalse(os.path.exists(self.record + ".tmp"))
+
+    def test_failed_record_write_is_one_note(self):
+        real = io.open
+
+        def deny(path, *a, **k):
+            if str(path).endswith("named.json.tmp"):
+                raise OSError(13, "denied")
+            return real(path, *a, **k)
+        with unittest.mock.patch.object(io, "open", deny):
+            run = self.run_named(ORIGINALS)
+        self.assertEqual(run.state, "done")
+        self.assertEqual(run.notes, ["named.json could not be written."])
+
+    def test_close_early_leaves_complete_items_and_running_record(self):
+        touch(self.out, PDF_REL, b"p" * (3 * 2 ** 20))
+        before = snapshot(self.out)
+        run = rx_naming.NamedRun(self.paths, dict(ORIGINALS), link=no_link)
+        gen = run.steps()
+        seen = 0
+        for done, _ in gen:
+            seen += done == 1
+            if seen == 2:   # the IFC is copied, the PDF is half way
+                break
+        self.assertTrue(os.path.exists(self.dst("A101 - Ground floor.pdf")))
+        gen.close()
+        self.assertEqual(snapshot(self.out), before)
+        self.assertEqual(sorted(os.listdir(self.named)), [IFC_REL])
+        self.assertSameBytes(self.src(IFC_REL), self.dst(IFC_REL))
+        self.assertEqual(json.loads(self.read_record())["state"], "running")
+        self.assertEqual(sorted(os.listdir(self.root)), ["named", "named.json", "output"])
+
+    def test_never_raises(self):
+        def listdir(path):
+            if G3 in path:
+                raise RuntimeError("unexpected")
+            return os.listdir(path)
+        run = self.run_named(ORIGINALS, listdir=listdir)
+        self.assertEqual(run.state, "failed")
+        self.assertEqual(run.notes, ["Unexpected error: RuntimeError"])
+        self.assertEqual(json.loads(self.read_record())["state"], "failed")
+
+    def test_no_source_opened_for_writing(self):
+        calls = []
+        real_io_open, real_os_open = io.open, os.open
+        out = os.path.normcase(os.path.abspath(self.out)) + os.sep
+
+        def under_output(path):
+            return os.path.normcase(os.path.abspath(str(path))).startswith(out)
+
+        def spy_open(path, mode="r", *a, **k):
+            if under_output(path):
+                calls.append(("open", mode))
+            return real_io_open(path, mode, *a, **k)
+
+        def spy_os_open(path, flags, *a, **k):
+            if under_output(path):
+                calls.append(("os.open", flags))
+            return real_os_open(path, flags, *a, **k)
+
+        def copier(plan, dest, **kw):   # copy_steps binds io.open as a default at import
+            return rx_cloud_stage.copy_steps(plan, dest, open=spy_open, **kw)
+        writing = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+        with unittest.mock.patch.object(builtins, "open", spy_open), \
+                unittest.mock.patch.object(io, "open", spy_open), \
+                unittest.mock.patch.object(os, "open", spy_os_open):
+            run = rx_naming.NamedRun(self.paths, dict(ORIGINALS), link=no_link, copier=copier)
+            list(run.steps())
+        self.assertEqual(run.state, "done")
+        self.assertGreaterEqual(len(calls), 6)   # bubble.json and five copied sources
+        for kind, mode in calls:
+            if kind == "open":
+                self.assertEqual(mode, "rb")
+            else:
+                self.assertFalse(mode & writing)
+
+    def test_now_fills_missing_time_tokens(self):
+        when = datetime.datetime(2026, 1, 2, 3, 4, 5)
+        run = self.run_named({"template": "{Date} {OriginalName}", "system": {},
+                              "values": None}, now=when)
+        self.assertIn("2026-01-02 Model.ifc", [i["name"] for i in run.items])
+
+    def test_polish_messages(self):
+        run = self.run_named(NAMED_VALUES)
+        with unittest.mock.patch.dict(sys.modules, polish()):
+            self.assertEqual(run.result_message(),
+                             "Kopie z nazwami: 3 w named\\ (0 skopiowano zamiast dowiązać). 1 "
+                             "plików nie powiązano z arkuszem ani widokiem; zachowały nazwę.")
+            run.state = "partial"
+            self.assertTrue(run.result_message().startswith("Kopie z nazwami: 3 z 3; 0 "))
+            run.state, run.notes = "failed", ["x"]
+            self.assertEqual(run.result_message(), "Nie utworzono kopii z nazwami: x")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,11 +6,17 @@ Values reach this module as plain text. Tokens, presets and error texts exist in
 """
 from __future__ import unicode_literals
 
+import io
+import json
 import os
 import re
 from collections import OrderedDict, namedtuple
 
+from rx_cloud import StageItem, StagePlan
+from rx_cloud_stage import copy_steps
+from rx_hardlink import make_hard_link
 from rx_i18n import tr
+from rx_json import dumps_ascii
 
 MAX_TEMPLATE = 200
 _MAX_COMPONENT = 255
@@ -415,3 +421,369 @@ def tie(items, manifest, values):
             untied += 1
         pairs.append((item, record))
     return pairs, untied
+
+
+# ---- Writer and record (spec: Runner and session -> Writer, Record, Result note; Failure rules) ----
+#
+# Safety rules, each covered by tests/test_naming.py:
+# - nothing under <run>\output is ever written, renamed, moved or deleted; a source is only
+#   opened "rb" (bubble.json here, the rest by rx_cloud_stage.copy_steps);
+# - the only writes are inside <run>\named (made new by this run) and <run>\named.json(.tmp);
+# - a destination is never overwritten (hard links and O_EXCL copies fail on an existing name);
+# - closing steps() early leaves complete items and named.json at "running".
+
+RECORD_SCHEMA = "rx-named-copies"
+RECORD_VERSION = 1
+_COPY_CHUNK = 2 ** 20
+_MB = 2 ** 20
+_MTIME_TOLERANCE = 0.001
+_SPLIT_FOLDERS = {"pdf": "PDF", "dwg": "DWG", "ifc": "IFC", "view": "3D"}
+_TIME_TOKENS = ("Year", "Year2", "Month", "Day", "Hour", "Minute", "Second", "Date")
+
+
+def _short_error(error):
+    """Exception type and OS error code only (a message can hold a path). Same as
+    rx_runner._short_error, kept here because rx_runner will import this module."""
+    code = getattr(error, "winerror", None) or getattr(error, "errno", None)
+    return type(error).__name__ + ("(%s)" % code if code else "")
+
+
+def _message(error):
+    return error.args[0] if error.args and _is_text(error.args[0]) else _short_error(error)
+
+
+def _inside(path, folder):
+    path = os.path.normcase(os.path.abspath(path))
+    folder = os.path.normcase(os.path.abspath(folder))
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def _unchanged(st, size, mtime):
+    return st.st_size == size and abs(st.st_mtime - mtime) <= _MTIME_TOLERANCE
+
+
+class _Refused(Exception):
+    """The run does not start; nothing is written, not even named.json."""
+
+
+class _ItemFailed(Exception):
+    """One item fails; args[0] is the record's error text."""
+
+
+class _NoSpace(Exception):
+    """Not enough free space for the copies that are left: args = (needed, free) bytes."""
+
+
+class NamedRun(object):
+    """Makes <run>\\named\\ from an export's output\\ (hard links, copies when a link fails) and
+    records it in <run>\\named.json. steps() does all the work and never raises; the public
+    state holds plain values only."""
+
+    def __init__(self, run_paths, naming, link=make_hard_link, copier=copy_steps,
+                 free_space=None, listdir=os.listdir, now=None):
+        self.run_paths = run_paths
+        self.naming = naming
+        self.state = None
+        self.done = 0
+        self.total = 0
+        self.counts = {"total": 0, "linked": 0, "copied": 0, "failed": 0, "untied": 0}
+        self.notes = []
+        self.items = []
+        self._link = link
+        self._copier = copier
+        self._free_space = free_space
+        self._listdir = listdir
+        self._now = now
+        self._named = os.path.join(run_paths.root, "named")
+        self._record = os.path.join(run_paths.root, "named.json")
+        self._started = False
+        self._record_failed = False
+        self._space_checked = False
+
+    # ---- public ----
+
+    def steps(self):
+        """Generator of (done, total) files. Never raises."""
+        self.state = "running"
+        fatal = False
+        work = self._work()
+        try:
+            try:
+                for step in work:
+                    yield step
+            except _Refused as refused:
+                self.notes.append(refused.args[0])
+                self.state = "failed"
+                return
+            except Exception as error:
+                fatal = True
+                self.notes.append(tr("Unexpected error: {0}",
+                                     "Nieoczekiwany błąd: {0}").format(_short_error(error)))
+        finally:
+            work.close()
+        self._end(fatal)
+
+    def result_message(self):
+        """The note appended to the job's result; "" before the run ends."""
+        counts = self.counts
+        made = counts["linked"] + counts["copied"]
+        if self.state == "failed":
+            return tr("Named copies were not made: {0}",
+                      "Nie utworzono kopii z nazwami: {0}").format(
+                          self.notes[0] if self.notes else "")
+        if self.state == "done":
+            text = tr("Named copies: {0} in named\\ ({1} copied instead of linked).",
+                      "Kopie z nazwami: {0} w named\\ ({1} skopiowano zamiast dowiązać).").format(
+                          made, counts["copied"])
+        elif self.state == "partial":
+            text = tr("Named copies: {0} of {1}; {2} failed, see named.json.",
+                      "Kopie z nazwami: {0} z {1}; {2} nieudanych, zobacz named.json.").format(
+                          made, counts["total"], counts["failed"])
+        else:
+            return ""
+        if counts["untied"]:
+            text += " " + tr(
+                "{0} files could not be tied to a sheet or view and kept their name.",
+                "{0} plików nie powiązano z arkuszem ani widokiem; zachowały nazwę.").format(
+                    counts["untied"])
+        return text
+
+    # ---- work ----
+
+    def _work(self):
+        try:
+            parsed = check_naming(self.naming)
+        except NamingError as error:
+            raise _Refused(_message(error))
+        if os.path.lexists(self._named):
+            raise _Refused(tr("The folder named\\ already exists in this run; nothing was changed.",
+                              "Folder named\\ już istnieje w tym przebiegu; niczego nie zmieniono."))
+        if _inside(self._named, self.run_paths.output) or \
+                _inside(self.run_paths.output, self._named):
+            raise _Refused(tr("The named\\ folder would overlap the export; nothing was changed.",
+                              "Folder named\\ nakładałby się na eksport; niczego nie zmieniono."))
+        self._started = True
+        discovery = Discovery(self.run_paths.output, listdir=self._listdir)
+        for _ in discovery.steps():
+            yield self.done, self.total
+        self.notes.extend(discovery.notes)
+        pairs, self.counts["untied"] = tie(discovery.items, self._manifest(),
+                                           self.naming.get("values"))
+        plan = []
+        for _ in self._plan(parsed, pairs, plan):
+            yield self.done, self.total
+        self.counts["total"] = len(self.items)
+        self.total = sum(len(files) for _, _, files in plan)
+        self._write_record()
+        os.makedirs(self._named)   # raises when it appeared meanwhile: never write into it
+        for index, (entry, target, files) in enumerate(plan):
+            result = []
+            put = self._put_item(entry, target, files, plan, index, result)
+            try:
+                try:
+                    for _ in put:
+                        yield self.done, self.total
+                finally:
+                    put.close()   # IronPython does not close a dropped generator at once
+            except _NoSpace as short:
+                self.notes.append(tr(
+                    "Not enough free disk space to copy the files that could not be linked: "
+                    "{0} MB needed, {1} MB free.",
+                    "Za mało wolnego miejsca na dysku na kopie plików, których nie dało się "
+                    "dowiązać: potrzeba {0} MB, wolne {1} MB.").format(
+                        -(-short.args[0] // _MB), int(short.args[1]) // _MB))
+                for later, _, _ in plan[index:]:
+                    self._fail(later, "not enough space")
+                self.done = self.total
+                yield self.done, self.total
+                return
+            except Exception as error:
+                self._fail(entry, error.args[0] if isinstance(error, _ItemFailed)
+                           else _short_error(error))
+                self.done += len(files) - len(result)
+                yield self.done, self.total
+                continue
+            entry["mode"] = "copied" if "copied" in result else "linked"
+            self.counts[entry["mode"]] += 1
+
+    def _fail(self, entry, error):
+        if entry["mode"] != "failed":
+            entry["mode"] = "failed"
+            entry["error"] = error
+            self.counts["failed"] += 1
+
+    def _manifest(self):
+        try:
+            with io.open(os.path.join(self.run_paths.output, "bubble.json"), "rb") as handle:
+                data = json.loads(handle.read().decode("utf-8-sig"))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        # without the manifest no file can be tied to a sheet or view: refuse, change nothing
+        raise _Refused(tr("bubble.json could not be read; no named copies were made.",
+                          "Nie można odczytać bubble.json; nie utworzono kopii z nazwami."))
+
+    def _system(self):
+        system = dict(self.naming["system"])
+        if self._now is not None:
+            for key, value in system_values(self._now, "", "", "").items():
+                if key in _TIME_TOKENS:
+                    system.setdefault(key, value)
+        return system
+
+    def _plan(self, parsed, pairs, plan):
+        """Fills self.items and `plan` [(entry, target path, [(parts, src, size, mtime)])] before
+        anything is written. Yields once per folder walked inside a view folder."""
+        namer = Namer()
+        system = self._system()
+        split = self.naming.get("split") is True
+        for item, record in pairs:
+            sub = _SPLIT_FOLDERS[item.kind] if split else ""
+            root = os.path.join(self._named, sub) if sub else self._named
+            base = item.rel.split("/")[-1]
+            entry = OrderedDict([("source", item.rel), ("name", None),
+                                 ("kind", "dir" if item.kind == "view" else "file"),
+                                 ("mode", None), ("error", None)])
+            self.items.append(entry)
+            files = []
+            try:
+                if item.kind == "view":
+                    original, ext = base, ""
+                    for _ in self._tree(item.src, files):
+                        yield
+                    inner = max([len(os.sep.join(f[0])) for f in files] or [0])
+                    budget = folder_budget(root, inner)
+                else:
+                    original, ext = os.path.splitext(base)
+                    st = os.stat(item.src)
+                    files.append(([], item.src, st.st_size, st.st_mtime))
+                    budget = file_budget(root, ext)
+            except EnvironmentError as error:
+                self._fail(entry, _short_error(error))
+                continue
+            tokens = dict(system)
+            record = record if isinstance(record, dict) else {}
+            if isinstance(record.get("tokens"), dict):
+                tokens.update(record["tokens"])
+            if isinstance(record.get("params"), dict):
+                tokens.update(("param:" + k, v) for k, v in record["params"].items()
+                              if _is_text(k))
+            name = namer.unique(sub, format_name(parsed, tokens, original), ext, budget)
+            if name is None:
+                self._fail(entry, "path too long")
+                continue
+            entry["name"] = (sub + "/" if sub else "") + name + ext
+            plan.append((entry, os.path.join(root, name + ext), files))
+
+    def _tree(self, top, files):
+        """Every file under the view folder `top` as (relative parts, path, size, mtime);
+        symbolic links and junctions are skipped. One step per folder."""
+        isjunction = getattr(os.path, "isjunction", None)
+        stack = [(top, [])]
+        while stack:
+            path, parts = stack.pop()
+            for name in sorted(self._listdir(path)):
+                child = os.path.join(path, name)
+                if os.path.islink(child) or (isjunction is not None and isjunction(child)):
+                    continue
+                if os.path.isdir(child):
+                    stack.append((child, parts + [name]))
+                else:
+                    st = os.stat(child)
+                    files.append((parts + [name], child, st.st_size, st.st_mtime))
+            yield
+
+    # ---- writing ----
+
+    def _put_item(self, entry, target, files, plan, index, result):
+        parent = os.path.dirname(target)
+        if not os.path.isdir(parent):
+            os.makedirs(parent)   # only PDF/DWG/IFC/3D under the new named folder
+        if entry["kind"] == "dir":
+            os.mkdir(target)   # raises on an existing name: never merge into a folder
+        for k, (parts, src, size, mtime) in enumerate(files):
+            dst = os.path.join(target, *parts) if parts else target
+            folder = os.path.dirname(dst)
+            if not os.path.isdir(folder):
+                os.makedirs(folder)
+
+            def remaining(k=k):
+                return (sum(f[2] for f in files[k:]) +
+                        sum(f[2] for _, _, later in plan[index + 1:] for f in later))
+            put = self._put_file(src, dst, size, mtime, remaining, result)
+            try:
+                for _ in put:
+                    yield
+            finally:
+                put.close()
+            self.done += 1
+            yield
+
+    def _put_file(self, src, dst, size, mtime, remaining, result):
+        if not _unchanged(os.stat(src), size, mtime):
+            raise _ItemFailed("source changed")
+        try:
+            self._link(src, dst)
+            result.append("linked")
+            return
+        except Exception:   # other drive, no link support, no permission: copy instead
+            pass
+        if not self._space_checked:
+            self._space_checked = True
+            free = self._free()
+            if free is not None and free < remaining():
+                raise _NoSpace(remaining(), free)
+        copy = self._copier(StagePlan([StageItem(src, os.path.basename(dst), size, mtime)], []),
+                            os.path.dirname(dst), chunk=_COPY_CHUNK)
+        try:
+            for _ in copy:
+                yield
+        finally:
+            copy.close()   # removes a partly written copy when closed early
+        result.append("copied")
+
+    def _free(self):
+        if self._free_space is None:
+            return None
+        try:
+            return self._free_space(self._named)
+        except Exception:   # unknown: the copy goes ahead and fails on its own if the disk fills
+            return None
+
+    # ---- end and record ----
+
+    def _end(self, fatal):
+        made = self.counts["linked"] + self.counts["copied"]
+        if fatal:
+            self.state = "failed"
+        elif not self.counts["failed"]:
+            self.state = "done"
+        else:
+            self.state = "partial" if made else "failed"
+        if self.state == "failed" and not self.notes:
+            self.notes.append(tr("No named copy could be made; see named.json.",
+                                 "Nie udało się utworzyć żadnej kopii z nazwą; zobacz named.json."))
+        if self._started:
+            self._write_record()
+
+    def _write_record(self):
+        """named.json beside named\\: written to .tmp, then the old one removed and the new one
+        renamed (IronPython 2.7 cannot overwrite through rename). A failure only adds a note."""
+        temp = self._record + ".tmp"
+        try:
+            text = dumps_ascii(OrderedDict([
+                ("schema", RECORD_SCHEMA), ("version", RECORD_VERSION),
+                ("template", self.naming.get("template")), ("state", self.state),
+                ("counts", self.counts), ("notes", self.notes), ("items", self.items)]),
+                indent=1)
+            with io.open(temp, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            if os.path.exists(self._record):
+                os.remove(self._record)
+            os.rename(temp, self._record)
+        except Exception:
+            if not self._record_failed:
+                self._record_failed = True
+                self.notes.append(tr("named.json could not be written.",
+                                     "Nie można zapisać named.json."))
